@@ -128,7 +128,11 @@
 </template>
 <script setup>
 import { ref, computed, shallowRef, onMounted, getCurrentInstance } from "vue";
-import { rectangleFromDrag, moveRectangle } from "../../core/selection.mjs";
+import {
+  rectangleFromDrag,
+  moveRectangle,
+  contentViewportBounds,
+} from "../../core/selection.mjs";
 import { decodeUtf8 } from "../../core/utf8.mjs";
 import { openWorld, extractRegion } from "../../core/world.mjs";
 import {
@@ -355,7 +359,12 @@ async function startSelection(event) {
   else if (Date.now() - lastTouchAt < 500) return;
   let bounds;
   // #ifdef H5
-  bounds = document.getElementById("selection-surface").getBoundingClientRect();
+  // uni-app subtracts navigation + safe-area windowTop from its H5 events.
+  // Native DOM bounds must be converted into that same CSS-pixel space.
+  bounds = contentViewportBounds(
+    document.getElementById("selection-surface").getBoundingClientRect(),
+    Number(uni.getWindowInfo().windowTop) || 0,
+  );
   // #endif
   // #ifdef MP-WEIXIN
   bounds = await new Promise((resolve) =>
@@ -512,6 +521,7 @@ function importFragment() {
   margin: 12px 0;
 }
 .canvas {
+  image-rendering: pixelated;
   background: repeating-conic-gradient(#203044 0% 25%, #172638 0% 50%) 50% /
     16px 16px;
 }

@@ -1,7 +1,21 @@
 import { test, expect } from "@playwright/test";
 import { PNG } from "pngjs";
-import { fixtureWorld } from "../test/fixture.mjs";
-const fixture = fixtureWorld({ width: 80, height: 60 });
+import { readFile } from "node:fs/promises";
+import { loadFragment } from "../core/fragment.mjs";
+import { fixtureWorld, record } from "../test/fixture.mjs";
+const fixture = fixtureWorld({
+  width: 80,
+  height: 60,
+  columns: Array.from({ length: 80 }, (_, x) =>
+    Array.from({ length: 60 }, (_, y) =>
+      record({
+        type: x % 2 ? 0 : 1,
+        paint: ((x + 3 * y) % 30) + 1,
+        red: x % 3 === 0,
+      }),
+    ),
+  ),
+});
 function originalAtlas() {
   const png = new PNG({ width: 288, height: 270 });
   for (let y = 0; y < png.height; y++)
@@ -16,7 +30,7 @@ function originalAtlas() {
 }
 test("import, real sprite API, missing diagnostics, rectangle validation, save and reload", async ({
   page,
-}) => {
+}, testInfo) => {
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
@@ -49,7 +63,10 @@ test("import, real sprite API, missing diagnostics, rectangle validation, save a
       Array.from(c.getContext("2d").getImageData(2, 2, 1, 1).data),
     );
   expect(pixels[3]).toBe(255);
-  await page.screenshot({ path: "artifacts/synthetic-ui.png", fullPage: true });
+  await page.screenshot({
+    path: `artifacts/synthetic-ui-${testInfo.project.name}.png`,
+    fullPage: true,
+  });
   const download = page.waitForEvent("download");
   await page
     .getByRole("button", { name: "4 提取 / 保存 Tile", exact: true })
@@ -75,6 +92,8 @@ test("import, real sprite API, missing diagnostics, rectangle validation, save a
   });
   await page.mouse.up();
   expect(errors).toEqual([]);
+  await expect(page.locator(".field input").nth(0)).toHaveValue("15");
+  await expect(page.locator(".field input").nth(1)).toHaveValue("8");
   await expect(page.locator(".field input").nth(2)).toHaveValue("20");
   await expect(page.locator(".field input").nth(3)).toHaveValue("21");
   await page
@@ -86,10 +105,19 @@ test("import, real sprite API, missing diagnostics, rectangle validation, save a
     .getByRole("button", { name: "4 提取 / 保存 Tile", exact: true })
     .click();
   const cropped = await cropDownload;
+  const restored = loadFragment(await readFile(await cropped.path(), "utf8"));
+  expect(restored.rect).toEqual({ x: 15, y: 8, width: 20, height: 21 });
+  for (let x = 0; x < 20; x++)
+    for (let y = 0; y < 21; y++) {
+      const cell = restored.cells[x * 21 + y];
+      expect(cell.type).toBe((x + 15) % 2 ? 0 : 1);
+      expect(cell.paint).toBe(((x + 15 + 3 * (y + 8)) % 30) + 1);
+      expect(cell.wireRed).toBe((x + 15) % 3 === 0);
+    }
   await upload("打开已保存片段", await cropped.path());
   await expect(page.getByText(/已绘制 420 个贴图片段/)).toBeVisible();
   await page.screenshot({
-    path: "artifacts/synthetic-drag-selection.png",
+    path: `artifacts/synthetic-drag-selection-${testInfo.project.name}.png`,
     fullPage: true,
   });
   await upload("2 导入 PNG 贴图", {

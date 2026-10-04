@@ -1,6 +1,16 @@
 import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./e2e",
+  projects: [
+    {
+      name: "desktop",
+      use: { deviceScaleFactor: 1, viewport: { width: 1280, height: 720 } },
+    },
+    {
+      name: "retina",
+      use: { deviceScaleFactor: 2, viewport: { width: 1280, height: 720 } },
+    },
+  ],
   timeout: 30000,
   use: {
     baseURL: "http://127.0.0.1:4173",

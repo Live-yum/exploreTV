@@ -45,3 +45,14 @@ export function moveRectangle(rect, dx, dy, worldWidth, worldHeight) {
   };
   return validateRect(next, worldWidth, worldHeight);
 }
+/** H5 uni-app events use content-viewport CSS pixels, excluding windowTop. */
+export function contentViewportBounds(nativeBounds, windowTop = 0) {
+  const { left, top, width, height } = nativeBounds;
+  if (
+    ![left, top, width, height, windowTop].every(Number.isFinite) ||
+    width <= 0 ||
+    height <= 0
+  )
+    throw new Error("Invalid viewport bounds");
+  return { left, top: top - windowTop, width, height };
+}
