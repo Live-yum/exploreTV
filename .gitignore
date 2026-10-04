@@ -1,0 +1,8 @@
+node_modules/
+dist/
+unpackage/
+fixtures/private/
+artifacts/
+
+playwright-report/
+test-results/

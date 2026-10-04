@@ -1,0 +1,33 @@
+name: Validate scene fragment slice
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: npm run build:h5
+      - run: npm run build:mp-weixin
+      - run: node scripts/check-mp.mjs
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: original-fixture-validation
+          path: |
+            artifacts/
+            playwright-report/
+            dist/build/
+          retention-days: 7
