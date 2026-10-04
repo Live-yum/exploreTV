@@ -98,6 +98,7 @@
         <canvas
           id="scene"
           canvas-id="scene"
+          :hidpi="false"
           type="2d"
           class="canvas"
           :style="{ width: canvasWidth + 'px', height: canvasHeight + 'px' }"

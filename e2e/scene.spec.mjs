@@ -16,14 +16,14 @@ const fixture = fixtureWorld({
     ),
   ),
 });
-function originalAtlas() {
+function originalAtlas(type = 0) {
   const png = new PNG({ width: 288, height: 270 });
   for (let y = 0; y < png.height; y++)
     for (let x = 0; x < png.width; x++) {
       const i = (y * png.width + x) * 4;
       png.data[i] = x % 256;
       png.data[i + 1] = y % 256;
-      png.data[i + 2] = (x + y) % 256;
+      png.data[i + 2] = type ? 200 : 30;
       png.data[i + 3] = 255;
     }
   return PNG.sync.write(png);
@@ -51,7 +51,7 @@ test("import, real sprite API, missing diagnostics, rectangle validation, save a
     .click();
   await expect(page.getByText(/Missing textures:/)).toBeVisible();
   await upload("2 导入 PNG 贴图", [
-    { name: "Tiles_1.png", mimeType: "image/png", buffer: originalAtlas() },
+    { name: "Tiles_1.png", mimeType: "image/png", buffer: originalAtlas(1) },
     { name: "Tiles_0.png", mimeType: "image/png", buffer: originalAtlas() },
   ]);
   await expect(page.getByText("2 张贴图已载入")).toBeVisible();
@@ -98,6 +98,35 @@ test("import, real sprite API, missing diagnostics, rectangle validation, save a
   expect(backing.height).toBe(Math.round(box.height));
   expect(backing.cssWidth).toBe(box.width);
   expect(backing.cssHeight).toBe(box.height);
+  const scale = box.width / (64 * 16);
+  const samples = [
+    [2, 3],
+    [61, 37],
+    [32, 20],
+  ].map(([x, y]) => ({
+    x,
+    y,
+    px: Math.floor((x * 16 + 8) * scale),
+    py: Math.floor((y * 16 + 8) * scale),
+  }));
+  const colors = await page
+    .locator("canvas")
+    .last()
+    .evaluate(
+      (c, points) =>
+        points.map((p) =>
+          Array.from(c.getContext("2d").getImageData(p.px, p.py, 1, 1).data),
+        ),
+      samples,
+    );
+  samples.forEach((p, i) => {
+    const u = Math.floor((p.px + 0.5) / scale) - p.x * 16,
+      v = Math.floor((p.py + 0.5) / scale) - p.y * 16;
+    expect(Math.abs(colors[i][0] - (90 + u))).toBeLessThanOrEqual(1);
+    expect(Math.abs(colors[i][1] - v)).toBeLessThanOrEqual(1);
+    expect(colors[i][2]).toBe((8 + p.x) % 2 ? 30 : 200);
+    expect(colors[i][3]).toBe(255);
+  });
   await page.mouse.move(box.x + box.width * 0.12, box.y + box.height * 0.22);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width * 0.42, box.y + box.height * 0.72, {

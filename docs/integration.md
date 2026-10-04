@@ -24,3 +24,5 @@ Modern relogic and xindong signatures are supported for versions269–326. xindo
 ## Interaction contract
 
 The canvas supports cell-aligned rectangle drag selection (H5 mouse and a Weixin touch adapter), visual zoom, and world-viewport panning. A pending selection disables export until regenerated. H5 browser tests exercise drag, zoom, save, reload, recrop, invalid input and missing/failed textures. Weixin is compiler- and static-boundary-verified only; touch correctness/performance on a physical Weixin device is not yet established. Imported fragments clear any open-world association and crop from their own bytes, preventing accidental extraction from a different world.
+
+H5 uses the supported `hidpi=false` canvas property: uni-app otherwise wraps Canvas2D drawing and resizes the backing store automatically, which conflicts with this explicit bounded-preview scale. CSS pointer coordinates are normalized with the runtime `windowTop`, not a hard-coded navigation height. DPR 1 and 2 browser tests verify origin, backing size, visible sprite sample pixels and every exported cell. The Weixin touch/query path does not apply the H5 offset.
