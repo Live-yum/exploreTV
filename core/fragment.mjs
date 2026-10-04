@@ -207,3 +207,31 @@ export function restoreIntoRegion(target, fragment, x, y) {
     }
   return out;
 }
+/** Crop a loaded fragment without access to or mutation of its source world. */
+export function cropFragment(fragment, rect) {
+  rect = validateRect(rect, fragment.source.width, fragment.source.height);
+  if (
+    rect.x < fragment.rect.x ||
+    rect.y < fragment.rect.y ||
+    rect.x + rect.width > fragment.rect.x + fragment.rect.width ||
+    rect.y + rect.height > fragment.rect.y + fragment.rect.height
+  )
+    throw new FormatError("Rectangle outside loaded fragment");
+  const cells = [],
+    raw = [];
+  for (let x = rect.x; x < rect.x + rect.width; x++)
+    for (let y = rect.y; y < rect.y + rect.height; y++) {
+      const i =
+        (x - fragment.rect.x) * fragment.rect.height + y - fragment.rect.y;
+      cells.push({ ...fragment.cells[i] });
+      raw.push(Uint8Array.from(fragment.raw[i]));
+    }
+  return {
+    rect,
+    source: { ...fragment.source },
+    version: fragment.version,
+    important: Uint8Array.from(fragment.important),
+    cells,
+    raw,
+  };
+}

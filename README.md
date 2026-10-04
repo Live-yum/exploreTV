@@ -15,7 +15,7 @@ node scripts/check-mp.mjs
 npm run dev:h5
 ```
 
-从合法来源导入 `Tiles_N.png`、`Wall_N.png`。输入矩形坐标与宽高，生成预览；保存 `.tvtiles.json` 可重新导入。原始世界只读，不自动联网上传文件。
+从合法来源导入 `Tiles_N.png`、`Wall_N.png`。输入矩形坐标与宽高或在当前场景上拖选矩形，再生成预览。提供缩放与方向平移；保存 `.tvtiles.json` 可重新导入并独立裁剪，无需重新打开原始世界。原始世界只读，不自动联网上传文件。
 
 ## Verification
 

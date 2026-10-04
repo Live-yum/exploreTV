@@ -61,6 +61,36 @@ test("import, real sprite API, missing diagnostics, rectangle validation, save a
   ).toBeVisible();
   await upload("打开已保存片段", await file.path());
   await expect(page.getByText(/已绘制 2560 个贴图片段/)).toBeVisible();
+  const surface = page.locator("#selection-surface");
+  const originalWidth = (await surface.boundingBox()).width;
+  await page.getByRole("button", { name: "缩小", exact: true }).click();
+  await expect(page.getByText("75%", { exact: true })).toBeVisible();
+  await surface.scrollIntoViewIfNeeded();
+  const box = await surface.boundingBox();
+  expect(box.width).toBeLessThan(originalWidth);
+  await page.mouse.move(box.x + box.width * 0.12, box.y + box.height * 0.22);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.42, box.y + box.height * 0.72, {
+    steps: 5,
+  });
+  await page.mouse.up();
+  await expect(page.locator(".field input").nth(2)).toHaveValue("20");
+  await expect(page.locator(".field input").nth(3)).toHaveValue("21");
+  await page
+    .getByRole("button", { name: "3 生成场景预览", exact: true })
+    .click();
+  await expect(page.getByText(/已绘制 420 个贴图片段/)).toBeVisible();
+  const cropDownload = page.waitForEvent("download");
+  await page
+    .getByRole("button", { name: "4 提取 / 保存 Tile", exact: true })
+    .click();
+  const cropped = await cropDownload;
+  await upload("打开已保存片段", await cropped.path());
+  await expect(page.getByText(/已绘制 420 个贴图片段/)).toBeVisible();
+  await page.screenshot({
+    path: "artifacts/synthetic-drag-selection.png",
+    fullPage: true,
+  });
   await upload("2 导入 PNG 贴图", {
     name: "Tiles_2.png",
     mimeType: "image/png",

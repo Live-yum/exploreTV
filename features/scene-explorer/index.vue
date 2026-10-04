@@ -30,7 +30,11 @@
           ><text>{{ labels[key] }}</text
           ><input type="number" v-model="rect[key]" /></view></view
       ><view class="row"
-        ><button role="button" @click="preview" :disabled="busy || !world">
+        ><button
+          role="button"
+          @click="preview"
+          :disabled="busy || (!world && !baseFragment)"
+        >
           3 生成场景预览</button
         ><button
           role="button"
@@ -45,13 +49,65 @@
       ><view class="row"
         ><text>场景预览 · {{ renderLabel }}</text
         ><text>{{ assetCount }} 张贴图已载入</text></view
-      ><canvas
-        id="scene"
-        canvas-id="scene"
-        type="2d"
-        class="canvas"
+      ><view class="row tools">
+        <button
+          role="button"
+          @click="changeZoom(-0.25)"
+          :disabled="busy || !region || zoom <= 0.25"
+        >
+          缩小
+        </button>
+        <text>{{ Math.round(zoom * 100) }}%</text>
+        <button
+          role="button"
+          @click="changeZoom(0.25)"
+          :disabled="busy || !region || zoom >= 2"
+        >
+          放大
+        </button>
+        <button role="button" @click="pan(-1, 0)" :disabled="busy || !world">
+          向左
+        </button>
+        <button role="button" @click="pan(1, 0)" :disabled="busy || !world">
+          向右
+        </button>
+        <button role="button" @click="pan(0, -1)" :disabled="busy || !world">
+          向上
+        </button>
+        <button role="button" @click="pan(0, 1)" :disabled="busy || !world">
+          向下
+        </button>
+      </view>
+      <view class="muted"
+        >在当前场景上拖动选择矩形，再点“生成场景预览”确认。缩放不改变 Tile
+        范围。</view
+      >
+      <view
+        id="selection-surface"
+        class="selection-surface"
         :style="{ width: canvasWidth + 'px', height: canvasHeight + 'px' }"
-      /><view v-if="!region" class="muted"
+        @mousedown.stop="startSelection"
+        @mousemove.stop="moveSelection"
+        @mouseup.stop="endSelection"
+        @mouseleave="endSelection"
+        @touchstart.stop.prevent="startSelection"
+        @touchmove.stop.prevent="moveSelection"
+        @touchend.stop.prevent="endSelection"
+        @touchcancel="cancelSelection"
+      >
+        <canvas
+          id="scene"
+          canvas-id="scene"
+          type="2d"
+          class="canvas"
+          :style="{ width: canvasWidth + 'px', height: canvasHeight + 'px' }"
+        />
+        <view
+          v-if="selection"
+          class="selection-box"
+          :style="selectionStyle"
+        /> </view
+      ><view v-if="!region" class="muted"
         >尚未生成场景。请导入 .wld 并选择矩形。</view
       ></view
     >
@@ -72,9 +128,14 @@
 </template>
 <script setup>
 import { ref, computed, shallowRef, onMounted, getCurrentInstance } from "vue";
+import { rectangleFromDrag, moveRectangle } from "../../core/selection.mjs";
 import { decodeUtf8 } from "../../core/utf8.mjs";
 import { openWorld, extractRegion } from "../../core/world.mjs";
-import { saveFragment, loadFragment } from "../../core/fragment.mjs";
+import {
+  saveFragment,
+  loadFragment,
+  cropFragment,
+} from "../../core/fragment.mjs";
 import { planScene, renderScene } from "../../core/renderer.mjs";
 import {
   chooseFiles,
@@ -83,6 +144,7 @@ import {
   loadTexture,
 } from "../../adapters/files.js";
 const instance = getCurrentInstance();
+const baseFragment = shallowRef(null);
 const world = shallowRef(null),
   region = shallowRef(null),
   worldInfo = ref(""),
@@ -107,7 +169,22 @@ const labels = {
   width: "宽度（格）",
   height: "高度（格）",
 };
+const zoom = ref(1),
+  selection = ref(null);
+let dragState = null,
+  lastTouchAt = 0;
 const rect = ref({ x: 0, y: 0, width: 64, height: 40 });
+const selectionStyle = computed(() => {
+  if (!selection.value || !region.value) return {};
+  const a = selection.value,
+    b = region.value.rect;
+  return {
+    left: ((a.x - b.x) / b.width) * canvasWidth.value + "px",
+    top: ((a.y - b.y) / b.height) * canvasHeight.value + "px",
+    width: (a.width / b.width) * canvasWidth.value + "px",
+    height: (a.height / b.height) * canvasHeight.value + "px",
+  };
+});
 let canvas, ctx;
 const assets = new Map();
 async function task(fn) {
@@ -156,7 +233,10 @@ function importWorld() {
     if (!file) return;
     const next = openWorld(await readBytes(file));
     world.value = next;
+    baseFragment.value = null;
     region.value = null;
+    selection.value = null;
+    zoom.value = 1;
     warnings.value = [];
     worldInfo.value = `${next.name} · v${next.version} · ${next.width} × ${next.height}`;
     rect.value = {
@@ -165,7 +245,8 @@ function importWorld() {
       width: Math.min(64, next.width),
       height: Math.min(40, next.height),
     };
-    status.value = "世界已验证并建立按列索引。调整坐标后生成预览。";
+    status.value =
+      "文件头与 Tile 数据段已验证，已建立按列索引。调整坐标后生成预览。";
     if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
   });
 }
@@ -197,7 +278,7 @@ function importTextures() {
 async function draw() {
   if (!canvas) await initCanvas();
   const plan = planScene(region.value);
-  const scale = Math.min(1, 720 / plan.width, 480 / plan.height);
+  const scale = zoom.value * Math.min(1, 720 / plan.width, 480 / plan.height);
   canvasWidth.value = Math.max(1, Math.round(plan.width * scale));
   canvasHeight.value = Math.max(1, Math.round(plan.height * scale));
   canvas.width = canvasWidth.value;
@@ -228,9 +309,97 @@ function preview() {
     const r = Object.fromEntries(
       Object.entries(rect.value).map(([k, v]) => [k, Number(v)]),
     );
-    region.value = extractRegion(world.value, r);
+    region.value = world.value
+      ? extractRegion(world.value, r)
+      : cropFragment(baseFragment.value, r);
+    selection.value = null;
     await draw();
   });
+}
+function changeZoom(delta) {
+  return task(async () => {
+    zoom.value = Math.max(0.25, Math.min(2, zoom.value + delta));
+    await draw();
+  });
+}
+function pan(dx, dy) {
+  return task(async () => {
+    const r =
+      region.value?.rect ||
+      Object.fromEntries(
+        Object.entries(rect.value).map(([k, v]) => [k, Number(v)]),
+      );
+    rect.value = moveRectangle(
+      r,
+      dx * Math.max(1, Math.floor(r.width / 2)),
+      dy * Math.max(1, Math.floor(r.height / 2)),
+      world.value.width,
+      world.value.height,
+    );
+    region.value = extractRegion(world.value, rect.value);
+    selection.value = null;
+    await draw();
+  });
+}
+function eventPosition(event) {
+  const p = event.touches?.[0] || event.changedTouches?.[0] || event;
+  return {
+    x: Number(p.clientX ?? p.x ?? event.detail?.x),
+    y: Number(p.clientY ?? p.y ?? event.detail?.y),
+  };
+}
+async function startSelection(event) {
+  if (busy.value || !region.value) return;
+  if (event.type?.startsWith("touch")) lastTouchAt = Date.now();
+  else if (Date.now() - lastTouchAt < 500) return;
+  let bounds;
+  // #ifdef H5
+  bounds = event.currentTarget.getBoundingClientRect();
+  // #endif
+  // #ifdef MP-WEIXIN
+  bounds = await new Promise((resolve) =>
+    uni
+      .createSelectorQuery()
+      .in(instance.proxy)
+      .select("#selection-surface")
+      .boundingClientRect(resolve)
+      .exec(),
+  );
+  // #endif
+  if (!bounds) return;
+  const p = eventPosition(event);
+  if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
+  dragState = {
+    bounds,
+    start: { x: p.x - bounds.left, y: p.y - bounds.top },
+    view: { ...region.value.rect },
+  };
+  moveSelection(event);
+}
+function moveSelection(event) {
+  if (!dragState) return;
+  const p = eventPosition(event);
+  if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
+  selection.value = rectangleFromDrag(
+    dragState.start,
+    { x: p.x - dragState.bounds.left, y: p.y - dragState.bounds.top },
+    dragState.view,
+    dragState.bounds.width,
+    dragState.bounds.height,
+  );
+}
+function endSelection(event) {
+  if (!dragState) return;
+  moveSelection(event);
+  dragState = null;
+  if (selection.value) {
+    rect.value = { ...selection.value };
+    status.value = `已选择 (${rect.value.x}, ${rect.value.y})，${rect.value.width} × ${rect.value.height} 格。请重新生成预览后保存。`;
+  }
+}
+function cancelSelection() {
+  dragState = null;
+  selection.value = null;
 }
 function save() {
   return task(async () => {
@@ -251,7 +420,11 @@ function importFragment() {
     region.value = loadFragment(
       decodeUtf8(await readBytes(file, 16 * 1024 * 1024)),
     );
+    world.value = null;
+    baseFragment.value = region.value;
+    worldInfo.value = `已保存片段 · ${region.value.source.name} · v${region.value.version}`;
     rect.value = { ...region.value.rect };
+    selection.value = null;
     await draw();
   });
 }
@@ -320,10 +493,26 @@ function importFragment() {
 .canvas-card {
   overflow: auto;
 }
+.selection-surface {
+  position: relative;
+  touch-action: none;
+  user-select: none;
+  margin-top: 14px;
+  cursor: crosshair;
+}
+.selection-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid #f5dc82;
+  background: rgba(245, 220, 130, 0.1);
+  pointer-events: none;
+}
+.tools {
+  margin: 12px 0;
+}
 .canvas {
   background: repeating-conic-gradient(#203044 0% 25%, #172638 0% 50%) 50% /
     16px 16px;
-  margin-top: 14px;
 }
 .status {
   line-height: 1.6;

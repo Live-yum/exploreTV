@@ -349,3 +349,24 @@ test("large irrelevant payload is rejected before checksum work", () => {
   });
   assert.throws(() => loadFragment(s), /structure/);
 });
+test("loaded fragment can be cropped independently without borrowing a different open world", async () => {
+  const { cropFragment } = await import("../core/fragment.mjs");
+  const region = extractRegion(
+    openWorld(fixtureWorld({ width: 8, height: 6 }).bytes),
+    { x: 2, y: 1, width: 4, height: 4 },
+  );
+  const cropped = cropFragment(loadFragment(saveFragment(region)), {
+    x: 3,
+    y: 2,
+    width: 2,
+    height: 2,
+  });
+  assert.deepEqual(cropped.raw[0], region.raw[5]);
+  assert.equal(cropped.raw.length, 4);
+  assert.throws(
+    () => cropFragment(region, { x: 0, y: 0, width: 2, height: 2 }),
+    /loaded fragment/,
+  );
+  cropped.raw[0][0] = 255;
+  assert.notEqual(cropped.raw[0][0], region.raw[5][0]);
+});

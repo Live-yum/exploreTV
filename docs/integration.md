@@ -20,3 +20,7 @@ Canonical serialized Tile records retain all four header bytes (except normalize
 Selections truncate at their literal rectangle, including multi-cell furniture. Expand the rectangle to include complete objects. Chest inventories, sign text, tile-entity data, NPCs and other non-Tile sections are excluded. Their presence is not currently parsed; the UI states this unconditionally. Do not describe this as a complete building/world restoration.
 
 Modern relogic and xindong signatures are supported for versions269–326. xindong recognition was checked against the requested TerraX format implementation and the exact supplied v315 fixture; offsets and entire tile-section endpoint were validated. Unknown signatures and versions fail closed. This is not support for modded worlds.
+
+## Interaction contract
+
+The canvas supports cell-aligned rectangle drag selection (H5 mouse and a Weixin touch adapter), visual zoom, and world-viewport panning. A pending selection disables export until regenerated. H5 browser tests exercise drag, zoom, save, reload, recrop, invalid input and missing/failed textures. Weixin is compiler- and static-boundary-verified only; touch correctness/performance on a physical Weixin device is not yet established. Imported fragments clear any open-world association and crop from their own bytes, preventing accidental extraction from a different world.
