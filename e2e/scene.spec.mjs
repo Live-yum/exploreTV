@@ -85,6 +85,19 @@ test("import, real sprite API, missing diagnostics, rectangle validation, save a
   await surface.scrollIntoViewIfNeeded();
   const box = await surface.boundingBox();
   expect(box.width).toBeLessThan(originalWidth);
+  const backing = await page
+    .locator("canvas")
+    .last()
+    .evaluate((c) => ({
+      width: c.width,
+      height: c.height,
+      cssWidth: c.getBoundingClientRect().width,
+      cssHeight: c.getBoundingClientRect().height,
+    }));
+  expect(backing.width).toBe(Math.round(box.width));
+  expect(backing.height).toBe(Math.round(box.height));
+  expect(backing.cssWidth).toBe(box.width);
+  expect(backing.cssHeight).toBe(box.height);
   await page.mouse.move(box.x + box.width * 0.12, box.y + box.height * 0.22);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width * 0.42, box.y + box.height * 0.72, {
