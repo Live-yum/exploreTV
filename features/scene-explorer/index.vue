@@ -269,7 +269,7 @@ function importTextures() {
         image.width * image.height * 4;
       if (bytes > 48 * 1024 * 1024) throw new Error("贴图缓存超过 48 MiB 限制");
       assets.set(name, image);
-      assetCount.value=assets.size;
+      assetCount.value = assets.size;
     }
     assetCount.value = assets.size;
     status.value = `已载入 ${assets.size} 张真实贴图。`;
