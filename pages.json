@@ -1,1 +1,12 @@
-{"pages":[{"path":"features/scene-explorer/index","style":{"navigationBarTitleText":"建筑片段实验室","navigationBarBackgroundColor":"#101827","navigationBarTextStyle":"white"}}]}
+{
+  "pages": [
+    {
+      "path": "features/scene-explorer/index",
+      "style": {
+        "navigationBarTitleText": "建筑片段实验室",
+        "navigationBarBackgroundColor": "#101827",
+        "navigationBarTextStyle": "white"
+      }
+    }
+  ]
+}

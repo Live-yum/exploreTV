@@ -1,3 +1,66 @@
 /** Small platform-neutral UTF-8 codec: no DOM, Buffer or TextDecoder requirement. */
-export function encodeUtf8(text){const out=[];for(const character of text){let c=character.codePointAt(0);if(c>=0xd800&&c<=0xdfff)c=0xfffd;if(c<128)out.push(c);else if(c<2048)out.push(192|(c>>6),128|(c&63));else if(c<65536)out.push(224|(c>>12),128|((c>>6)&63),128|(c&63));else out.push(240|(c>>18),128|((c>>12)&63),128|((c>>6)&63),128|(c&63));}return Uint8Array.from(out);}
-export function decodeUtf8(bytes){const out=[];for(let i=0;i<bytes.length;){const first=bytes[i++];let code,count,min;if(first<128){out.push(String.fromCharCode(first));continue;}if(first>=194&&first<=223){code=first&31;count=1;min=128;}else if(first>=224&&first<=239){code=first&15;count=2;min=2048;}else if(first>=240&&first<=244){code=first&7;count=3;min=65536;}else throw new Error('Invalid UTF-8');if(i+count>bytes.length)throw new Error('Truncated UTF-8');for(let j=0;j<count;j++){const b=bytes[i++];if((b&192)!==128)throw new Error('Invalid UTF-8 continuation');code=(code<<6)|(b&63);}if(code<min||code>0x10ffff||(code>=0xd800&&code<=0xdfff))throw new Error('Invalid UTF-8 scalar');out.push(String.fromCodePoint(code));}return out.join('');}
+export function encodeUtf8(text) {
+  const out = [];
+  for (const character of text) {
+    let c = character.codePointAt(0);
+    if (c >= 0xd800 && c <= 0xdfff) c = 0xfffd;
+    if (c < 128) out.push(c);
+    else if (c < 2048) out.push(192 | (c >> 6), 128 | (c & 63));
+    else if (c < 65536)
+      out.push(224 | (c >> 12), 128 | ((c >> 6) & 63), 128 | (c & 63));
+    else
+      out.push(
+        240 | (c >> 18),
+        128 | ((c >> 12) & 63),
+        128 | ((c >> 6) & 63),
+        128 | (c & 63),
+      );
+  }
+  return Uint8Array.from(out);
+}
+export function decodeUtf8(bytes) {
+  const chunks = [],
+    units = [];
+  const emit = (code) => {
+    if (code > 65535) {
+      code -= 65536;
+      units.push(0xd800 + (code >> 10), 0xdc00 + (code & 1023));
+    } else units.push(code);
+    if (units.length >= 4096) {
+      chunks.push(String.fromCharCode(...units));
+      units.length = 0;
+    }
+  };
+  for (let i = 0; i < bytes.length; ) {
+    const first = bytes[i++];
+    let code, count, min;
+    if (first < 128) {
+      emit(first);
+      continue;
+    }
+    if (first >= 194 && first <= 223) {
+      code = first & 31;
+      count = 1;
+      min = 128;
+    } else if (first >= 224 && first <= 239) {
+      code = first & 15;
+      count = 2;
+      min = 2048;
+    } else if (first >= 240 && first <= 244) {
+      code = first & 7;
+      count = 3;
+      min = 65536;
+    } else throw new Error("Invalid UTF-8");
+    if (i + count > bytes.length) throw new Error("Truncated UTF-8");
+    for (let j = 0; j < count; j++) {
+      const b = bytes[i++];
+      if ((b & 192) !== 128) throw new Error("Invalid UTF-8 continuation");
+      code = (code << 6) | (b & 63);
+    }
+    if (code < min || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff))
+      throw new Error("Invalid UTF-8 scalar");
+    emit(code);
+  }
+  if (units.length) chunks.push(String.fromCharCode(...units));
+  return chunks.join("");
+}

@@ -1,1 +1,28 @@
-import{readdirSync,readFileSync,statSync}from'node:fs';import{join}from'node:path';let size=0;function walk(path){for(const name of readdirSync(path)){const f=join(path,name),s=statSync(f);if(s.isDirectory())walk(f);else{size+=s.size;if(f.endsWith('.js')){const text=readFileSync(f,'utf8');if(/\b(?:TextDecoder|TextEncoder)\b|document\.createElement|URL\.createObjectURL/.test(text))throw new Error(`Browser-only API leaked into mini-program: ${f}`);}}}}walk('dist/build/mp-weixin');if(size>2*1024*1024)throw new Error(`Mini-program exceeds 2MiB: ${size}`);console.log(`Mini-program bundle ${size} bytes; no app-level browser-only APIs.`);
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+let size = 0;
+function walk(path) {
+  for (const name of readdirSync(path)) {
+    const f = join(path, name),
+      s = statSync(f);
+    if (s.isDirectory()) walk(f);
+    else {
+      size += s.size;
+      if (f.endsWith(".js")) {
+        const text = readFileSync(f, "utf8");
+        if (
+          /\b(?:TextDecoder|TextEncoder)\b|document\.createElement|URL\.createObjectURL/.test(
+            text,
+          )
+        )
+          throw new Error(`Browser-only API leaked into mini-program: ${f}`);
+      }
+    }
+  }
+}
+walk("dist/build/mp-weixin");
+if (size > 2 * 1024 * 1024)
+  throw new Error(`Mini-program exceeds 2MiB: ${size}`);
+console.log(
+  `Mini-program bundle ${size} bytes; no app-level browser-only APIs.`,
+);

@@ -1,1 +1,19 @@
-<script>export default {onLaunch(){}};</script><style>page{background:#101827;color:#e8edf7;font-family:system-ui}button{font-size:14px}input{background:#1d2b40;padding:8px;border-radius:6px;color:white}</style>
+<script>
+export default { onLaunch() {} };
+</script>
+<style>
+page {
+  background: #101827;
+  color: #e8edf7;
+  font-family: system-ui;
+}
+button {
+  font-size: 14px;
+}
+input {
+  background: #1d2b40;
+  padding: 8px;
+  border-radius: 6px;
+  color: white;
+}
+</style>

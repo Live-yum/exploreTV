@@ -9,7 +9,7 @@ The isolated app uses Vue 3 + uni-app 3.0.0-alpha-5010220260604001, the same fra
 
 ## Resource bounds
 
-World input <=64 MiB, dimensions <=10,000 by5,000 and <=24M cells. Index is4*(width+1) bytes, not an object per cell. Parsing scans the tile section; current UI scan is synchronous and should move to the host's worker/stream service before shipping on low-end phones. Preview <=65,536 cells, each side<=512, output fit720x480. PNG preflight <=8MiB compressed and <=16MiB decoded per image, cache<=48MiB. Fragment JSON<=16MiB. Limits are prototype budgets, not measured mobile-device guarantees.
+World input <=64 MiB, dimensions <=10,000 by5,000 and <=24M cells. Index is4\*(width+1) bytes, not an object per cell. Parsing scans the tile section; current UI scan is synchronous and should move to the host's worker/stream service before shipping on low-end phones. Preview <=65,536 cells, each side<=512, output fit720x480. PNG preflight <=8MiB compressed and <=16MiB decoded per image, cache<=48MiB. Fragment JSON<=16MiB. Limits are prototype budgets, not measured mobile-device guarantees.
 
 ## Data guarantee and explicit exclusions
 

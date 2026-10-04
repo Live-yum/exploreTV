@@ -1,1 +1,13 @@
-{"name":"exploreTV","appid":"","description":"Original scene fragment exploration","versionName":"0.1.0","versionCode":"1","h5":{},"mp-weixin":{"appid":"","setting":{"urlCheck":true},"usingComponents":true}}
+{
+  "name": "exploreTV",
+  "appid": "",
+  "description": "Original scene fragment exploration",
+  "versionName": "0.1.0",
+  "versionCode": "1",
+  "h5": {},
+  "mp-weixin": {
+    "appid": "",
+    "setting": { "urlCheck": true },
+    "usingComponents": true
+  }
+}
