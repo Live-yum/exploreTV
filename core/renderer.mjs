@@ -453,6 +453,16 @@ export function renderScene(
     skippedEffects = 0;
   context.save();
   try {
+    context.globalAlpha = 1;
+    context.globalCompositeOperation = "source-over";
+    if (sceneFrames?.support.additiveFrames) {
+      context.globalCompositeOperation = "lighter";
+      if (context.globalCompositeOperation !== "lighter")
+        throw new Error(
+          "Canvas additive blend is unavailable; cannot preserve painted alpha",
+        );
+      context.globalCompositeOperation = "source-over";
+    }
     context.imageSmoothingEnabled = false;
     context.beginPath();
     context.rect(0, 0, plan.width, plan.height);

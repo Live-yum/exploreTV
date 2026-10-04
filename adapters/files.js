@@ -61,15 +61,13 @@ export async function saveText(text, name) {
   // #ifdef MP-WEIXIN
   const path = `${wx.env.USER_DATA_PATH}/${name}`;
   await new Promise((resolve, reject) =>
-    wx
-      .getFileSystemManager()
-      .writeFile({
-        filePath: path,
-        data: text,
-        encoding: "utf8",
-        success: resolve,
-        fail: reject,
-      }),
+    wx.getFileSystemManager().writeFile({
+      filePath: path,
+      data: text,
+      encoding: "utf8",
+      success: resolve,
+      fail: reject,
+    }),
   );
   return path;
   // #endif
@@ -116,4 +114,20 @@ export async function loadTexture(file, canvas) {
       finish(error);
     }
   });
+}
+
+export function createProcessingCanvas(width, height) {
+  // #ifdef H5
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  return canvas;
+  // #endif
+  // #ifdef MP-WEIXIN
+  if (typeof wx.createOffscreenCanvas === "function")
+    return wx.createOffscreenCanvas({ type: "2d", width, height });
+  const error = new Error("Offscreen Canvas 2D unavailable");
+  error.reason = "offscreen-canvas-unavailable";
+  throw error;
+  // #endif
 }

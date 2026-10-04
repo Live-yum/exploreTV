@@ -35,6 +35,7 @@ test("import, real sprite API, missing diagnostics, rectangle validation, save a
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
   await expect(page.getByText("把建筑，留成一个片段。")).toBeVisible();
+  await page.getByRole("button", { name: "染色：开启", exact: true }).click();
   async function upload(button, files) {
     const wait = page.waitForEvent("filechooser");
     await page.getByRole("button", { name: button, exact: true }).click();

@@ -82,7 +82,8 @@ export function prepareSceneFrames(
     assets instanceof Map ? assets.get(name) : assets?.[name];
   const required = (c) =>
     inputEncoding === "tconvert-game-raw" || (c.paintId || 0) !== 0;
-  let scratch = null;
+  let scratch = null,
+    disposed = false;
   for (const c of plan.commands) {
     if (!required(c)) continue;
     if (c.paintId) support.paintedCommands++;
@@ -132,6 +133,7 @@ export function prepareSceneFrames(
       scratch.width = c.sw;
       scratch.height = c.sh;
       const ctx = scratch.getContext("2d");
+      ctx.imageSmoothingEnabled = false;
       ctx.clearRect(0, 0, c.sw, c.sh);
       ctx.drawImage(source, c.sx, c.sy, c.sw, c.sh, 0, 0, c.sw, c.sh);
       const pixels = ctx.getImageData(0, 0, c.sw, c.sh),
@@ -176,6 +178,7 @@ export function prepareSceneFrames(
     }
   }
   const resolve = (c) => {
+    if (disposed) return { unsupported: "prepared-frames-disposed" };
     if (!required(c)) return null;
     const key = sceneFrameKey(c);
     return (
@@ -209,5 +212,21 @@ export function prepareSceneFrames(
         .map(([k, v]) => `${k}=${v}`)
         .join(", ")}.`,
     );
-  return { resolve, support, warnings, opaqueScene, inputEncoding };
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    for (const frame of frames.values())
+      for (const canvas of [frame.base, frame.additive])
+        if (canvas) {
+          canvas.width = 1;
+          canvas.height = 1;
+        }
+    if (scratch) {
+      scratch.width = 1;
+      scratch.height = 1;
+    }
+    frames.clear();
+    failures.clear();
+  };
+  return { resolve, dispose, support, warnings, opaqueScene, inputEncoding };
 }

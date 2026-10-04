@@ -174,3 +174,39 @@ test("planner carries separate wall and block paint and requested liquid layer",
   prepareSceneFrames(p, new Map(), createCanvas, { opaqueScene: true });
   assert.equal(JSON.stringify(r), before);
 });
+test("prepared frame disposal releases canvas stores and is idempotent", () => {
+  const p = plan([command({ paintId: 26 })]),
+    assets = new Map([["Wall_1.png", texture([128, 128, 128, 128])]]);
+  const f = prepareSceneFrames(p, assets, createCanvas, {
+    inputEncoding: "tconvert-game-raw",
+    opaqueScene: true,
+  });
+  const frame = f.resolve(p.commands[0]);
+  assert.ok(frame.base.width > 0);
+  f.dispose();
+  f.dispose();
+  assert.equal(frame.base.width, 1);
+  assert.equal(frame.additive.width, 1);
+  assert.equal(
+    f.resolve(p.commands[0]).unsupported,
+    "prepared-frames-disposed",
+  );
+});
+test("transparent scene uses source-over and restores caller blend state", () => {
+  const assets = new Map([["Wall_1.png", texture([90, 40, 20, 255])]]);
+  const p = plan([command()]),
+    c = createCanvas(1, 1),
+    ctx = c.getContext("2d");
+  ctx.globalCompositeOperation = "destination-out";
+  ctx.globalAlpha = 0.2;
+  renderScene(ctx, p, assets);
+  assert.deepEqual([...ctx.getImageData(0, 0, 1, 1).data], [90, 40, 20, 255]);
+  assert.equal(ctx.globalCompositeOperation, "destination-out");
+  assert.ok(Math.abs(ctx.globalAlpha - 0.2) < 0.01);
+});
+test("Canvas raw-channel fidelity limit is explicit at very low alpha", () => {
+  const c = texture([60, 30, 15, 1], 1, 1);
+  const got = [...c.getContext("2d").getImageData(0, 0, 1, 1).data];
+  assert.equal(got[3], 1);
+  assert.notDeepEqual(got, [60, 30, 15, 1]);
+});

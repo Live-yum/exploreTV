@@ -39,12 +39,60 @@
         ><button
           role="button"
           @click="save"
-          :disabled="busy || !region || !rangeMatches"
+          :disabled="busy || !region || !rangeMatches || !renderValid"
         >
           4 提取 / 保存 Tile
         </button></view
       ></view
     >
+    <view class="card effects-card">
+      <view class="row">
+        <button role="button" @click="toggleEffect('paint')" :disabled="busy">
+          染色：{{ paintEnabled ? "开启" : "关闭" }}
+        </button>
+        <button role="button" @click="toggleEffect('liquid')" :disabled="busy">
+          液体：{{ liquidEnabled ? "静态近似" : "关闭" }}
+        </button>
+        <button
+          role="button"
+          @click="toggleEffect('encoding')"
+          :disabled="busy"
+        >
+          PNG通道：{{
+            assetEncoding === "tconvert-game-raw" ? "TConvert原始" : "标准透明"
+          }}
+        </button>
+        <button
+          role="button"
+          @click="toggleEffect('backdrop')"
+          :disabled="busy"
+        >
+          画布：{{ opaqueScene ? "黑底预乘合成" : "透明" }}
+        </button>
+      </view>
+      <view class="muted"
+        >颜色编码必须与贴图来源一致。黑底是整幅场景的校验背景，不是把每张物体先铺黑；透明模式无法表示的染色会明确跳过。</view
+      >
+      <view class="row" v-if="liquidEnabled">
+        <view class="effect-field"
+          ><text>水样式 ID</text
+          ><input aria-label="水样式 ID" type="number" v-model="waterStyle"
+        /></view>
+        <view class="effect-field"
+          ><text>液体静止帧（0–15）</text
+          ><input aria-label="液体静止帧" type="number" v-model="liquidFrame"
+        /></view>
+        <button role="button" @click="toggleEffect('layer')" :disabled="busy">
+          液体层：{{ liquidLayer === "foreground" ? "前景" : "背景" }}
+        </button>
+        <button role="button" @click="applyEffects" :disabled="busy || !region">
+          应用液体参数
+        </button>
+      </view>
+      <view class="muted"
+        >液体采用原贴图的静态平面填充近似；流动、波形、微光和形状交叠仍不完整。光照模式：全亮纹理检查。</view
+      >
+    </view>
     <view class="card canvas-card"
       ><view class="row"
         ><text>场景预览 · {{ renderLabel }}</text
@@ -120,35 +168,52 @@
       }}</view></view
     >
     <view class="foot"
-      >贴图不随代码分发。请使用有权使用的
-      Tiles_N.png、Wall_N.png。文件只在当前设备处理。保存包含 Tile
+      >贴图不随代码分发。请使用有权使用的 Tiles_N.png、Wall_N.png 和
+      Misc/water_N.png。文件只在当前设备处理。保存包含 Tile
       字段，不含箱子物品、告示牌文本、实体或 NPC；不会写回
       .wld。跨边界家具按矩形截断，请扩大范围保留完整家具。</view
     >
   </view>
 </template>
 <script setup>
-import { ref, computed, shallowRef, onMounted, getCurrentInstance } from "vue";
+import {
+  ref,
+  computed,
+  shallowRef,
+  onMounted,
+  getCurrentInstance,
+  onBeforeUnmount,
+} from "vue";
 import {
   rectangleFromDrag,
   moveRectangle,
   contentViewportBounds,
 } from "../../core/selection.mjs";
 import { decodeUtf8 } from "../../core/utf8.mjs";
-import { openWorld, extractRegion } from "../../core/world.mjs";
+import { openWorld, extractSceneRegion } from "../../core/world.mjs";
 import {
   saveFragment,
   loadFragment,
   cropFragment,
 } from "../../core/fragment.mjs";
+import { prepareSceneFrames } from "../../core/scene-frames.mjs";
 import { planScene, renderScene } from "../../core/renderer.mjs";
 import {
   chooseFiles,
   readBytes,
   saveText,
   loadTexture,
+  createProcessingCanvas,
 } from "../../adapters/files.js";
 const instance = getCurrentInstance();
+const paintEnabled = ref(true),
+  liquidEnabled = ref(true),
+  assetEncoding = ref("tconvert-game-raw"),
+  opaqueScene = ref(true),
+  waterStyle = ref(0),
+  liquidFrame = ref(0),
+  liquidLayer = ref("foreground"),
+  renderValid = ref(false);
 const baseFragment = shallowRef(null);
 const world = shallowRef(null),
   region = shallowRef(null),
@@ -192,6 +257,19 @@ const selectionStyle = computed(() => {
 });
 let canvas, ctx;
 const assets = new Map();
+let assetRevision = 0,
+  preparedCache = null;
+function clearProcessingFrames() {
+  preparedCache?.frames.dispose();
+  preparedCache = null;
+}
+onBeforeUnmount(() => {
+  clearProcessingFrames();
+  assets.clear();
+  world.value = null;
+  baseFragment.value = null;
+  region.value = null;
+});
 async function task(fn) {
   if (busy.value) return;
   busy.value = true;
@@ -237,9 +315,11 @@ function importWorld() {
     const [file] = await chooseFiles();
     if (!file) return;
     const next = openWorld(await readBytes(file));
+    clearProcessingFrames();
     world.value = next;
     baseFragment.value = null;
     region.value = null;
+    renderValid.value = false;
     selection.value = null;
     zoom.value = 1;
     warnings.value = [];
@@ -261,7 +341,7 @@ function importTextures() {
     const files = await chooseFiles({ multiple: true, accept: ".png" });
     for (const file of files) {
       const name = file.name?.split("/").pop();
-      if (!/^(Tiles|Wall)_\d+\.png$/.test(name)) continue;
+      if (!/^(Tiles|Wall|water)_\d+\.png$/.test(name)) continue;
       if (assets.size >= 256 && !assets.has(name))
         throw new Error("贴图缓存达到 256 张上限，请重开页面释放");
       const image = await loadTexture(file, canvas);
@@ -274,6 +354,7 @@ function importTextures() {
         image.width * image.height * 4;
       if (bytes > 48 * 1024 * 1024) throw new Error("贴图缓存超过 48 MiB 限制");
       assets.set(name, image);
+      assetRevision++;
       assetCount.value = assets.size;
     }
     assetCount.value = assets.size;
@@ -283,7 +364,44 @@ function importTextures() {
 }
 async function draw() {
   if (!canvas) await initCanvas();
-  const plan = planScene(region.value);
+  renderValid.value = false;
+  const plan = planScene(region.value, {
+    paintEnabled: paintEnabled.value,
+    liquids: {
+      enabled: liquidEnabled.value,
+      waterStyle: Number(waterStyle.value),
+      frame: Number(liquidFrame.value),
+      waterfallFrame: Number(liquidFrame.value),
+      layer: liquidLayer.value,
+    },
+  });
+  const processingKey = JSON.stringify([
+    paintEnabled.value,
+    liquidEnabled.value,
+    assetEncoding.value,
+    opaqueScene.value,
+    waterStyle.value,
+    liquidFrame.value,
+    liquidLayer.value,
+  ]);
+  if (
+    !preparedCache ||
+    preparedCache.region !== region.value ||
+    preparedCache.assetRevision !== assetRevision ||
+    preparedCache.key !== processingKey
+  ) {
+    clearProcessingFrames();
+    preparedCache = {
+      region: region.value,
+      assetRevision,
+      key: processingKey,
+      frames: prepareSceneFrames(plan, assets, createProcessingCanvas, {
+        inputEncoding: assetEncoding.value,
+        opaqueScene: opaqueScene.value,
+      }),
+    };
+  }
+  const frames = preparedCache.frames;
   const scale = zoom.value * Math.min(1, 720 / plan.width, 480 / plan.height);
   canvasWidth.value = Math.max(1, Math.round(plan.width * scale));
   canvasHeight.value = Math.max(1, Math.round(plan.height * scale));
@@ -292,7 +410,8 @@ async function draw() {
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, plan.width, plan.height);
-  const result = renderScene(ctx, plan, assets);
+  const result = renderScene(ctx, plan, assets, { sceneFrames: frames });
+  renderValid.value = true;
   warnings.value = [...(result.warnings || [])];
   if (plan.unsupportedCells?.length)
     warnings.value.push(
@@ -305,10 +424,42 @@ async function draw() {
   warnings.value.push(
     "本预览未实现完整光照/动态效果。保存仅保留原始 Tile 数据，不代表画面完整，也不含箱子物品等附属数据。",
   );
+  if (plan.support.liquidDrawing.unsupportedCoordinates.length)
+    warnings.value.push(
+      "未绘制液体（前32格）：" +
+        plan.support.liquidDrawing.unsupportedCoordinates
+          .slice(0, 32)
+          .map((t) => `(${t.x},${t.y}):${t.reason}`)
+          .join("；"),
+    );
+  warnings.value.push(
+    `图像处理：${frames.support.preparedFrames} 帧，${frames.support.bytes} 字节；液体 ${plan.support.liquidDrawing.drawn} 格。`,
+  );
   if (result.missingAssets?.length)
     warnings.value.push("缺少贴图：" + result.missingAssets.join(", "));
   renderLabel.value = `${region.value.rect.width} × ${region.value.rect.height} 格 · (${region.value.rect.x}, ${region.value.rect.y}) · 静态近似`;
-  status.value = `已绘制 ${result.drawn || 0} 个贴图片段。${result.missingAssets.length || plan.support.unsupportedTiles || plan.support.liquid ? "预览不完整，请查看下方缺失信息。" : ""}缺失内容不会用地图色块替代。`;
+  status.value = `已绘制 ${result.drawn || 0} 个贴图片段。${result.missingAssets.length || plan.support.unsupportedTiles || result.skippedEffects || plan.support.liquidDrawing.unsupported ? "预览不完整，请查看下方缺失信息。" : ""}缺失内容不会用地图色块替代。`;
+}
+function toggleEffect(which) {
+  return task(async () => {
+    if (which === "paint") paintEnabled.value = !paintEnabled.value;
+    if (which === "liquid") liquidEnabled.value = !liquidEnabled.value;
+    if (which === "encoding")
+      assetEncoding.value =
+        assetEncoding.value === "tconvert-game-raw"
+          ? "standard-straight"
+          : "tconvert-game-raw";
+    if (which === "backdrop") opaqueScene.value = !opaqueScene.value;
+    if (which === "layer")
+      liquidLayer.value =
+        liquidLayer.value === "foreground" ? "background" : "foreground";
+    if (region.value) await draw();
+  });
+}
+function applyEffects() {
+  return task(async () => {
+    if (region.value) await draw();
+  });
 }
 function preview() {
   return task(async () => {
@@ -316,7 +467,7 @@ function preview() {
       Object.entries(rect.value).map(([k, v]) => [k, Number(v)]),
     );
     region.value = world.value
-      ? extractRegion(world.value, r)
+      ? extractSceneRegion(world.value, r)
       : cropFragment(baseFragment.value, r);
     selection.value = null;
     await draw();
@@ -342,7 +493,7 @@ function pan(dx, dy) {
       world.value.width,
       world.value.height,
     );
-    region.value = extractRegion(world.value, rect.value);
+    region.value = extractSceneRegion(world.value, rect.value);
     selection.value = null;
     await draw();
   });
@@ -414,6 +565,7 @@ function cancelSelection() {
 }
 function save() {
   return task(async () => {
+    if (!renderValid.value) throw new Error("请先成功生成预览");
     if (!rangeMatches.value) throw new Error("范围已改变，请重新预览");
     const text = saveFragment(region.value),
       check = loadFragment(text);
@@ -431,6 +583,7 @@ function importFragment() {
     region.value = loadFragment(
       decodeUtf8(await readBytes(file, 16 * 1024 * 1024)),
     );
+    clearProcessingFrames();
     world.value = null;
     baseFragment.value = region.value;
     worldInfo.value = `已保存片段 · ${region.value.source.name} · v${region.value.version}`;
@@ -483,6 +636,17 @@ function importFragment() {
   border-radius: 14px;
   padding: 18px;
   margin: 14px 0;
+}
+.effect-field {
+  flex: 1;
+  min-width: 140px;
+  margin-top: 12px;
+}
+.effect-field input {
+  margin-top: 6px;
+}
+.effects-card .row {
+  margin-bottom: 10px;
 }
 .field {
   flex: 1;
