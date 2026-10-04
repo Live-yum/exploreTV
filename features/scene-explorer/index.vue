@@ -3,9 +3,9 @@
   <view class="eyebrow">EXPLORE TV · TECHNICAL PREVIEW</view>
   <view class="title">把建筑，留成一个片段。</view>
   <view class="intro">导入世界，选定矩形，用真实贴图查看场景，再保存完整 Tile 记录。预览是静态近似，不是完整游戏渲染。</view>
-  <view class="steps"><button @click="importWorld" :disabled="busy">1 导入 .wld</button><button @click="importTextures" :disabled="busy">2 导入 PNG 贴图</button><button @click="importFragment" :disabled="busy">打开已保存片段</button></view>
+  <view class="steps"><button role="button" @click="importWorld" :disabled="busy">1 导入 .wld</button><button role="button" @click="importTextures" :disabled="busy">2 导入 PNG 贴图</button><button role="button" @click="importFragment" :disabled="busy">打开已保存片段</button></view>
   <view class="card" v-if="worldInfo"><view>{{worldInfo}}</view><view class="muted">原始世界只读。范围采用左闭右开坐标；每格 16 游戏像素。</view></view>
-  <view class="card"><view class="row"><view v-for="key in ['x','y','width','height']" :key="key" class="field"><text>{{labels[key]}}</text><input type="number" v-model="rect[key]" /></view></view><view class="row"><button @click="preview" :disabled="busy || !world">3 生成场景预览</button><button @click="save" :disabled="busy || !region || !rangeMatches">4 提取 / 保存 Tile</button></view></view>
+  <view class="card"><view class="row"><view v-for="key in ['x','y','width','height']" :key="key" class="field"><text>{{labels[key]}}</text><input type="number" v-model="rect[key]" /></view></view><view class="row"><button role="button" @click="preview" :disabled="busy || !world">3 生成场景预览</button><button role="button" @click="save" :disabled="busy || !region || !rangeMatches">4 提取 / 保存 Tile</button></view></view>
   <view class="card canvas-card"><view class="row"><text>场景预览 · {{renderLabel}}</text><text>{{assetCount}} 张贴图已载入</text></view><canvas id="scene" canvas-id="scene" type="2d" class="canvas" :style="{width:canvasWidth+'px',height:canvasHeight+'px'}"/><view v-if="!region" class="muted">尚未生成场景。请导入 .wld 并选择矩形。</view></view>
   <view class="card status" :class="{error:hasError}">{{status}}</view>
   <view class="card" v-if="warnings.length"><view>渲染范围与缺失信息</view><view class="warning" v-for="(warning,i) in warnings" :key="i">{{warning}}</view></view>
