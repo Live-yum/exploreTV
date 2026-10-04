@@ -1,5 +1,6 @@
 /** Original texture-only preview planner. See docs/rendering-scope.md for fidelity limits. */
 import { cellAt } from "./world.mjs";
+import { planLiquids } from "./liquid.mjs";
 const BLOCK_FRAME = [
   [162, 54],
   [108, 54],
@@ -104,6 +105,7 @@ function slopePolygon(shape) {
 }
 export function planScene(region, options = {}) {
   const { revealInvisible = false, tiles = true, walls = true } = options;
+  const paintEnabled = options.paintEnabled === true;
   const w = region?.rect?.width,
     h = region?.rect?.height;
   if (
@@ -191,11 +193,23 @@ export function planScene(region, options = {}) {
           x,
           y,
           type: t.wall,
+          paintId: paintEnabled ? t.wallPaint || 0 : 0,
           fidelity: "approximate",
         });
         support.walls++;
         support.approximateWalls++;
       }
+  const liquidPlan = planLiquids(region, {
+    ...options.liquids,
+    isSolid: (tile) =>
+      ordinary.has(tile.type)
+        ? true
+        : [4, 19, 213, 353, 365, 366, 504].includes(tile.type)
+          ? false
+          : undefined,
+  });
+  if (liquidPlan.support.layer === "background")
+    for (const command of liquidPlan.commands) add(command);
   for (let x = 0; x < w; x++)
     for (let y = 0; y < h; y++) {
       const t = cellAt(region, x, y);
@@ -299,6 +313,7 @@ export function planScene(region, options = {}) {
         x,
         y,
         type: t.type,
+        paintId: paintEnabled ? t.paint || 0 : 0,
         fidelity,
       };
       if (shape === 1) {
@@ -313,6 +328,8 @@ export function planScene(region, options = {}) {
       add(command);
       support.tiles++;
     }
+  if (liquidPlan.support.layer === "foreground")
+    for (const command of liquidPlan.commands) add(command);
   const warnings = [
     "Static unlit texture preview; not a pixel-exact Terraria screenshot. Region-edge framing has no outside-neighbor context.",
   ];
@@ -346,12 +363,12 @@ export function planScene(region, options = {}) {
           .join(", ") +
         ").",
     );
-  if (support.paint)
+  if (support.paint && !paintEnabled)
     warnings.push(
       support.paint +
         " painted cells shown with their unpainted source textures.",
     );
-  if (support.liquid)
+  if (support.liquid && !options.liquids?.enabled)
     warnings.push(
       support.liquid + " liquid cells preserved in data but not rendered.",
     );
@@ -375,18 +392,30 @@ export function planScene(region, options = {}) {
       support.shapes +
         " half/slope cells use simplified geometry; special slope frames and neighbor edge corrections are omitted.",
     );
+  if (paintEnabled && support.paint)
+    warnings.push(
+      "Paint uses source-derived pixel formulas with explicit input-channel association; unsupported masks/alpha paths are reported separately.",
+    );
+  warnings.push(...liquidPlan.warnings);
+  support.liquidDrawing = liquidPlan.support;
   return {
     commands,
     warnings,
     support,
     unsupportedCells,
+    paintEnabled,
     requiredAssets: [...assets].sort(),
     width: w * 16,
     height: h * 16,
   };
 }
 /** Preflight all textures before strict drawing. Never substitutes colors or invented sprites. */
-export function renderScene(context, plan, assets, { strict = false } = {}) {
+export function renderScene(
+  context,
+  plan,
+  assets,
+  { strict = false, sceneFrames = null } = {},
+) {
   const get = (name) =>
     assets instanceof Map ? assets.get(name) : assets?.[name];
   const missing = new Set(),
@@ -410,7 +439,7 @@ export function renderScene(context, plan, assets, { strict = false } = {}) {
   }
   const missingAssets = [...missing].sort(),
     invalidAssets = [...invalid].sort();
-  const warnings = [...plan.warnings];
+  const warnings = [...plan.warnings, ...(sceneFrames?.warnings || [])];
   if (missing.size)
     warnings.push("Missing textures: " + missingAssets.join(", "));
   if (invalid.size)
@@ -420,17 +449,33 @@ export function renderScene(context, plan, assets, { strict = false } = {}) {
     );
   if (strict && (missing.size || invalid.size))
     throw new Error(warnings.slice(plan.warnings.length).join("; "));
-  let drawn = 0;
+  let drawn = 0,
+    skippedEffects = 0;
   context.save();
   try {
     context.imageSmoothingEnabled = false;
     context.beginPath();
     context.rect(0, 0, plan.width, plan.height);
     context.clip();
+    if (sceneFrames?.opaqueScene) {
+      context.globalAlpha = 1;
+      context.globalCompositeOperation = "source-over";
+      context.fillStyle = "#000000";
+      context.fillRect(0, 0, plan.width, plan.height);
+    }
     for (const c of plan.commands) {
       if (missing.has(c.asset) || invalid.has(c.asset)) continue;
+      const frame = sceneFrames?.resolve(c);
+      if (frame?.unsupported) {
+        skippedEffects++;
+        continue;
+      }
       context.save();
       try {
+        if (c.opacity !== undefined)
+          context.globalAlpha =
+            (Number.isFinite(context.globalAlpha) ? context.globalAlpha : 1) *
+            c.opacity;
         if (c.clip) {
           context.beginPath();
           c.clip.forEach(([x, y], i) =>
@@ -440,9 +485,9 @@ export function renderScene(context, plan, assets, { strict = false } = {}) {
           context.clip();
         }
         context.drawImage(
-          get(c.asset),
-          c.sx,
-          c.sy,
+          frame?.base || get(c.asset),
+          frame?.base ? 0 : c.sx,
+          frame?.base ? 0 : c.sy,
           c.sw,
           c.sh,
           c.dx,
@@ -450,6 +495,24 @@ export function renderScene(context, plan, assets, { strict = false } = {}) {
           c.dw,
           c.dh,
         );
+        if (frame?.additive) {
+          context.globalCompositeOperation = "lighter";
+          if (context.globalCompositeOperation !== "lighter")
+            throw new Error(
+              "Canvas additive blend is unavailable; cannot preserve painted alpha",
+            );
+          context.drawImage(
+            frame.additive,
+            0,
+            0,
+            c.sw,
+            c.sh,
+            c.dx,
+            c.dy,
+            c.dw,
+            c.dh,
+          );
+        }
         drawn++;
       } finally {
         context.restore();
@@ -458,5 +521,12 @@ export function renderScene(context, plan, assets, { strict = false } = {}) {
   } finally {
     context.restore();
   }
-  return { drawn, missingAssets, invalidAssets, warnings };
+  return {
+    drawn,
+    skippedEffects,
+    paintSupport: sceneFrames?.support || null,
+    missingAssets,
+    invalidAssets,
+    warnings,
+  };
 }

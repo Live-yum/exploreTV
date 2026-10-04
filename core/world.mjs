@@ -45,6 +45,12 @@ export class Reader {
     this.pos += 4;
     return v;
   }
+  f64() {
+    this.need(8);
+    const value = this.view.getFloat64(this.pos, true);
+    this.pos += 8;
+    return value;
+  }
   skip(n) {
     this.need(n);
     this.pos += n;
@@ -193,6 +199,17 @@ export function openWorld(input) {
     width * height > LIMITS.worldTiles
   )
     throw new FormatError("World dimensions exceed budget");
+  // Optional scene metadata. Layout is fixed for the explicitly supported versions.
+  // A fragment never needs the rest of the world header or non-Tile sections.
+  let worldSurface;
+  const sceneMetadataSkip =
+    4 + (version >= 302 ? 9 : 8) + 8 + (version >= 284 ? 8 : 0) + 1 + 68 + 8;
+  if (r.pos + sceneMetadataSkip + 8 <= r.end) {
+    r.skip(sceneMetadataSkip);
+    const candidate = r.f64();
+    if (Number.isFinite(candidate) && candidate >= 0 && candidate <= height)
+      worldSurface = candidate;
+  }
   r.pos = sections[1];
   r.end = sections[2];
   const columns = new Uint32Array(width + 1);
@@ -218,6 +235,7 @@ export function openWorld(input) {
     id,
     width,
     height,
+    worldSurface,
     bytes,
     important,
     sections,
@@ -259,6 +277,9 @@ export function extractRegion(world, rect) {
       id: world.id,
       width: world.width,
       height: world.height,
+      ...(world.worldSurface === undefined
+        ? {}
+        : { worldSurface: world.worldSurface }),
     },
   };
 }
@@ -266,4 +287,26 @@ export function cellAt(region, x, y) {
   if (x < 0 || y < 0 || x >= region.rect.width || y >= region.rect.height)
     return null;
   return region.cells[x * region.rect.height + y];
+}
+/** Read-only render halo. It is intentionally excluded from fragment serialization. */
+export function extractSceneRegion(world, rect, padding = 12) {
+  if (!Number.isSafeInteger(padding) || padding < 0 || padding > 16)
+    throw new FormatError("Invalid render padding");
+  const region = extractRegion(world, rect);
+  const x = Math.max(0, region.rect.x - padding),
+    y = Math.max(0, region.rect.y - padding);
+  const width =
+    Math.min(world.width, region.rect.x + region.rect.width + padding) - x;
+  const height =
+    Math.min(world.height, region.rect.y + region.rect.height + padding) - y;
+  if (
+    width <= LIMITS.regionSide &&
+    height <= LIMITS.regionSide &&
+    width * height <= LIMITS.regionTiles
+  ) {
+    region.context = extractRegion(world, { x, y, width, height });
+  } else
+    region.contextUnavailableReason =
+      "Render halo exceeds the bounded region budget";
+  return region;
 }

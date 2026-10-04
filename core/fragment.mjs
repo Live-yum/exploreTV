@@ -126,8 +126,20 @@ export function loadFragment(text) {
     p.source.id < -2147483648 ||
     p.source.id > 2147483647 ||
     Object.keys(p.source).some(
-      (k) => !["signature", "name", "id", "width", "height"].includes(k),
+      (k) =>
+        ![
+          "signature",
+          "name",
+          "id",
+          "width",
+          "height",
+          "worldSurface",
+        ].includes(k),
     ) ||
+    (p.source.worldSurface !== undefined &&
+      (!Number.isFinite(p.source.worldSurface) ||
+        p.source.worldSurface < 0 ||
+        p.source.worldSurface > p.source.height)) ||
     p.source.width > 10000 ||
     p.source.height > 5000 ||
     !["relogic", "xindong"].includes(p.source.signature) ||

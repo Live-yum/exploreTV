@@ -370,3 +370,25 @@ test("loaded fragment can be cropped independently without borrowing a different
   cropped.raw[0][0] = 255;
   assert.notEqual(cropped.raw[0][0], region.raw[5][0]);
 });
+test("bounded rendering halo never leaks outside-selected Tile records into saved fragment", async () => {
+  const { extractSceneRegion } = await import("../core/world.mjs");
+  const world = openWorld(fixtureWorld({ width: 40, height: 30 }).bytes),
+    region = extractSceneRegion(
+      world,
+      { x: 12, y: 12, width: 4, height: 3 },
+      8,
+    );
+  assert.deepEqual(region.context.rect, { x: 4, y: 4, width: 20, height: 19 });
+  assert.equal(region.raw.length, 12);
+  const restored = loadFragment(saveFragment(region));
+  assert.equal(restored.context, undefined);
+  assert.equal(restored.raw.length, 12);
+  assert.equal(restored.source.worldSurface, 0);
+  assert.throws(() => extractSceneRegion(world, region.rect, 999), /padding/);
+});
+test("optional scene surface metadata is validated in fragments", () => {
+  const r = whole(openWorld(fixtureWorld().bytes)),
+    p = JSON.parse(saveFragment(r)).payload;
+  p.source.worldSurface = 1e99;
+  assert.throws(() => loadFragment(resign(p)), /source/);
+});
