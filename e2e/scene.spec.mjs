@@ -74,6 +74,7 @@ test("import, real sprite API, missing diagnostics, rectangle validation, save a
     steps: 5,
   });
   await page.mouse.up();
+  expect(errors).toEqual([]);
   await expect(page.locator(".field input").nth(2)).toHaveValue("20");
   await expect(page.locator(".field input").nth(3)).toHaveValue("21");
   await page

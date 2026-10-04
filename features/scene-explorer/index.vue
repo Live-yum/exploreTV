@@ -86,9 +86,9 @@
         id="selection-surface"
         class="selection-surface"
         :style="{ width: canvasWidth + 'px', height: canvasHeight + 'px' }"
-        @mousedown.stop="startSelection"
-        @mousemove.stop="moveSelection"
-        @mouseup.stop="endSelection"
+        @mousedown.capture.stop="startSelection"
+        @mousemove.capture.stop="moveSelection"
+        @mouseup.capture.stop="endSelection"
         @mouseleave="endSelection"
         @touchstart.stop.prevent="startSelection"
         @touchmove.stop.prevent="moveSelection"
@@ -269,6 +269,7 @@ function importTextures() {
         image.width * image.height * 4;
       if (bytes > 48 * 1024 * 1024) throw new Error("贴图缓存超过 48 MiB 限制");
       assets.set(name, image);
+      assetCount.value=assets.size;
     }
     assetCount.value = assets.size;
     status.value = `已载入 ${assets.size} 张真实贴图。`;
@@ -354,7 +355,7 @@ async function startSelection(event) {
   else if (Date.now() - lastTouchAt < 500) return;
   let bounds;
   // #ifdef H5
-  bounds = event.currentTarget.getBoundingClientRect();
+  bounds = document.getElementById("selection-surface").getBoundingClientRect();
   // #endif
   // #ifdef MP-WEIXIN
   bounds = await new Promise((resolve) =>
@@ -408,7 +409,7 @@ function save() {
       check = loadFragment(text);
     if (check.raw.length !== region.value.raw.length)
       throw new Error("恢复校验失败");
-    const name = `building-${region.value.rect.x}-${region.value.rect.y}.tvtiles.json`,
+    const name = `building-${region.value.rect.x}-${region.value.rect.y}-${Date.now()}.tvtiles.json`,
       path = await saveText(text, name);
     status.value = `已保存并重新读取验证 ${check.raw.length} 个 Tile：${path}。CRC32 为损坏检测，不是安全签名。`;
   });
