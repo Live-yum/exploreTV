@@ -62,3 +62,4 @@ test('malformed and over-budget regions fail',()=>{
  assert.throws(()=>planScene(region(2,2,[])),/Invalid/);assert.throws(()=>planScene(region(513,1,[])),/oversized/);
 });
 
+test('workbench horizontal atlas style wrapping and stored platform frames',()=>{const region={rect:{x:0,y:0,width:2,height:1},cells:[{active:true,type:18,frameX:2034,frameY:0},{active:true,type:19,frameX:0,frameY:774}]};const plan=planScene(region);assert.deepEqual(plan.commands.map(c=>[c.type,c.sx,c.sy,c.sw,c.sh]),[[18,18,20,16,16],[19,0,774,16,16]]);assert.equal(plan.support.unsupportedTiles,0);});

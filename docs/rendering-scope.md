@@ -29,3 +29,7 @@ The pinned reference repository reports public visibility but no license; no dec
 - [Tile draw-data adjustments](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria.GameContent.Drawing/TileDrawing.cs#L4567): per-type dimensions and offsets prevent treating every saved frame as a universal 16×16 sprite.
 
 Tests use mocked drawing contexts and synthetic tile metadata, not proprietary artwork. They verify ordering, coordinates, clipping intent, invisibility, diagnostics, no-fallback behavior, and immutability; they do not establish visual parity with a real world and matching game assets.
+
+## Version boundary
+
+The supplied real test world is the xindong v315 format; texture examples come from the user-specified1.4.5.8 output. Reading a supported serialized format does not establish all tile-ID or texture-layout compatibility between versions. Sprite bounds are validated against actual imported dimensions. There is no authoritative game screenshot oracle in this prototype. A pixel-crop test validates source-to-canvas copying, not game rendering equivalence.

@@ -6,7 +6,7 @@ const WALL_CENTER = [[2,0,0],[0,1,4],[0,3,0]];
 const NEIGHBORS = [[0,-1,1],[-1,0,2],[1,0,4],[0,1,8]];
 export const ORDINARY_BLOCKS = Object.freeze([0,1,2,6,7,8,9,22,23,25,30,37,38,39,40,41,43,44,45,46,47,48,53,56,57,58,59,60,63,64,65,66,67,68,70,75,76,107,108,109,111,112,116,117,118,119,120,121,122,140,147,161,163,164,166,167,168,169,175,176,177,179,180,181,182,183,189,190,191,192,193,194,195,196,197,198,199,200,202,203,204,206,208,211,221,222,223,224,225,226,229,230,232,234,239,248,250,251,252,253]);
 const ordinary = new Set(ORDINARY_BLOCKS);
-export const STORED_FRAME_TILES = Object.freeze([10,11,14,15,21,27,172]);
+export const STORED_FRAME_TILES = Object.freeze([10,11,14,15,18,19,21,27,172]);
 const stored = new Set(STORED_FRAME_TILES);
 const modulo3 = n => ((n % 3) + 3) % 3;
 function maskAt(region,x,y,predicate) { let mask=0; for(const [dx,dy,bit] of NEIGHBORS) if(predicate(cellAt(region,x+dx,y+dy)))mask|=bit;return mask; }
@@ -24,11 +24,11 @@ export function planScene(region,options={}) {
   const {revealInvisible=false,tiles=true,walls=true}=options;
   const w=region?.rect?.width,h=region?.rect?.height;
   if(!Number.isSafeInteger(w)||!Number.isSafeInteger(h)||w<1||h<1||w>512||h>512||w*h>65536||region.cells?.length!==w*h)throw new Error('Invalid or oversized scene region');
-  const commands=[],assets=new Set(),unsupported=new Map();
+  const commands=[],assets=new Set(),unsupported=new Map(),unsupportedCells=[];
   const support={tiles:0,walls:0,storedFrames:0,approximateTiles:0,approximateWalls:0,unsupportedTiles:0,hiddenTiles:0,hiddenWalls:0,paint:0,liquid:0,wires:0,inactive:0,coatings:0,shapes:0};
   const visible=t=>t?.active&&(revealInvisible||!t.invisibleBlock);
   const add=c=>{commands.push(c);assets.add(c.asset);};
-  const reject=t=>{support.unsupportedTiles++;unsupported.set(t.type,(unsupported.get(t.type)||0)+1);};
+  const reject=(t,x,y)=>{unsupportedCells.push({x:x+(region.rect.x||0),y:y+(region.rect.y||0),type:t.type});support.unsupportedTiles++;unsupported.set(t.type,(unsupported.get(t.type)||0)+1);};
   // Whole wall pass first, so a wall crop cannot cover a foreground sprite.
   if(walls)for(let x=0;x<w;x++)for(let y=0;y<h;y++){
     const t=cellAt(region,x,y);if(!t?.wall)continue;
@@ -46,13 +46,13 @@ export function planScene(region,options={}) {
     if(t.inactive)support.inactive++;if(t.fullbrightBlock||t.fullbrightWall)support.coatings++;
     if(!tiles||!t.active)continue;
     if(!visible(t)){support.hiddenTiles++;continue;}
-    const shape=t.shape||0;if(shape>5||shape<0){reject(t);continue;}
+    const shape=t.shape||0;if(shape>5||shape<0){reject(t,x,y);continue;}
     let sx,sy,sh=16,fidelity;
     const hasFrame=Number.isInteger(t.frameX)&&Number.isInteger(t.frameY)&&t.frameX>=0&&t.frameY>=0;
-    if(hasFrame&&stored.has(t.type)) {sx=t.frameX;sy=t.frameY;sh=storedHeight(t.type,sy);fidelity='stored-frame';support.storedFrames++;}
+    if(hasFrame&&stored.has(t.type)) {sx=t.frameX;sy=t.frameY;if(t.type===18){const wrap=Math.floor(sx/2016);sx-=2016*wrap;sy+=20*wrap;}sh=storedHeight(t.type,sy);fidelity='stored-frame';support.storedFrames++;}
     else if(!hasFrame&&ordinary.has(t.type)){
       const mask=maskAt(region,x,y,n=>visible(n)&&n.type===t.type);[sx,sy]=BLOCK_FRAME[mask];fidelity='approximate';support.approximateTiles++;
-    }else{reject(t);continue;}
+    }else{reject(t,x,y);continue;}
     const command={kind:'tile',asset:'Tiles_'+t.type+'.png',sx,sy,sw:16,sh,dx:x*16,dy:y*16,dw:16,dh:sh,x,y,type:t.type,fidelity};
     if(shape===1){command.sh=8;command.dh=8;command.dy+=8;support.shapes++;}
     else if(shape>=2){command.clip=slopePolygon(shape);support.shapes++;}
@@ -68,7 +68,7 @@ export function planScene(region,options={}) {
   if(support.inactive)warnings.push(support.inactive+' actuated cells shown without the game darkening effect.');
   if(support.coatings)warnings.push(support.coatings+' fullbright coating cells preserved; lighting is disabled for this preview.');
   if(support.shapes)warnings.push(support.shapes+' half/slope cells use simplified geometry; special slope frames and neighbor edge corrections are omitted.');
-  return {commands,warnings,support,requiredAssets:[...assets].sort(),width:w*16,height:h*16};
+  return {commands,warnings,support,unsupportedCells,requiredAssets:[...assets].sort(),width:w*16,height:h*16};
 }
 /** Preflight all textures before strict drawing. Never substitutes colors or invented sprites. */
 export function renderScene(context,plan,assets,{strict=false}={}) {
