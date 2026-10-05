@@ -1,4 +1,5 @@
 /** Original static sprite planner. Source contracts and limits: docs/static-nature.md. */
+import { cobwebConnects } from "./cobweb-shapes.mjs";
 export const STATIC_VINE_TYPES = Object.freeze([
   52, 62, 115, 205, 382, 528, 638,
 ]);
@@ -167,17 +168,19 @@ export function planStaticNature(
       const shape = neighbor.shape ?? 0;
       if (!Number.isInteger(shape) || shape < 0 || shape > 5)
         return unsupported("invalid-neighbor-shape");
-      if (tile.type === 51 && shape) return unsupported("shaped-neighbor");
     }
     neighbors.push(neighbor);
   }
   const connected = neighbors.map((neighbor, index) => {
+    if (tile.type === 51)
+      return cobwebConnects(neighbor, index, noAttach, {
+        revealInvisible,
+        invisibleBlock: tile.invisibleBlock,
+      });
     if (!neighbor.active) return false;
     if (!revealInvisible && !!neighbor.invisibleBlock !== !!tile.invisibleBlock)
       return false;
-    return tile.type === 51
-      ? !noAttach.has(neighbor.type)
-      : vineConnects(neighbor, index, tile.type);
+    return vineConnects(neighbor, index, tile.type);
   });
   const [sx, sy] = selectFrame(connected);
   const cobweb = tile.type === 51;

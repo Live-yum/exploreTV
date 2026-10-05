@@ -160,12 +160,13 @@ test("paired diagonal holes select the documented frame priority only when all c
   assert.deepEqual(crop(plan(r)), [18, 0]);
 });
 
-test("cobweb refuses shaped and invalid neighbors in cardinal and diagonal positions", () => {
+test("cobweb frames shaped cardinal and diagonal neighbors and rejects invalid shapes", () => {
   for (const index of [0, 7]) {
     for (let shape = 1; shape <= 5; shape++) {
       const r = scene();
       neighbor(r, index, tile(1, { shape }));
-      assert.equal(plan(r).reason, "shaped-neighbor");
+      assert.equal(plan(r).supported, true);
+      assert.deepEqual(crop(plan(r)), index === 0 && shape <= 3 ? [108, 54] : [162, 54]);
     }
   }
   const r = scene();

@@ -4,7 +4,7 @@
   "height": 2400,
   "processedCells": 20160000,
   "visibleActiveCells": 11084268,
-  "plannedTileCells": 11029622,
+  "plannedTileCells": 11042760,
   "unsupportedTiles": {
     "12": 1440,
     "13": 59,
@@ -17,7 +17,6 @@
     "42": 108,
     "49": 28,
     "50": 307,
-    "51": 13138,
     "55": 28,
     "77": 204,
     "79": 80,
@@ -107,8 +106,7 @@
     "752": 32
   },
   "unsupportedReasons": {
-    "unimplemented-type": 26023,
-    "shaped-neighbor": 13138
+    "unimplemented-type": 26023
   },
   "sourceHidden": {
     "373": 7692,
@@ -118,12 +116,13 @@
   },
   "liquidUnsupported": {
     "unknown-solid-neighborhood": 16736,
-    "shape-visible-level-neighborhood": 27799,
     "halfbrick-waterfall-neighborhood": 2729,
-    "halfbrick-overlap-neighborhood": 11504,
+    "halfbrick-overlap-neighborhood": 11188,
+    "visible-unknown-solid-neighborhood": 837,
     "shape-non-solid": 77,
     "special-tile-neighborhood": 1000,
     "mixed-liquid-neighborhood": 16,
+    "visible-special-tile-neighborhood": 40,
     "shimmer": 763
   },
   "missingAssets": {},
@@ -132,17 +131,18 @@
     "world": "d88198ec29db4db442a8a140f4f9abd7dc455a833176cfa3e587acb35eff0046",
     "world-tree-context": "1f5e69144b8a8ba4a429854b92b859985858b08d47fd37f0d7711c7cc80f5404",
     "renderer": "571307d6c441b2cc2585a95b7b798a755f0831704a12d05b1d9e9793d4b62784",
-    "static-nature": "d9188f268428054985423b019d7a47f55acafad13fa4ce20a06a837dbd606a9f",
+    "static-nature": "eddce7e9fb7e25548743e83060556d0160aeb565ea32ad5b520bff63f9c01dc2",
     "static-objects": "52851bf7b1bd52bccc2d251ba7d4912a160aa7683593d6188b921f8ea976fcdd",
     "static-blocks": "846f3ece1f4dbb129beea3189359b6735386ecb7b04888682c79a63f61fe4179",
     "static-trees": "bbf7d2e4165766a33dd1ac19c2d77b06ce0201af5914cf2d4ba21d84e28dfa8c",
     "static-misc": "53c5b77c5295e71228854562cbeed1f04d01f5858e8704022898cdd708508da1",
-    "liquid": "bfa5f26175d8e77038be9a1dfe890c92608681f35e38bd86004d825326263125",
+    "liquid": "6671b7de67edb0b554aa8e38c746ec816812e88a8a579dd7186b0dd6a23e4862",
     "paint": "93256f0b4c847b1499809c0169bf6825d9a37413430d69fb8c90c6c9bf2abc9e",
-    "scene-frames": "e8d1f7d39e0b0a706a29a434da078eac87b5f0faf68d3eb8bfe696c164060dbd"
+    "scene-frames": "e8d1f7d39e0b0a706a29a434da078eac87b5f0faf68d3eb8bfe696c164060dbd",
+    "cobweb-shapes": "12ec8468a9144e5fd111478a75bf4f3152ffe2bb3b1e29d16822588dc1af7e62",
+    "liquid-visible-level": "3001311bf6773e23ec0ce0aaf2ba768f1149891cf35450c37b11fdf4c9af7927"
   },
-  "runtimeSeconds": 24.869492928,
-  "peakRssKiB": 420844,
-  "requiredAssetCount": 266,
-  "coverageMeaning": "Full world planned at native detail; counts do not establish game-pixel parity. Unsupported cells remain explicit."
+  "runtimeSeconds": 27.475309042,
+  "peakRssKiB": 412320,
+  "scope": "Full-world planner coverage, not game pixel parity. Unsupported cells remain visible; source-hidden cells are separately accounted."
 }

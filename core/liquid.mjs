@@ -1,4 +1,6 @@
 /** Original bounded static liquid subsets; see docs/liquid-lighting-scope.md. */
+import { createVisibleLiquidSampler } from "./liquid-visible-level.mjs";
+
 const FRONT_ALPHA = [0.6, 0.95, 0.95];
 const SPECIAL = new Set([379, 518, 546]);
 const PLATFORMS = new Set([19, 427, 435, 436, 437, 438, 439]);
@@ -101,6 +103,7 @@ export function planLiquids(region, options = {}) {
     skippedOccluded: 0,
     shapeDrawn: 0,
     sourceGeometryDrawn: 0,
+    visibleLevelDrawn: 0,
     clampedShapeCells: 0,
     commandCount: 0,
     unsupported: 0,
@@ -149,6 +152,26 @@ export function planLiquids(region, options = {}) {
     support.unsupportedCoordinates.push({ x, y, reason });
   };
   const assets = new Set();
+  let sampleVisible;
+  const visibleAt = (x, y) => {
+    sampleVisible ??= createVisibleLiquidSampler(region, {
+      ...options,
+      worldSurface,
+    });
+    return sampleVisible(x, y);
+  };
+  const addVisible = (visible, ownShape) => {
+    if (!visible.command) {
+      support.skippedOccluded++;
+      return;
+    }
+    result.commands.push(visible.command);
+    assets.add(visible.command.asset);
+    support.drawn++;
+    support.sourceGeometryDrawn++;
+    support.visibleLevelDrawn++;
+    if (ownShape) support.shapeDrawn++;
+  };
   const { x: ox, y: oy, width, height } = region.rect;
   for (let x = 0; x < width; x++)
     for (let y = 0; y < height; y++) {
@@ -313,6 +336,22 @@ export function planLiquids(region, options = {}) {
           solid,
         });
         if (shape.reason) {
+          if (
+            shape.reason === "halfbrick-overlap-neighborhood" &&
+            tile.wall > 0
+          ) {
+            const visible = visibleAt(wx, wy);
+            // Only this proven wall/halfbrick case suppresses the separate
+            // behind pass. Normal-pass occlusion alone is insufficient.
+            if (visible.supported && visible.behindTileSuppressed) {
+              addVisible(visible, true);
+              continue;
+            }
+            if (!visible.supported) {
+              reject(wx, wy, visible.reason);
+              continue;
+            }
+          }
           reject(wx, wy, shape.reason);
           continue;
         }
@@ -365,13 +404,13 @@ export function planLiquids(region, options = {}) {
       }
       if (nearShape) {
         if (!stableFull) {
-          reject(
-            wx,
-            wy,
-            missing
-              ? "shape-missing-context"
-              : "shape-visible-level-neighborhood",
-          );
+          if (missing) {
+            reject(wx, wy, "shape-missing-context");
+            continue;
+          }
+          const visible = visibleAt(wx, wy);
+          if (visible.supported) addVisible(visible, false);
+          else reject(wx, wy, visible.reason);
           continue;
         }
         const asset = `water_${texture}.png`;
@@ -459,7 +498,7 @@ export function planLiquids(region, options = {}) {
   result.requiredAssets = [...assets].sort();
   support.commandCount = result.commands.length;
   result.warnings.push(
-    "Liquid preview combines a frozen fullbright flat-fill approximation with bounded source-backed solid-neighbor and shape subsets; general smoothing, falling trails, distortion and particles are not reproduced.",
+    "Liquid preview combines frozen fullbright flat fills with source-derived shape and visible-level subsets. Eligible shape-neighbor cells use smoothing and finite falling dependencies; general dry-cell trails, distortion and particles are not rendered.",
   );
   if (support.shapeDrawn)
     result.warnings.push(
@@ -471,7 +510,7 @@ export function planLiquids(region, options = {}) {
     );
   if (support.missingContextCells)
     result.warnings.push(
-      `${support.missingContextCells} liquid cells lack full neighbor context; missing neighbors are treated as empty.`,
+      `${support.missingContextCells} liquid candidates lack full neighbor context; shape geometry is rejected while the flat-fill approximation treats missing neighbors as empty.`,
     );
   if (support.unsupported)
     result.warnings.push(

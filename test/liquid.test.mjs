@@ -302,9 +302,7 @@ test("known slope neighbors allow a provably full visible-level cell without tre
   assert.equal(p.commands[0].fidelity, "static-full-liquid-near-shape");
   r.context.cells[east] = empty();
   assert.equal(
-    planLiquids(r, opts).support.unsupportedByReason[
-      "shape-visible-level-neighborhood"
-    ],
+    planLiquids(r, opts).support.unsupportedByReason["visible-missing-context"],
     1,
   );
   r.context.cells[east] = { active: true, type: 999, shape: 0 };
@@ -464,5 +462,94 @@ test("actuated solids do not occlude and platform is not assumed solid", () => {
       enabled: true,
     }).support.drawn,
     1,
+  );
+});
+
+test("partial liquid near a slope uses source visible geometry with one counted command", () => {
+  const r = region([wet(1)], 1, 1, 20, 200);
+  r.context = region(
+    Array.from({ length: 9 }, () => block()),
+    3,
+    3,
+    19,
+    199,
+  );
+  r.context.cells[4] = r.cells[0];
+  r.context.cells[west] = block(2);
+  r.getWorldTile = () => block();
+  const p = planLiquids(r, opts),
+    c = p.commands[0];
+  assert.equal(c.fidelity, "static-source-visible-level");
+  assert.deepEqual([c.sx, c.sy, c.sh, c.dy], [16, 1280, 4, 12]);
+  assert.equal(p.support.evaluatedCells, 1);
+  assert.equal(p.support.drawn, 1);
+  assert.equal(p.support.sourceGeometryDrawn, 1);
+  assert.equal(p.support.visibleLevelDrawn, 1);
+  assert.equal(p.support.shapeDrawn, 0);
+  assert.equal(p.support.commandCount, 1);
+  assert.equal(p.support.unsupported, 0);
+  assert.deepEqual(p.requiredAssets, ["water_0.png"]);
+});
+
+test("dry walled halfbricks below partial liquid use one normal pass and retain raw accounting", () => {
+  const r = shapeScene(1, 0, { wall: 1 });
+  r.context.cells = Array.from({ length: 9 }, () => block());
+  r.context.cells[4] = r.cells[0];
+  r.context.cells[north] = wet(1, 3);
+  r.getWorldTile = () => block();
+  const p = planLiquids(r, { ...opts, layer: "foreground" });
+  assert.equal(p.commands.length, 1);
+  assert.equal(p.commands[0].asset, "water_11.png");
+  assert.equal(p.commands[0].layer, "foreground");
+  assert.equal(p.commands[0].drawBeforeTiles, undefined);
+  assert.equal(p.commands[0].liquidLevel, 0);
+  assert.equal(p.commands[0].sh, 8);
+  assert.equal(p.support.liquidCells, 0);
+  assert.equal(p.support.shapeCandidateCells, 1);
+  assert.equal(p.support.evaluatedCells, 1);
+  assert.equal(p.support.shapeDrawn, 1);
+  assert.equal(p.support.visibleLevelDrawn, 1);
+  assert.equal(p.support.unsupported, 0);
+  assert.equal(r.cells[0].liquid, 0);
+  r.cells[0].wall = 0;
+  const unwalled = planLiquids(r, opts);
+  assert.equal(unwalled.commands.length, 0);
+  assert.equal(
+    unwalled.support.unsupportedByReason["halfbrick-overlap-neighborhood"],
+    1,
+  );
+});
+
+test("visible-level integration rejects unknown or missing dependencies beyond the local preflight", () => {
+  const r = region([wet(127)], 1, 1, 20, 200);
+  r.context = region(
+    Array.from({ length: 9 }, () => wet()),
+    3,
+    3,
+    19,
+    199,
+  );
+  r.context.cells[4] = r.cells[0];
+  r.context.cells[west] = block(2);
+  let p = planLiquids(r, opts);
+  assert.equal(p.commands.length, 0);
+  assert.equal(p.support.unsupportedByReason["visible-missing-context"], 1);
+  r.getWorldTile = () => ({ ...block(), type: 999 });
+  p = planLiquids(r, {
+    ...opts,
+    isSolid: (t) => (t.type === 1 ? true : undefined),
+  });
+  assert.equal(p.commands.length, 0);
+  assert.equal(p.support.visibleLevelDrawn, 0);
+  assert.equal(
+    p.support.unsupportedByReason["visible-unknown-solid-neighborhood"],
+    1,
+  );
+  assert.equal(
+    p.support.evaluatedCells,
+    p.support.drawn +
+      p.support.skippedSolid +
+      p.support.skippedOccluded +
+      p.support.unsupported,
   );
 });

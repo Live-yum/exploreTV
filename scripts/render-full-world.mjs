@@ -139,6 +139,7 @@ async function main(argv) {
     "core/utf8.mjs",
     "core/renderer.mjs",
     "core/static-nature.mjs",
+    "core/cobweb-shapes.mjs",
     "core/static-objects.mjs",
     "core/static-blocks.mjs",
     "core/static-trees.mjs",
@@ -146,6 +147,7 @@ async function main(argv) {
     "core/world-tree-context.mjs",
 
     "core/liquid.mjs",
+    "core/liquid-visible-level.mjs",
     "core/paint.mjs",
     "core/scene-frames.mjs",
     "core/assets.mjs",

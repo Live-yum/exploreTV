@@ -140,11 +140,13 @@ for (const n of [
   "world-tree-context",
   "renderer",
   "static-nature",
+  "cobweb-shapes",
   "static-objects",
   "static-blocks",
   "static-trees",
   "static-misc",
   "liquid",
+  "liquid-visible-level",
   "paint",
   "scene-frames",
 ])
