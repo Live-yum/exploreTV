@@ -1,6 +1,8 @@
 /** Original bounded static liquid subsets; see docs/liquid-lighting-scope.md. */
 import { createVisibleLiquidSampler } from "./liquid-visible-level.mjs";
 import { createHalfbrickLiquidSampler } from "./liquid-halfbrick.mjs";
+import { createSpecialLiquidContextSampler } from "./liquid-special-context.mjs";
+import { createMixedHalfbrickLiquidSampler } from "./liquid-mixed-halfbrick.mjs";
 
 const FRONT_ALPHA = [0.6, 0.95, 0.95];
 const SPECIAL = new Set([379, 518, 546]);
@@ -92,6 +94,10 @@ function behindShape(
   };
 }
 
+export function liquidOmissionWarning(support) {
+  return `${support.unsupported} liquid cells skipped: ${Object.entries(support.unsupportedByReason).map(([key,count]) => `${key}=${count}`).join(", ")}.`;
+}
+
 export function planLiquids(region, options = {}) {
   const support = {
     mode: options.enabled ? "flat-fill-approximation" : "disabled",
@@ -105,6 +111,10 @@ export function planLiquids(region, options = {}) {
     shapeDrawn: 0,
     sourceGeometryDrawn: 0,
     visibleLevelDrawn: 0,
+    specialContextDrawn: 0,
+    lilyUnderlayCells: 0,
+    mixedHalfbrickResolved: 0,
+    mixedHalfbrickDrawn: 0,
     clampedShapeCells: 0,
     gradientShapeCells: 0,
     gradientRows: 0,
@@ -155,7 +165,7 @@ export function planLiquids(region, options = {}) {
     support.unsupportedCoordinates.push({ x, y, reason });
   };
   const assets = new Set();
-  let sampleVisible, sampleHalfbrick;
+  let sampleVisible, sampleHalfbrick, sampleSpecial, sampleMixedHalfbrick;
   const visibleAt = (x, y) => {
     sampleVisible ??= createVisibleLiquidSampler(region, {
       ...options,
@@ -174,6 +184,58 @@ export function planLiquids(region, options = {}) {
     support.sourceGeometryDrawn++;
     support.visibleLevelDrawn++;
     if (ownShape) support.shapeDrawn++;
+  };
+  const resolveSpecial = (x, y) => {
+    sampleSpecial ??= createSpecialLiquidContextSampler(region, {
+      ...options,
+      worldSurface,
+    });
+    let context = sampleSpecial(x, y);
+    const own = get(x, y);
+    if (
+      !context.supported &&
+      context.reason === "special-mixed-behind-liquid-context" &&
+      own?.active &&
+      !own.inactive &&
+      own.shape === 1 &&
+      own.liquid === 0 &&
+      solid(own)
+    ) {
+      sampleMixedHalfbrick ??= createMixedHalfbrickLiquidSampler(region, {
+        ...options,
+        worldSurface,
+      });
+      context = sampleMixedHalfbrick(x, y);
+    }
+    if (!context.supported) {
+      reject(x, y, context.reason);
+      return;
+    }
+    for (const command of context.commands) {
+      result.commands.push(command);
+      assets.add(command.asset);
+    }
+    const mixedHalfbrick =
+      context.contextRule === "dry-mixed-halfbrick-directional-layers";
+    if (mixedHalfbrick) support.mixedHalfbrickResolved++;
+    if (context.commands.length) {
+      support.drawn++;
+      support.sourceGeometryDrawn++;
+      support.specialContextDrawn++;
+      if (mixedHalfbrick) support.mixedHalfbrickDrawn++;
+      if (context.normalDrawn) support.visibleLevelDrawn++;
+      if (!context.normalDrawn || mixedHalfbrick) support.shapeDrawn++;
+    } else support.skippedOccluded++;
+    if (context.clampedRows) support.clampedShapeCells++;
+    if (context.gradientRows) {
+      support.gradientShapeCells++;
+      support.gradientRows += context.gradientRows;
+    }
+    if (context.lilyUnderlay) support.lilyUnderlayCells++;
+  };
+  const rejectVisible = (x, y, reason) => {
+    if (reason === "visible-special-tile-neighborhood") resolveSpecial(x, y);
+    else reject(x, y, reason);
   };
   const { x: ox, y: oy, width, height } = region.rect;
   for (let x = 0; x < width; x++)
@@ -248,7 +310,13 @@ export function planLiquids(region, options = {}) {
         }
       if (missing) support.missingContextCells++;
       if (reason) {
-        reject(wx, wy, reason);
+        if (
+          !missing &&
+          (reason === "special-tile-neighborhood" ||
+            reason === "mixed-liquid-neighborhood")
+        )
+          resolveSpecial(wx, wy);
+        else reject(wx, wy, reason);
         continue;
       }
       const texture = kind === 0 ? waterStyle : kind === 1 ? 1 : 11;
@@ -279,7 +347,8 @@ export function planLiquids(region, options = {}) {
         );
       if (ownShape) {
         if (!solid(tile)) {
-          reject(wx, wy, "shape-non-solid");
+          if (!missing) resolveSpecial(wx, wy);
+          else reject(wx, wy, "shape-non-solid");
           continue;
         }
         if (missing) {
@@ -351,23 +420,38 @@ export function planLiquids(region, options = {}) {
               continue;
             }
             if (!visible.supported) {
-              reject(wx, wy, visible.reason);
+              rejectVisible(wx, wy, visible.reason);
               continue;
             }
           }
-          if (shape.reason === "halfbrick-overlap-neighborhood" || shape.reason === "halfbrick-waterfall-neighborhood") {
-            sampleHalfbrick ??= createHalfbrickLiquidSampler(region, { ...options, worldSurface });
+          if (
+            shape.reason === "halfbrick-overlap-neighborhood" ||
+            shape.reason === "halfbrick-waterfall-neighborhood"
+          ) {
+            sampleHalfbrick ??= createHalfbrickLiquidSampler(region, {
+              ...options,
+              worldSurface,
+            });
             const half = sampleHalfbrick(wx, wy);
             if (half.supported) {
-              for (const command of half.commands) { result.commands.push(command); assets.add(command.asset); }
-              if (half.commands.length) { support.drawn++; support.shapeDrawn++; support.sourceGeometryDrawn++; }
-              else support.skippedOccluded++;
+              for (const command of half.commands) {
+                result.commands.push(command);
+                assets.add(command.asset);
+              }
+              if (half.commands.length) {
+                support.drawn++;
+                support.shapeDrawn++;
+                support.sourceGeometryDrawn++;
+              } else support.skippedOccluded++;
               if (half.normalDrawn) support.visibleLevelDrawn++;
               if (half.clampedRows) support.clampedShapeCells++;
-              if (half.gradientRows) { support.gradientShapeCells++; support.gradientRows += half.gradientRows; }
+              if (half.gradientRows) {
+                support.gradientShapeCells++;
+                support.gradientRows += half.gradientRows;
+              }
               continue;
             }
-            reject(wx, wy, half.reason);
+            rejectVisible(wx, wy, half.reason);
             continue;
           }
           reject(wx, wy, shape.reason);
@@ -428,7 +512,7 @@ export function planLiquids(region, options = {}) {
           }
           const visible = visibleAt(wx, wy);
           if (visible.supported) addVisible(visible, false);
-          else reject(wx, wy, visible.reason);
+          else rejectVisible(wx, wy, visible.reason);
           continue;
         }
         const asset = `water_${texture}.png`;
@@ -530,13 +614,6 @@ export function planLiquids(region, options = {}) {
     result.warnings.push(
       `${support.missingContextCells} liquid candidates lack full neighbor context; shape geometry is rejected while the flat-fill approximation treats missing neighbors as empty.`,
     );
-  if (support.unsupported)
-    result.warnings.push(
-      `${support.unsupported} liquid cells skipped: ${Object.entries(
-        support.unsupportedByReason,
-      )
-        .map(([key, count]) => `${key}=${count}`)
-        .join(", ")}.`,
-    );
+  if (support.unsupported) result.warnings.push(liquidOmissionWarning(support));
   return result;
 }

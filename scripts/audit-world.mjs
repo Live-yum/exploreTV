@@ -1,3 +1,6 @@
+import { FRAME_LIMITS } from "../core/scene-frames.mjs";
+import { resolvePaintSettings } from "../core/paint.mjs";
+import { createWorldWaterfallRegistry } from "./world-render-engine.mjs";
 /** Bounded planner-only inventory: actual rules, source crops and per-cell omissions. */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -17,9 +20,17 @@ const start = performance.now(),
   bytes = readFileSync(file),
   world = openWorld(bytes),
   index = buildRowIndex(world),
+  waterfallRegistry = createWorldWaterfallRegistry(world),
   assets = new Map();
 const result = {
   worldSha256: createHash("sha256").update(bytes).digest("hex"),
+  waterfalls: {
+    model: waterfallRegistry.model,
+    maxWaterfalls: waterfallRegistry.maxWaterfalls,
+    scanComplete: waterfallRegistry.scanComplete,
+    stats: waterfallRegistry.stats,
+    failures: waterfallRegistry.failures,
+  },
   width: world.width,
   height: world.height,
   processedCells: 0,
@@ -31,6 +42,8 @@ const result = {
   liquidUnsupported: {},
   missingAssets: {},
   invalidCrops: {},
+  unsupportedFrameCommands: {},
+  maxPreparedFrameSide: 0,
   requiredAssets: [],
   exampleCoordinates: {},
 };
@@ -52,6 +65,7 @@ for (let x = 0; x < world.width; x += 128) {
           waterfallFrame: 0,
           waterStyle: 0,
           layer: "foreground",
+          waterfallRegistry,
         },
       }),
       planned = new Set();
@@ -62,6 +76,14 @@ for (let x = 0; x < world.width; x += 128) {
         wy = c.y + region.rect.y;
       if (!inside(wx, wy)) continue;
       if (c.kind === "tile") planned.add(wx + "," + wy);
+      const frameWidth = c.vertexColors ? c.dw : c.sw;
+      const frameHeight = c.vertexColors ? c.dh : c.sh;
+      if (![c.sw,c.sh,frameWidth,frameHeight].every(n => Number.isSafeInteger(n) && n > 0 && n <= FRAME_LIMITS.maxSide))
+        add(result.unsupportedFrameCommands, "frame-bounds:"+c.asset);
+      result.maxPreparedFrameSide = Math.max(result.maxPreparedFrameSide,frameWidth,frameHeight);
+      const paint = resolvePaintSettings(c.type ?? 0,{paintId:c.paintId || 0,wall:c.kind==="wall"});
+      if (!paint.supported) add(result.unsupportedFrameCommands, paint.reason+":"+c.asset);
+
       if (!assets.has(c.asset)) {
         const path = join(assetsDir, c.asset);
         try {
@@ -151,6 +173,12 @@ for (const n of [
   "static-special-objects",
   "liquid",
   "liquid-halfbrick",
+  "liquid-mixed-halfbrick",
+  "static-waterfalls",
+  "scene-batches",
+  "liquid-composite",
+  "liquid-shimmer",
+  "liquid-special-context",
   "tile-solidity",
   "liquid-visible-level",
   "paint",
@@ -187,5 +215,10 @@ console.log(
     runtimeSeconds: result.runtimeSeconds,
   }),
 );
-if (Object.keys(result.missingAssets).length || Object.keys(result.invalidCrops).length)
-  throw Error("World texture audit failed: missing assets or out-of-bounds source crops (see report)");
+if (
+  Object.keys(result.missingAssets).length ||
+  Object.keys(result.invalidCrops).length
+)
+  throw Error(
+    "World texture audit failed: missing assets or out-of-bounds source crops (see report)",
+  );

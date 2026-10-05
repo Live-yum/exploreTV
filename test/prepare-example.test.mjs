@@ -261,18 +261,18 @@ test("CLI help needs no input and malformed options fail", () => {
   }
 });
 
-test("the checked-in example manifest pins all 376 selected resources without requiring private inputs", () => {
+test("the checked-in example manifest pins all 384 selected resources without requiring private inputs", () => {
   const { manifest, totalBytes } = readManifest(
     fileURLToPath(new URL("../example/asset-manifest.json", import.meta.url)),
   );
-  assert.equal(manifest.textures.length, 376);
-  assert.equal(totalBytes, 4199592);
+  assert.equal(manifest.textures.length, 384);
+  assert.equal(totalBytes, 4235067);
   assert.equal(manifest.sourceProvenance.exporter, "TConvert");
   assert.equal(manifest.sourceProvenance.gameVersion, "1.4.5.8");
   assert.deepEqual(
     manifest.textures
       .filter((e) => e.file.startsWith("water_"))
       .map((e) => e.file),
-    ["water_0.png", "water_1.png", "water_11.png"],
+    ["water_0.png", "water_1.png", "water_11.png", "water_14.png"],
   );
 });

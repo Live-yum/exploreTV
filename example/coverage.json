@@ -1,5 +1,18 @@
 {
   "worldSha256": "d551a6b360c7af49a07dadbb1e82223ac43ad398e2054c29f500ec5e8b5b1cab",
+  "waterfalls": {
+    "model": "fresh-static",
+    "maxWaterfalls": 100000,
+    "scanComplete": true,
+    "stats": {
+      "eligible": 1969,
+      "registered": 1969,
+      "capped": 0,
+      "commands": 82467,
+      "unsupportedOrigins": 0
+    },
+    "failures": []
+  },
   "width": 8400,
   "height": 2400,
   "processedCells": 20160000,
@@ -13,16 +26,11 @@
     "375": 85,
     "461": 2978
   },
-  "liquidUnsupported": {
-    "halfbrick-waterfall-state-required": 1472,
-    "shape-non-solid": 97,
-    "special-tile-neighborhood": 1116,
-    "mixed-liquid-neighborhood": 16,
-    "visible-special-tile-neighborhood": 64,
-    "shimmer": 763
-  },
+  "liquidUnsupported": {},
   "missingAssets": {},
   "invalidCrops": {},
+  "unsupportedFrameCommands": {},
+  "maxPreparedFrameSide": 64,
   "requiredAssets": [
     {
       "width": 420,
@@ -177,6 +185,14 @@
       "sha256": "d17b7f824430940c035a139cbb88fdb460c1abef6ac154f8a6031c1b5543dffb"
     },
     {
+      "width": 306,
+      "height": 72,
+      "decodedBytes": 88128,
+      "file": "Liquid_14.png",
+      "bytes": 1188,
+      "sha256": "45261d749203308678cf0fe57928da64b2db6629e2e90546a1b655d036a4caa5"
+    },
+    {
       "width": 72,
       "height": 16,
       "decodedBytes": 4608,
@@ -199,6 +215,14 @@
       "file": "LiquidSlope_11.png",
       "bytes": 305,
       "sha256": "4c9869b2c72b8956b833d1d31a721c7884ae1123166fcb27cb198a1324f6d7ef"
+    },
+    {
+      "width": 72,
+      "height": 16,
+      "decodedBytes": 4608,
+      "file": "LiquidSlope_14.png",
+      "bytes": 310,
+      "sha256": "ec12687d55d0d1b10efe190eeaefd95964129718080de0b22dded95407405d5d"
     },
     {
       "width": 54,
@@ -3031,13 +3055,61 @@
       "file": "water_11.png",
       "bytes": 6229,
       "sha256": "a5a8af10334466696781e91b1efb3d3159d5bed604e28e932c0ed519190cdff0"
+    },
+    {
+      "width": 144,
+      "height": 1360,
+      "decodedBytes": 783360,
+      "file": "water_14.png",
+      "bytes": 26681,
+      "sha256": "7b48569dce7f0d3216ef74ca641112a47f582b4852a97226a61c2d8ce66dcb3f"
+    },
+    {
+      "width": 512,
+      "height": 40,
+      "decodedBytes": 81920,
+      "file": "Waterfall_0.png",
+      "bytes": 2078,
+      "sha256": "6bb3e0d720844cdd7d77af52adc718f887e31054a35fa32ffbcb939b3dd746ac"
+    },
+    {
+      "width": 512,
+      "height": 40,
+      "decodedBytes": 81920,
+      "file": "Waterfall_1.png",
+      "bytes": 2095,
+      "sha256": "40697632f8eacb652766427275c7abaea47ba00940d22cd6db55e6460cadad55"
+    },
+    {
+      "width": 144,
+      "height": 18,
+      "decodedBytes": 10368,
+      "file": "Waterfall_11.png",
+      "bytes": 523,
+      "sha256": "0eecb4e9d25d1fa5e177b793a718395f39315dc5fc2710730a3f7619276aad50"
+    },
+    {
+      "width": 142,
+      "height": 18,
+      "decodedBytes": 10224,
+      "file": "Waterfall_12.png",
+      "bytes": 511,
+      "sha256": "602358c44dadb5cbb2da641b5af2819a02b3f6861c84ee373ee1ef57f032ab4a"
+    },
+    {
+      "width": 512,
+      "height": 40,
+      "decodedBytes": 81920,
+      "file": "Waterfall_14.png",
+      "bytes": 2089,
+      "sha256": "28f7d7f0f1038ca20389bc29e74d67bde9736da96b052413451f0bbbede2a0fa"
     }
   ],
   "exampleCoordinates": {},
   "sourceHashes": {
     "world": "1dd74294c6f0125ec438a6992ec67cdf6e60f55332b28709034d28815b6f3ce5",
     "world-tree-context": "1f5e69144b8a8ba4a429854b92b859985858b08d47fd37f0d7711c7cc80f5404",
-    "renderer": "51bc36a8f25419175a7ae6e428f27706507f666f5f2ee4c55d8e64ff6bad8461",
+    "renderer": "66679bd4791400c18e89f93a9ce0bb338cdcc271e330abc81267f62d887c8b24",
     "static-nature": "eddce7e9fb7e25548743e83060556d0160aeb565ea32ad5b520bff63f9c01dc2",
     "cobweb-shapes": "12ec8468a9144e5fd111478a75bf4f3152ffe2bb3b1e29d16822588dc1af7e62",
     "static-objects": "52851bf7b1bd52bccc2d251ba7d4912a160aa7683593d6188b921f8ea976fcdd",
@@ -3048,13 +3120,19 @@
     "static-flames": "164fb546f6c1b9ba0c7b22c3393b3bfff030d9c80b736466686330302ebcc1e8",
     "static-plants-next": "1772753424daa98112dea8db589789b0a0cb74f7280f3a2ec462e661366b96b7",
     "static-special-objects": "f9982786b9278510fc3fa37f0346354c0123f71c637b59ee3812ee56387d112a",
-    "liquid": "2dea9e387624ee923744e1575e644b18aa82bca3a37a8f3a644b6620816117f3",
-    "liquid-halfbrick": "147cee46f43b24c397a2ab25066b05ddc3d68823ee3ab0d8646ede1dd0dff755",
+    "liquid": "fb5177a188a451e03851d2090d7656b8cf9a872d009095b6626138e49eb124e5",
+    "liquid-halfbrick": "27dd9fb325fbcd7204c097463cf6eb62099faae4b3e7b5544589ac121daef268",
+    "liquid-mixed-halfbrick": "ecb59d409d45b2dcdf8157d9c8556d95cc509e59b87cc6ad9b1ede5402704d06",
+    "static-waterfalls": "ca5e79e5db92c28c92bec2b88201c23f1fdcafef9f5e94e345ba3d92ffd8704b",
+    "scene-batches": "8e809754f8e712d150b4950105cac8f97a800ca88b90be0c462bca750a99913a",
+    "liquid-composite": "d3ca4c7ee3b780da9bd1baf256b35c771a3a77305b63e2a690fd0f1a20c51cb3",
+    "liquid-shimmer": "abf6a37bf486bc71629ea82d8bb6e06a2a53ec37716a30e0b6c408b283a165d8",
+    "liquid-special-context": "ef272a3f4a4cbf772938b6b743379ad470a76bd2517b56031b941a75bf623258",
     "tile-solidity": "6e8b9e54a8e1f85e8160a0ee54457b4c8db8bd79258174735cbf71723f2cb9ea",
     "liquid-visible-level": "3001311bf6773e23ec0ce0aaf2ba768f1149891cf35450c37b11fdf4c9af7927",
     "paint": "93256f0b4c847b1499809c0169bf6825d9a37413430d69fb8c90c6c9bf2abc9e",
-    "scene-frames": "e8d1f7d39e0b0a706a29a434da078eac87b5f0faf68d3eb8bfe696c164060dbd"
+    "scene-frames": "cbc61371dd0886f2e89bb1076030709b6afc4eae668c374a2b9b9ed9910e7d83"
   },
-  "runtimeSeconds": 39.271110439999994,
-  "peakRssKiB": 417192
+  "runtimeSeconds": 83.481752161,
+  "peakRssKiB": 585840
 }

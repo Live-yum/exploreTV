@@ -25,7 +25,7 @@ The viewer calls the existing `openWorld`, `extractRegion`, `planScene`, `prepar
 
 Magenta crosses identify unsupported Tile cells; amber crosses identify unsupported liquid neighborhoods; red crosses identify missing textures, invalid crops, or unsupported channel/paint paths. They are on by default and can be hidden for inspection. Counts remain visible when the overlay is hidden. World data outside the supported static rendering paths is retained in the WLD but cannot be claimed as rendered terrain. Nonempty black areas may still correspond to unsupported or invisible content; inspect the diagnostics and overlays.
 
-The viewer uses a static fullbright scene and deliberately has no dynamic lighting. The renderer still approximates ordinary block and wall adjacency, cross-material transitions, liquid geometry, and slopes. Animation, trees and other unsupported decor, background scenery, NPCs, particles, wiring overlays, and complete game framing rules are not reproduced. Supported furniture uses saved frame coordinates. The whole world can be explored, but not every game entity and visual behavior is implemented.
+The viewer uses a static fullbright scene and deliberately has no dynamic lighting. The renderer still approximates ordinary block and wall adjacency, cross-material transitions, liquid geometry, and slopes. Trees, plants, furniture and special objects use the documented static source rules and necessary atlases. Runtime animation, background scenery, NPCs, particles, wiring overlays, and complete game framing rules are not reproduced. Supported furniture uses saved frame coordinates. The whole world can be explored, but not every game entity and visual behavior is implemented.
 
 ## Bounded work and stale navigation
 

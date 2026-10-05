@@ -1,4 +1,12 @@
-import { openWorld, extractRegion, getWorldTileAccessor, cellAt, LIMITS } from "/core/world.mjs";
+import { createWaterfallWorkerClient } from "/core/waterfall-worker-client.mjs";
+import { sceneFrameReservedBytes } from "/core/scene-batches.mjs";
+import {
+  openWorld,
+  extractRegion,
+  getWorldTileAccessor,
+  cellAt,
+  LIMITS,
+} from "/core/world.mjs";
 import { loadWorldEngine, worldWasmStats } from "/core/world-wasm.mjs";
 import { planScene, renderScene } from "/core/renderer.mjs";
 import { prepareSceneFrames, sceneFrameKey } from "/core/scene-frames.mjs";
@@ -24,13 +32,33 @@ import {
   LatestRenderQueue,
 } from "/core/viewport.mjs";
 
-const jsWorldEngine = Object.freeze({ backend: "javascript", openWorld, extractRegion, disposeWorld() {} });
-let worldEngine = jsWorldEngine, worldEnginePromise;
+const jsWorldEngine = Object.freeze({
+  backend: "javascript",
+  openWorld,
+  extractRegion,
+  disposeWorld() {},
+});
+let worldEngine = jsWorldEngine,
+  worldEnginePromise;
+let waterfallClient = null,
+  waterfallRequestId = 0;
+let pendingWorldInstall = null;
+function releasePendingWorld(candidate) {
+  if (!candidate || candidate.released) return;
+  candidate.released = true;
+  candidate.client.terminate();
+  candidate.engine.disposeWorld(candidate.world);
+  if (pendingWorldInstall === candidate) pendingWorldInstall = null;
+}
+function cancelPendingWorld() {
+  releasePendingWorld(pendingWorldInstall);
+}
+
 function getWorldEngine() {
   // A deterministic JS mode is retained for equivalence tests and diagnostics.
   if (new URL(location.href).searchParams.get("engine") === "javascript")
     return Promise.resolve(jsWorldEngine);
-  return worldEnginePromise ??= loadWorldEngine();
+  return (worldEnginePromise ??= loadWorldEngine());
 }
 const $ = (id) => document.getElementById(id);
 const viewport = $("viewport"),
@@ -40,12 +68,14 @@ const createCanvas = (width, height) =>
 const staging = createCanvas(1, 1),
   committed = createCanvas(1, 1);
 const textureName =
-  /^(?:(?:Tiles_|Wall_|water_|Tree_Tops_|Tree_Branches_|Glow_|Liquid_|Flame_|LiquidSlope_|Extra_)\d+|SunAltar|SunOrb)\.png$/;
+  /^(?:(?:Tiles_|Wall_|water_|Tree_Tops_|Tree_Branches_|Glow_|Liquid_|Flame_|LiquidSlope_|Waterfall_|Extra_)\d+|SunAltar|SunOrb)\.png$/;
 let world = null,
   camera = { x: 0, y: 0, zoom: 1 },
   size = { width: 1, height: 1 };
 let source = makeSource(),
   worldRevision = 0,
+  installedWorldRevision = 0,
+  installedLoadStarted = 0,
   activeAbort = null,
   scheduled = false,
   lastResult = null;
@@ -219,7 +249,7 @@ function* commandBatches(commands) {
     asset = null;
   for (const command of commands) {
     const key = sceneFrameKey(command),
-      extra = keys.has(key) ? 0 : command.sw * command.sh * 8;
+      extra = keys.has(key) ? 0 : sceneFrameReservedBytes(command);
     if (
       batch.length &&
       (asset !== command.asset ||
@@ -247,6 +277,8 @@ async function drawViewport(request, current) {
   const {
     selectedWorld,
     selectedSource,
+    selectedWaterfallClient,
+    worldRevision: requestWorldRevision,
     camera: nextCamera,
     size: nextSize,
     encoding,
@@ -255,11 +287,33 @@ async function drawViewport(request, current) {
   const region = worldEngine.extractRegion(selectedWorld, view.context);
   region.treeContext = selectedWorld.treeContext;
   region.herbContext = selectedWorld.herbContext;
-  region.treeContextUnavailableReason = selectedWorld.treeContextUnavailableReason;
+  region.treeContextUnavailableReason =
+    selectedWorld.treeContextUnavailableReason;
   region.getWorldTile = getWorldTileAccessor(selectedWorld);
+  const waterfallRegistry = await selectedWaterfallClient.requestSnapshot({
+    revision: requestWorldRevision,
+    requestId: ++waterfallRequestId,
+    viewport: view.rect,
+    outputRect: region.rect,
+    options: {
+      quality: 1,
+      maxWaterfalls: 1000,
+      waterStyle: 0,
+      frame: 0,
+      slowFrame: 0,
+    },
+  });
+  if (!current() || waterfallRegistry.status === "discarded") return null;
+  if (!waterfallRegistry.scanComplete || waterfallRegistry.failures.length)
+    throw new Error("瀑布静态快照存在未解决依赖，保留上一帧；请查看支持范围。");
   const fullPlan = planScene(region, {
     paintEnabled: true,
-    liquids: { enabled: true, layer: "background", waterStyle: 0 },
+    liquids: {
+      enabled: true,
+      layer: "foreground",
+      waterStyle: 0,
+      waterfallRegistry,
+    },
   });
   const commands = visibleCommands(fullPlan, region.rect, nextCamera, nextSize);
   const plan = { ...fullPlan, commands };
@@ -387,6 +441,8 @@ async function drawViewport(request, current) {
     planned: commands.length,
     decodedTiles: region.cells.length,
     renderMs: performance.now() - started,
+    waterfallScanMs: waterfallRegistry.computeMs,
+    waterfallOrigins: waterfallRegistry.origins.length,
     preparedBytes,
     cacheBytes: selectedSource.cache.bytes,
     cachePeakBytes: selectedSource.cache.peakBytes,
@@ -442,6 +498,7 @@ function commitViewport(result, request, revision) {
     0,
   );
   viewport.dataset.busy = "false";
+  if (!viewport.dataset.firstViewportMs) viewport.dataset.firstViewportMs = String(performance.now()-installedLoadStarted);
   Object.assign(viewport.dataset, {
     revision: String(revision),
     cameraX: String(viewCamera.x),
@@ -457,6 +514,9 @@ function commitViewport(result, request, revision) {
     drawn: String(result.drawn),
     skipped: String(result.skipped),
     omissions: String(result.omissions.length),
+    waterfallBackend: "worker",
+    waterfallScanMs: String(result.waterfallScanMs),
+    waterfallOrigins: String(result.waterfallOrigins),
     unsupported: String(unsupported),
     worldWidth: String(world.width),
     worldHeight: String(world.height),
@@ -468,8 +528,11 @@ function commitViewport(result, request, revision) {
     `当前视口：${result.activeTiles.toLocaleString()} 个可见前景 Tile · ${result.drawn.toLocaleString()} 个贴图片段 · ${result.omissions.length.toLocaleString()} 个单元有缺项`;
   $("coverage").classList.toggle("has-gaps", result.omissions.length > 0);
   $("diagnostic-text").textContent = [
-    `解析引擎：${worldEngine.backend}；打开世界 ${Number(viewport.dataset.openMs || 0).toFixed(1)} ms`,
-    ...(worldEngine.fallbackReason ? [`WASM 未启用：${worldEngine.fallbackReason}`] : []),
+    `解析引擎：${worldEngine.backend}；主索引解析 ${Number(viewport.dataset.openMs || 0).toFixed(1)} ms`,
+    `辅助线程解析 ${Number(viewport.dataset.waterfallParseMs || 0).toFixed(1)} ms；本次瀑布扫描 ${Number(result.waterfallScanMs || 0).toFixed(1)} ms；首次可见画面 ${Number(viewport.dataset.firstViewportMs || 0).toFixed(1)} ms（含读取、线程和贴图处理）`,
+    ...(worldEngine.fallbackReason
+      ? [`WASM 未启用：${worldEngine.fallbackReason}`]
+      : []),
     `源世界：${world.width} × ${world.height} Tile；逻辑画布：${world.width * 16} × ${world.height * 16} px`,
     `屏幕 Canvas：${viewSize.width} × ${viewSize.height} px；100% = 原始 16 px / Tile`,
     `本次解码（含 ${VIEWPORT_LIMITS.halo} Tile 边界上下文）：${result.decodedTiles.toLocaleString()} / ${VIEWPORT_LIMITS.regionTiles.toLocaleString()} Tile`,
@@ -508,6 +571,8 @@ function scheduleRender() {
     queue.request({
       selectedWorld: world,
       selectedSource: source,
+      selectedWaterfallClient: waterfallClient,
+      worldRevision: installedWorldRevision,
       camera: { ...camera },
       size: { ...size },
       encoding: $("encoding").value,
@@ -524,18 +589,55 @@ function resize() {
     canvas.height = size.height;
   }
 }
-async function installWorld(bytes, selectedSource, { example = false, revision = worldRevision } = {}) {
+async function installWorld(
+  bytes,
+  selectedSource,
+  { example = false, revision = worldRevision, encoding, loadStarted = performance.now() } = {},
+) {
   const engine = await getWorldEngine();
   if (revision !== worldRevision) return;
   const openedAt = performance.now();
   const parsed = engine.openWorld(bytes);
   const openMs = performance.now() - openedAt;
+  cancelPendingWorld();
+  const candidate = {
+    client: createWaterfallWorkerClient(),
+    world: parsed,
+    engine,
+    released: false,
+  };
+  pendingWorldInstall = candidate;
+  try {
+    const ready = await candidate.client.initialize(bytes, { revision });
+    candidate.parseMs = ready.parseMs;
+    if (
+      revision !== worldRevision ||
+      ready.status !== "ready" ||
+      pendingWorldInstall !== candidate
+    ) {
+      releasePendingWorld(candidate);
+      return;
+    }
+  } catch (error) {
+    releasePendingWorld(candidate);
+    throw error;
+  }
+  pendingWorldInstall = null;
+  waterfallClient?.terminate();
+  waterfallClient = candidate.client;
+  installedWorldRevision = revision;
+  installedLoadStarted = loadStarted;
+  viewport.dataset.firstViewportMs = "";
+  viewport.dataset.waterfallParseMs = String(candidate.parseMs);
+  if (encoding !== undefined) $("encoding").value = encoding;
   const previous = world;
   worldEngine = engine;
   if (previous) engine.disposeWorld(previous);
   viewport.dataset.backend = engine.backend;
   viewport.dataset.openMs = String(openMs);
-  viewport.dataset.wasmMemoryBytes = String(worldWasmStats(parsed)?.memoryBytes || 0);
+  viewport.dataset.wasmMemoryBytes = String(
+    worldWasmStats(parsed)?.memoryBytes || 0,
+  );
   viewport.dataset.fallbackReason = engine.fallbackReason || "";
   source.active = false;
   source.cache.clear();
@@ -564,6 +666,8 @@ async function installWorld(bytes, selectedSource, { example = false, revision =
 }
 $("example").addEventListener("click", async () => {
   const revision = ++worldRevision;
+  const loadStarted = performance.now();
+  cancelPendingWorld();
   activeAbort?.abort();
   queue.invalidate();
   $("example").disabled = true;
@@ -582,11 +686,15 @@ $("example").addEventListener("click", async () => {
     )
       throw new Error("示例世界 SHA-256 与清单不符");
     if (revision !== worldRevision) return;
-    $("encoding").value = manifest.inputEncoding;
     status("建立世界列索引…");
     await pause();
     if (revision === worldRevision)
-      await installWorld(bytes, selectedSource, { example: true, revision });
+      await installWorld(bytes, selectedSource, {
+        example: true,
+        revision,
+        loadStarted,
+        encoding: manifest.inputEncoding,
+      });
   } catch (error) {
     if (revision === worldRevision) {
       status(error.message, true);
@@ -600,6 +708,8 @@ $("world-file").addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
   if (!file) return;
   const revision = ++worldRevision;
+  const loadStarted = performance.now();
+  cancelPendingWorld();
   activeAbort?.abort();
   queue.invalidate();
   status("读取世界文件，建立列索引…");
@@ -610,7 +720,7 @@ $("world-file").addEventListener("change", async (event) => {
     if (revision !== worldRevision) return;
     const selectedSource = makeSource();
     selectedSource.files = new Map(source.files);
-    await installWorld(bytes, selectedSource, { revision });
+    await installWorld(bytes, selectedSource, { revision, loadStarted });
   } catch (error) {
     if (revision === worldRevision) {
       status(error.message, true);
@@ -729,6 +839,17 @@ viewport.addEventListener("keydown", (event) => {
     camera = panCamera(camera, ...move, world, size);
     scheduleRender();
   }
+});
+window.addEventListener("pagehide", (event) => {
+  activeAbort?.abort();
+  queue.invalidate();
+  if (!event.persisted) {
+    cancelPendingWorld();
+    waterfallClient?.terminate();
+  }
+});
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted && world) scheduleRender();
 });
 new ResizeObserver(resize).observe(viewport);
 resize();

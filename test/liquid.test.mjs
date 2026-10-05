@@ -362,7 +362,7 @@ test("shape subsets still reject mixed liquid, shimmer, missing context, malform
   r.context.cells[west] = wet(255, 2);
   assert.equal(
     planLiquids(r, opts).support.unsupportedByReason[
-      "mixed-liquid-neighborhood"
+      "special-mixed-behind-liquid-context"
     ],
     1,
   );

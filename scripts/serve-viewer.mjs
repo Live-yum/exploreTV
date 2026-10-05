@@ -21,7 +21,11 @@ export function allowedViewerPath(pathname) {
     pathname === "/viewer/index.html"
   )
     return "viewer/index.html";
-  if (/^\/viewer\/(?:viewer\.mjs|style\.css)$/.test(pathname))
+  if (
+    /^\/viewer\/(?:viewer\.mjs|waterfall-worker\.mjs|style\.css)$/.test(
+      pathname,
+    )
+  )
     return pathname.slice(1);
   if (/^\/core\/[a-z][a-z0-9-]*\.mjs$/.test(pathname)) return pathname.slice(1);
   if (
@@ -31,7 +35,7 @@ export function allowedViewerPath(pathname) {
   )
     return pathname.slice(1);
   if (
-    /^\/example\/assets\/(?:(?:Tiles_|Wall_|water_|Tree_Tops_|Tree_Branches_|Glow_|Liquid_|Flame_|LiquidSlope_|Extra_)\d+|SunAltar|SunOrb)\.png$/.test(
+    /^\/example\/assets\/(?:(?:Tiles_|Wall_|water_|Tree_Tops_|Tree_Branches_|Glow_|Liquid_|Flame_|LiquidSlope_|Waterfall_|Extra_)\d+|SunAltar|SunOrb)\.png$/.test(
       pathname,
     )
   )

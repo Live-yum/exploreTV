@@ -194,7 +194,12 @@ import { openWorld, extractSceneRegion } from "../../core/world.mjs";
 // #ifdef H5
 import { loadWorldEngine } from "../../core/world-wasm.mjs";
 // #endif
-let worldEngine = { backend: "javascript", openWorld, extractSceneRegion, disposeWorld() {} };
+let worldEngine = {
+  backend: "javascript",
+  openWorld,
+  extractSceneRegion,
+  disposeWorld() {},
+};
 let worldEnginePromise;
 async function ensureWorldEngine() {
   // #ifdef H5
@@ -209,8 +214,8 @@ import {
   cropFragment,
 } from "../../core/fragment.mjs";
 import { textureMemoryBytes } from "../../core/assets.mjs";
-import { prepareSceneFrames } from "../../core/scene-frames.mjs";
-import { planScene, renderScene } from "../../core/renderer.mjs";
+import { renderSceneBatched } from "../../core/scene-batches.mjs";
+import { planScene } from "../../core/renderer.mjs";
 import {
   chooseFiles,
   readBytes,
@@ -268,17 +273,12 @@ const selectionStyle = computed(() => {
     height: (a.height / b.height) * canvasHeight.value + "px",
   };
 });
-let canvas, ctx, componentDisposed = false;
+let canvas,
+  ctx,
+  componentDisposed = false;
 const assets = new Map();
-let assetRevision = 0,
-  preparedCache = null;
-function clearProcessingFrames() {
-  preparedCache?.frames.dispose();
-  preparedCache = null;
-}
 onBeforeUnmount(() => {
   componentDisposed = true;
-  clearProcessingFrames();
   assets.clear();
   if (world.value) worldEngine.disposeWorld(world.value);
   world.value = null;
@@ -334,7 +334,6 @@ function importWorld() {
     if (componentDisposed) return;
     const next = engine.openWorld(bytes);
     if (world.value) engine.disposeWorld(world.value);
-    clearProcessingFrames();
     world.value = next;
     baseFragment.value = null;
     region.value = null;
@@ -377,7 +376,6 @@ function importTextures() {
         ) + textureMemoryBytes(image);
       if (bytes > 48 * 1024 * 1024) throw new Error("贴图缓存超过 48 MiB 限制");
       assets.set(name, image);
-      assetRevision++;
       assetCount.value = assets.size;
     }
     assetCount.value = assets.size;
@@ -398,33 +396,6 @@ async function draw() {
       layer: liquidLayer.value,
     },
   });
-  const processingKey = JSON.stringify([
-    paintEnabled.value,
-    liquidEnabled.value,
-    assetEncoding.value,
-    opaqueScene.value,
-    waterStyle.value,
-    liquidFrame.value,
-    liquidLayer.value,
-  ]);
-  if (
-    !preparedCache ||
-    preparedCache.region !== region.value ||
-    preparedCache.assetRevision !== assetRevision ||
-    preparedCache.key !== processingKey
-  ) {
-    clearProcessingFrames();
-    preparedCache = {
-      region: region.value,
-      assetRevision,
-      key: processingKey,
-      frames: prepareSceneFrames(plan, assets, createProcessingCanvas, {
-        inputEncoding: assetEncoding.value,
-        opaqueScene: opaqueScene.value,
-      }),
-    };
-  }
-  const frames = preparedCache.frames;
   const scale = zoom.value * Math.min(1, 720 / plan.width, 480 / plan.height);
   canvasWidth.value = Math.max(1, Math.round(plan.width * scale));
   canvasHeight.value = Math.max(1, Math.round(plan.height * scale));
@@ -433,7 +404,10 @@ async function draw() {
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, plan.width, plan.height);
-  const result = renderScene(ctx, plan, assets, { sceneFrames: frames });
+  const result = renderSceneBatched(ctx, plan, assets, createProcessingCanvas, {
+    inputEncoding: assetEncoding.value,
+    opaqueScene: opaqueScene.value,
+  });
   renderValid.value = true;
   warnings.value = [...(result.warnings || [])];
   if (plan.unsupportedCells?.length)
@@ -456,7 +430,7 @@ async function draw() {
           .join("；"),
     );
   warnings.value.push(
-    `图像处理：${frames.support.preparedFrames} 帧，${frames.support.bytes} 字节；液体 ${plan.support.liquidDrawing.drawn} 格。`,
+    `图像处理：${result.paintSupport.preparedFrames} 帧，峰值 ${result.paintSupport.peakBytes} 字节，${result.paintSupport.batches} 批；液体 ${plan.support.liquidDrawing.drawn} 格。`,
   );
   if (result.missingAssets?.length)
     warnings.value.push("缺少贴图：" + result.missingAssets.join(", "));
@@ -606,7 +580,6 @@ function importFragment() {
     region.value = loadFragment(
       decodeUtf8(await readBytes(file, 16 * 1024 * 1024)),
     );
-    clearProcessingFrames();
     if (world.value) worldEngine.disposeWorld(world.value);
     world.value = null;
     baseFragment.value = region.value;

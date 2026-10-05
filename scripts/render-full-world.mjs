@@ -1,3 +1,4 @@
+import { createWorldWaterfallRegistry } from "./world-render-engine.mjs";
 import {
   readFileSync,
   writeFileSync,
@@ -151,7 +152,13 @@ async function main(argv) {
     "core/world-tree-context.mjs",
 
     "core/liquid.mjs",
-  "core/liquid-halfbrick.mjs",
+    "core/liquid-halfbrick.mjs",
+    "core/liquid-mixed-halfbrick.mjs",
+    "core/static-waterfalls.mjs",
+    "core/scene-batches.mjs",
+    "core/liquid-composite.mjs",
+    "core/liquid-shimmer.mjs",
+    "core/liquid-special-context.mjs",
     "core/tile-solidity.mjs",
     "core/liquid-visible-level.mjs",
     "core/paint.mjs",
@@ -363,11 +370,13 @@ async function main(argv) {
       important: world.important,
       source: SOURCE,
       treeContext: world.treeContext,
-    herbContext: world.herbContext,
+      herbContext: world.herbContext,
       getWorldTile: getWorldTileAccessor(world),
     };
   }
+  const waterfallRegistry = createWorldWaterfallRegistry(world);
   const renderer = createWorldRenderer({
+    waterfallRegistry,
     assetDir,
     inputEncoding: config.inputEncoding,
     onOmission: mark,

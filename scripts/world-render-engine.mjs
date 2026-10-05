@@ -1,3 +1,5 @@
+import { createStaticWaterfallRegistry } from "../core/static-waterfalls.mjs";
+import { sceneFrameReservedBytes } from "../core/scene-batches.mjs";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -96,12 +98,70 @@ export function readIndexedRegion(world, index, rect) {
     },
   };
 }
+/** Explicit whole-world static registry: cap differs from a game viewport. */
+export function createWorldWaterfallRegistry(world) {
+  const started = performance.now();
+  // The source scan excludes the outer world edge; tiny synthetic worlds have
+  // no interior origin candidates, and need no fabricated neighbor records.
+  if (world.width < 3 || world.height < 3)
+    return {
+      model: "fresh-static-empty-interior",
+      scanComplete: true,
+      viewport: { x: 0, y: 0, width: world.width, height: world.height },
+      maxWaterfalls: 100000,
+      requiredAssets: [],
+      failures: [],
+      origins: [],
+      stats: {
+        eligible: 0,
+        registered: 0,
+        capped: 0,
+        commands: 0,
+        unsupportedOrigins: 0,
+      },
+      hasOrigin: () => false,
+      commandsFor: () => [],
+      buildMilliseconds: 0,
+    };
+  const registry = createStaticWaterfallRegistry(
+    {
+      width: world.width,
+      height: world.height,
+      worldSurface: world.worldSurface,
+      getTile: getWorldTileAccessor(world),
+    },
+    {
+      viewport: { x: 0, y: 0, width: world.width, height: world.height },
+      quality: 1,
+      maxWaterfalls: 100000,
+      maxCommands: 1048576,
+      waterStyle: 0,
+      frame: 0,
+      slowFrame: 0,
+    },
+  );
+  registry.buildMilliseconds = performance.now() - started;
+  return registry;
+}
+
 export function createWorldRenderer({
   assetDir,
   inputEncoding = "tconvert-game-raw",
+  waterfallRegistry = null,
   onOmission = () => {},
 }) {
   const stats = {
+    waterfalls: waterfallRegistry
+      ? {
+          model: waterfallRegistry.model,
+          viewport: waterfallRegistry.viewport,
+          maxWaterfalls: waterfallRegistry.maxWaterfalls,
+          scanComplete: waterfallRegistry.scanComplete,
+          stats: waterfallRegistry.stats,
+          failures: waterfallRegistry.failures,
+          buildMilliseconds: waterfallRegistry.buildMilliseconds,
+        }
+      : null,
     assetCacheBytes: 0,
     peakAssetCacheBytes: 0,
     maxChunkCells: 0,
@@ -142,6 +202,7 @@ export function createWorldRenderer({
       waterfallFrame: 0,
       waterStyle: 0,
       layer: "foreground",
+      ...(waterfallRegistry ? { waterfallRegistry } : {}),
     },
   };
   async function assetsFor(plan) {
@@ -211,7 +272,7 @@ export function createWorldRenderer({
       reserved = 0;
     for (const c of plan.commands) {
       const key = sceneFrameKey(c),
-        extra = keys.has(key) ? 0 : c.sw * c.sh * 8;
+        extra = keys.has(key) ? 0 : sceneFrameReservedBytes(c);
       if (
         commands.length &&
         ((!keys.has(key) && keys.size >= 450) ||
@@ -224,7 +285,7 @@ export function createWorldRenderer({
       }
       if (!keys.has(key)) {
         keys.add(key);
-        reserved += c.sw * c.sh * 8;
+        reserved += sceneFrameReservedBytes(c);
       }
       commands.push(c);
     }

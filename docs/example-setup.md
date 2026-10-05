@@ -1,6 +1,6 @@
 # 示例地图、贴图与快速集成
 
-项目提供 `fixtures/example-world.wld` 和示例渲染实际使用的 376 张 PNG，便于下载后运行。地图为 xindong v315、8400 × 2400 格，文件约 12.5 MB；贴图合计 4199592 字节，来自用户指定的 Terraria 1.4.5.8 TConvert 导出结果。
+项目提供 `fixtures/example-world.wld` 和示例渲染实际使用的 384 张 PNG，便于下载后运行。地图为 xindong v315、8400 × 2400 格，文件约 12.5 MB；贴图合计 4235067 字节，来自用户指定的 Terraria 1.4.5.8 TConvert 导出结果。
 
 `example/asset-manifest.json` 记录每张 PNG 的文件名、字节数、SHA-256 和尺寸。选择依据是已验证全图渲染报告中实际加载的 `assetHashes`，不是游戏全部资源，也不是把所有候选贴图打包。这组贴图用于当前示例和当前支持的渲染路径，不保证覆盖其他地图、其他水样式或尚未实现的对象。
 
@@ -23,13 +23,13 @@ npm run dev:h5
 
 打开终端给出的 H5 地址，先点“导入 .wld”选择示例地图，把坐标设置为 `x=4448, y=496, width=64, height=40`。再点“导入 PNG 贴图”，从 `example/assets/` 中选择该范围需要的六张：`Tiles_10.png`、`Tiles_19.png`、`Tiles_353.png`、`Tiles_38.png`、`Tiles_4.png`、`Wall_5.png`，最后点“生成场景预览”。也可以从下面生成的本地 `example-assets/` 选择同名文件。
 
-原有页面不会自动选择文件，而且有 48 MiB 贴图缓存限制。不要一次导入全部 376 张：它们的原始 RGBA 加平台图像及 PNG 字节估算约 113.3 MiB，超过该页缓存预算。上述六张估算约 8.4 MiB；切换范围应加载对应的资源子集。TConvert 输出使用“PNG通道：TConvert原始”和“黑底预乘合成”；这不等同于游戏中的实时光照。
+原有页面不会自动选择文件，而且有 48 MiB 贴图缓存限制。不要一次导入全部 384 张：它们的原始 RGBA 加平台图像及 PNG 字节估算约 113.3 MiB，超过该页缓存预算。上述六张估算约 8.4 MiB；切换范围应加载对应的资源子集。TConvert 输出使用“PNG通道：TConvert原始”和“黑底预乘合成”；这不等同于游戏中的实时光照。
 
 ## 贴图的权利边界
 
 Terraria 美术素材的权利仍属于 Re-Logic 及相应权利人。项目代码许可和 TConvert 的软件许可不授予这些 PNG 的一般再分发许可。
 
-本示例随完整查看工具附带这 376 张实际必要的贴图，依据 [Re-Logic 官方模组、工具和资源规则](https://forums.terraria.org/index.php?threads/modding-pc-only-rules-guidelines.286/#post-1761) 中工具运行、使用所必需的原游戏内容例外；工具的主要目的不能是重新分发原版游戏内容。具体适用范围见 [贴图说明与权利声明](../example/assets/NOTICE.md)。请保留该声明，不要把此目录当作通用素材包或单独的贴图库发布；换用素材、增加内容或改变用途时应重新核对授权。
+本示例随完整查看工具附带这 384 张实际必要的贴图，依据 [Re-Logic 官方模组、工具和资源规则](https://forums.terraria.org/index.php?threads/modding-pc-only-rules-guidelines.286/#post-1761) 中工具运行、使用所必需的原游戏内容例外；工具的主要目的不能是重新分发原版游戏内容。具体适用范围见 [贴图说明与权利声明](../example/assets/NOTICE.md)。请保留该声明，不要把此目录当作通用素材包或单独的贴图库发布；换用素材、增加内容或改变用途时应重新核对授权。
 
 ## 可选：从自己的 TConvert 输出准备本地资源
 
@@ -40,7 +40,7 @@ node scripts/prepare-example.mjs /absolute/path/to/TConvert-output --check
 node scripts/prepare-example.mjs /absolute/path/to/TConvert-output
 ```
 
-第一条只验证，不写文件。第二条把通过校验的 376 张 PNG 复制到项目根目录的 `example-assets/`；这个目录由 Git 忽略，不属于应用包。输入目录永远只读。命令不会下载资源、读取账号凭据、上传文件或解压未知内容。
+第一条只验证，不写文件。第二条把通过校验的 384 张 PNG 复制到项目根目录的 `example-assets/`；这个目录由 Git 忽略，不属于应用包。输入目录永远只读。命令不会下载资源、读取账号凭据、上传文件或解压未知内容。
 
 可接受以下布局，名称大小写必须准确；也可直接把 `Images` 目录作为输入：
 
@@ -103,8 +103,8 @@ node --expose-gc scripts/render-full-world.mjs \
 
 ```js
 import { openWorld, extractSceneRegion } from "./core/world.mjs";
-import { planScene, renderScene } from "./core/renderer.mjs";
-import { prepareSceneFrames } from "./core/scene-frames.mjs";
+import { planScene } from "./core/renderer.mjs";
+import { renderSceneBatched } from "./core/scene-batches.mjs";
 import { textureMemoryBytes } from "./core/assets.mjs";
 import { saveFragment, loadFragment } from "./core/fragment.mjs";
 import { loadTexture, createProcessingCanvas } from "./adapters/files.js";
@@ -143,24 +143,17 @@ for (const name of plan.requiredAssets) {
   assets.set(name, image);
 }
 
-const frames = prepareSceneFrames(plan, assets, createProcessingCanvas, {
+canvas.width = plan.width;
+canvas.height = plan.height;
+const context = canvas.getContext("2d");
+context.setTransform(1, 0, 0, 1, 0, 0);
+context.imageSmoothingEnabled = false;
+const report = renderSceneBatched(context, plan, assets, createProcessingCanvas, {
+  strict: true,
   inputEncoding: "tconvert-game-raw",
   opaqueScene: true,
 });
-let report;
-try {
-  canvas.width = plan.width;
-  canvas.height = plan.height;
-  const context = canvas.getContext("2d");
-  context.setTransform(1, 0, 0, 1, 0, 0);
-  context.imageSmoothingEnabled = false;
-  report = renderScene(context, plan, assets, {
-    strict: true,
-    sceneFrames: frames,
-  });
-} finally {
-  frames.dispose();
-}
+// Frame surfaces are released after each contiguous bounded batch.
 
 // Surface report.warnings/support to the user; strict checks resource validity,
 // but does not turn unsupported scene features into fully rendered objects.

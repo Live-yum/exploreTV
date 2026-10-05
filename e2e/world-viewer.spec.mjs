@@ -403,39 +403,145 @@ test("real forest loads separate crowns and branches at native detail", async ({
   });
 });
 
-test("real special objects and plants request their actual atlases with no unsupported Tile cells", async ({page}, testInfo) => {
-  test.setTimeout(120000);
+test("real special objects and plants request their actual atlases with no unsupported Tile cells", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180000);
   const seen = new Set();
-  page.on("request", r => seen.add(r.url().split("/").pop()));
+  page.on("request", (r) => seen.add(r.url().split("/").pop()));
   await page.goto(origin);
-  await page.getByRole("button", {name:"打开示例世界",exact:true}).click();
-  await expect.poll(async () => (await state(page)).drawn, {timeout:60000}).toBeTruthy();
+  await page.getByRole("button", { name: "打开示例世界", exact: true }).click();
+  await expect
+    .poll(async () => (await state(page)).drawn, { timeout: 60000 })
+    .toBeTruthy();
   await settled(page);
   const points = [
-    [835,847,"Extra_181.png","pylon"],
-    [1373,1107,"SunOrb.png","altar"],
-    [4549,488,"Extra_198.png","relic"],
-    [214,799,"Glow_329.png","tulip"],
-    [326,1252,"Flame_3.png","chandelier"],
-    [6433,466,"Tiles_80.png","cactus"],
-    [32,694,"Liquid_0.png","halfbrick-water"],
-    [42,1697,"Liquid_1.png","halfbrick-lava"],
-    [341,1920,"Liquid_11.png","halfbrick-honey"],
+    [835, 847, "Extra_181.png", "pylon"],
+    [1373, 1107, "SunOrb.png", "altar"],
+    [4549, 488, "Extra_198.png", "relic"],
+    [214, 799, "Glow_329.png", "tulip"],
+    [326, 1252, "Flame_3.png", "chandelier"],
+    [6433, 466, "Tiles_80.png", "cactus"],
+    [32, 694, "Liquid_0.png", "halfbrick-water"],
+    [42, 1697, "Liquid_1.png", "halfbrick-lava"],
+    [341, 1920, "Liquid_11.png", "halfbrick-honey"],
+    [79, 932, "Waterfall_0.png", "waterfall-water"],
+    [114, 1956, "Waterfall_1.png", "waterfall-lava"],
+    [326, 2000, "Waterfall_14.png", "waterfall-honey"],
+    [920, 295, "Waterfall_12.png", "waterfall-rain"],
   ];
-  for (const [x,y,asset,label] of points) {
+  for (const [x, y, asset, label] of points) {
     const before = Number((await state(page)).revision);
     await page.locator("#tile-x").fill(String(x));
     await page.locator("#tile-y").fill(String(y));
-    await page.getByRole("button", {name:"跳转",exact:true}).click();
-    await expect.poll(async () => {
-      const s = await state(page); return s.busy === "false" && Number(s.revision) > before;
-    }, {timeout:60000}).toBe(true);
+    await page.getByRole("button", { name: "跳转", exact: true }).click();
+    await expect
+      .poll(
+        async () => {
+          const s = await state(page);
+          return s.busy === "false" && Number(s.revision) > before;
+        },
+        { timeout: 60000 },
+      )
+      .toBe(true);
     const current = await state(page);
     expect(current.backend).toBe("rust-wasm");
     expect(current.unsupported).toBe("0");
     expect(current.skipped).toBe("0");
+    expect(current.waterfallBackend).toBe("worker");
+    if (label.startsWith("waterfall-")) {
+      expect(Number(current.waterfallOrigins)).toBeGreaterThan(0);
+      expect(current.omissions).toBe("0");
+    }
     expect(seen.has(asset), label).toBe(true);
-    await expect(page.locator("#diagnostic-text")).not.toContainText("Missing textures:");
-    await page.screenshot({path:`artifacts/world-viewer-${label}-${testInfo.project.name}.png`,fullPage:true});
+    if (label === "pylon") {
+      expect(seen.has("water_14.png")).toBe(true);
+      expect(current.omissions).toBe("0");
+    }
+    await expect(page.locator("#diagnostic-text")).not.toContainText(
+      "Missing textures:",
+    );
+    await page.screenshot({
+      path: `artifacts/world-viewer-${label}-${testInfo.project.name}.png`,
+      fullPage: true,
+    });
   }
+});
+
+test("rapid world replacement bounds pending workers and leaves the latest world responsive", async ({
+  page,
+}) => {
+  test.setTimeout(120000);
+  await routes(page);
+  await page.addInitScript(() => {
+    const BaseWorker = window.Worker;
+    window.__waterfallWorkers = { active: 0, peak: 0 };
+    window.Worker = class extends BaseWorker {
+      constructor(url, options) {
+        super(url, options);
+        this.tracked = String(url).includes("waterfall-worker.mjs");
+        this.stopped = false;
+        if (this.tracked) {
+          window.__waterfallWorkers.active++;
+          window.__waterfallWorkers.peak = Math.max(
+            window.__waterfallWorkers.peak,
+            window.__waterfallWorkers.active,
+          );
+        }
+      }
+      terminate() {
+        if (this.tracked && !this.stopped) {
+          this.stopped = true;
+          window.__waterfallWorkers.active--;
+        }
+        return super.terminate();
+      }
+    };
+  });
+  await page.goto(origin);
+  await page.getByRole("button", { name: "打开示例世界", exact: true }).click();
+  await expect
+    .poll(async () => (await state(page)).drawn, { timeout: 60000 })
+    .toBeTruthy();
+  await settled(page);
+  // Keep new candidates initializing long enough to exercise replacement.
+  await page.route("**/viewer/waterfall-worker.mjs", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    await route.continue();
+  });
+  for (let i = 0; i < 3; i++) {
+    await page
+      .locator("#world-file")
+      .setInputFiles({
+        name: `replacement-${i}.wld`,
+        mimeType: "application/octet-stream",
+        buffer: worldBytes,
+      });
+    await expect
+      .poll(() => page.evaluate(() => window.__waterfallWorkers.active))
+      .toBe(2);
+  }
+  await expect
+    .poll(() => page.evaluate(() => window.__waterfallWorkers.active), {
+      timeout: 60000,
+    })
+    .toBe(1);
+  await settled(page);
+  expect(
+    await page.evaluate(() => window.__waterfallWorkers.peak),
+  ).toBeLessThanOrEqual(2);
+  const before = Number((await state(page)).revision);
+  await page.locator("#tile-x").fill("5000");
+  await page.locator("#tile-y").fill("600");
+  await page.getByRole("button", { name: "跳转", exact: true }).click();
+  await expect
+    .poll(
+      async () => {
+        const s = await state(page);
+        return s.busy === "false" && Number(s.revision) > before;
+      },
+      { timeout: 60000 },
+    )
+    .toBe(true);
+  expect((await state(page)).waterfallBackend).toBe("worker");
 });

@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { openWorld, extractSceneRegion } from "../core/world.mjs";
 import { saveFragment, loadFragment } from "../core/fragment.mjs";
-import { prepareSceneFrames } from "../core/scene-frames.mjs";
+import { renderSceneBatched } from "../core/scene-batches.mjs";
 import { planScene, renderScene } from "../core/renderer.mjs";
 import assert from "node:assert/strict";
 const [file, assetDir, x, y, width, height, ...flags] = process.argv.slice(2);
@@ -48,15 +48,15 @@ for (const name of plan.requiredAssets) {
 }
 const canvas = createCanvas(plan.width, plan.height),
   context = canvas.getContext("2d"),
-  sceneFrames = effects
-    ? prepareSceneFrames(plan, assets, createCanvas, {
+  result = effects
+    ? renderSceneBatched(context, plan, assets, createCanvas, {
+        strict: true,
         inputEncoding: flags.includes("--straight")
           ? "standard-straight"
           : "tconvert-game-raw",
         opaqueScene: !flags.includes("--transparent"),
       })
-    : null,
-  result = renderScene(context, plan, assets, { strict: true, sceneFrames });
+    : renderScene(context, plan, assets, { strict: true });
 assert.ok(result.drawn > 0);
 const fragment = saveFragment(region),
   reloaded = loadFragment(fragment);

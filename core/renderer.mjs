@@ -1,6 +1,7 @@
+import { classifyTileDrawLayer } from "./static-waterfalls.mjs";
 /** Original texture-only preview planner. See docs/rendering-scope.md for fidelity limits. */
 import { cellAt } from "./world.mjs";
-import { planLiquids } from "./liquid.mjs";
+import { planSceneLiquids } from "./liquid-composite.mjs";
 import { isSolidOrSlopedTile } from "./tile-solidity.mjs";
 import { planStaticNature, STATIC_NATURE_TYPES } from "./static-nature.mjs";
 export { STATIC_NATURE_TYPES } from "./static-nature.mjs";
@@ -20,11 +21,18 @@ import {
   SOURCE_HIDDEN_TILES,
 } from "./static-misc.mjs";
 export { STATIC_MISC_TILES, SOURCE_HIDDEN_TILES } from "./static-misc.mjs";
-import { planStaticFurnitureNext, STATIC_FURNITURE_NEXT_TILES } from "./static-furniture-next.mjs";
+import {
+  planStaticFurnitureNext,
+  STATIC_FURNITURE_NEXT_TILES,
+} from "./static-furniture-next.mjs";
 export { STATIC_FURNITURE_NEXT_TILES } from "./static-furniture-next.mjs";
 import { planStaticFlames } from "./static-flames.mjs";
 import { planStaticPlantsNext } from "./static-plants-next.mjs";
-import { planStaticSpecialObject, STATIC_SPECIAL_OBJECT_TILES, STATIC_SPECIAL_OBJECT_HALO } from "./static-special-objects.mjs";
+import {
+  planStaticSpecialObject,
+  STATIC_SPECIAL_OBJECT_TILES,
+  STATIC_SPECIAL_OBJECT_HALO,
+} from "./static-special-objects.mjs";
 const BLOCK_FRAME = [
   [162, 54],
   [108, 54],
@@ -133,7 +141,11 @@ function slopePolygon(shape) {
 export const MAX_SCENE_COMMANDS = 131072;
 export function planScene(region, options = {}) {
   const maxCommands = options.maxCommands ?? MAX_SCENE_COMMANDS;
-  if (!Number.isSafeInteger(maxCommands) || maxCommands < 1 || maxCommands > MAX_SCENE_COMMANDS)
+  if (
+    !Number.isSafeInteger(maxCommands) ||
+    maxCommands < 1 ||
+    maxCommands > MAX_SCENE_COMMANDS
+  )
     throw new Error("Invalid scene command budget");
   let commandCount = 0;
   const { revealInvisible = false, tiles = true, walls = true } = options;
@@ -193,11 +205,22 @@ export function planScene(region, options = {}) {
   const visible = (t) => t?.active && (revealInvisible || !t.invisibleBlock);
   const reserve = () => {
     if (++commandCount > maxCommands)
-      throw new Error("Scene command budget exceeded; choose a smaller preview region");
+      throw new Error(
+        "Scene command budget exceeded; choose a smaller preview region",
+      );
   };
-  const emit = (c) => { commands.push(c); assets.add(c.asset); };
-  const add = (c) => { reserve(); emit(c); };
-  const queueCommand = (list, c) => { reserve(); list.push(c); };
+  const emit = (c) => {
+    commands.push(c);
+    assets.add(c.asset);
+  };
+  const add = (c) => {
+    reserve();
+    emit(c);
+  };
+  const queueCommand = (list, c) => {
+    reserve();
+    list.push(c);
+  };
   const reject = (t, x, y, reason) => {
     unsupportedCells.push({
       x: x + (region.rect.x || 0),
@@ -209,14 +232,32 @@ export function planScene(region, options = {}) {
     unsupported.set(t.type, (unsupported.get(t.type) || 0) + 1);
   };
   const appendSprite = (c, t, x, y, contextOnly = false) => {
-    const command = { kind: "tile", x, y, type: c.type ?? t.type, ...c,
-      dx: x*16 + (c.offsetX || 0), dy: y*16 + (c.offsetY || 0),
-      dw: c.sw, dh: c.sh, paintId: paintEnabled ? (c.paintId ?? t.paint ?? 0) : 0,
+    const command = {
+      kind: "tile",
+      x,
+      y,
+      type: c.type ?? t.type,
+      ...c,
+      ownerType: t.type,
+      dx: x * 16 + (c.offsetX || 0),
+      dy: y * 16 + (c.offsetY || 0),
+      dw: c.sw,
+      dh: c.sh,
+      paintId: paintEnabled ? (c.paintId ?? t.paint ?? 0) : 0,
       ...(contextOnly ? { contextOnly: true } : {}),
     };
-    if (contextOnly && (command.dx >= w*16 || command.dy >= h*16 || command.dx+command.dw <= 0 || command.dy+command.dh <= 0)) return;
-    if (c.specialLayer === "behind-object") queueCommand(specialBehind, command);
-    else if (c.specialLayer === "over-tiles") queueCommand(specialAbove, command);
+    if (
+      contextOnly &&
+      (command.dx >= w * 16 ||
+        command.dy >= h * 16 ||
+        command.dx + command.dw <= 0 ||
+        command.dy + command.dh <= 0)
+    )
+      return;
+    if (c.specialLayer === "behind-object")
+      queueCommand(specialBehind, command);
+    else if (c.specialLayer === "over-tiles")
+      queueCommand(specialAbove, command);
     else add(command);
     if (contextOnly) support.contextCommands++;
   };
@@ -264,7 +305,7 @@ export function planScene(region, options = {}) {
         support.walls++;
         support.approximateWalls++;
       }
-  const liquidPlan = planLiquids(region, {
+  const liquidPlan = planSceneLiquids(region, {
     ...options.liquids,
     isSolid: isSolidOrSlopedTile,
   });
@@ -294,19 +335,47 @@ export function planScene(region, options = {}) {
         reject(t, x, y);
         continue;
       }
-      const special = planStaticSpecialObject(region, x, y, t, { revealInvisible, mouseTextColor: options.mouseTextColor });
-      const plant = special ? null : planStaticPlantsNext(region, x, y, t, { revealInvisible, mouseTextColor: options.mouseTextColor });
-      let furniture = special || plant ? null : planStaticFurnitureNext(region, x, y, t, { revealInvisible, paintEnabled });
-      if (furniture?.pendingFlames) {
-        const flame = planStaticFlames(region, x, y, t, { revealInvisible, state: options.flameState });
-        furniture = flame && !flame.unsupported
-          ? { commands: [...furniture.commands, ...flame.commands], completedFlames: true }
-          : { unsupported: flame?.unsupported || "Missing verified furniture flame plan" };
-      }
-      const misc = special || plant || furniture || planStaticMisc(region, x, y, t, {
+      const special = planStaticSpecialObject(region, x, y, t, {
         revealInvisible,
-        paintEnabled,
+        mouseTextColor: options.mouseTextColor,
       });
+      const plant = special
+        ? null
+        : planStaticPlantsNext(region, x, y, t, {
+            revealInvisible,
+            mouseTextColor: options.mouseTextColor,
+          });
+      let furniture =
+        special || plant
+          ? null
+          : planStaticFurnitureNext(region, x, y, t, {
+              revealInvisible,
+              paintEnabled,
+            });
+      if (furniture?.pendingFlames) {
+        const flame = planStaticFlames(region, x, y, t, {
+          revealInvisible,
+          state: options.flameState,
+        });
+        furniture =
+          flame && !flame.unsupported
+            ? {
+                commands: [...furniture.commands, ...flame.commands],
+                completedFlames: true,
+              }
+            : {
+                unsupported:
+                  flame?.unsupported || "Missing verified furniture flame plan",
+              };
+      }
+      const misc =
+        special ||
+        plant ||
+        furniture ||
+        planStaticMisc(region, x, y, t, {
+          revealInvisible,
+          paintEnabled,
+        });
       if (misc) {
         if (misc.unsupported) {
           reject(t, x, y, misc.unsupported);
@@ -326,8 +395,10 @@ export function planScene(region, options = {}) {
         support.tiles++;
         if (special) support.staticSpecialObjects++;
         else if (plant) support.staticPlants++;
-        else if (furniture) { support.staticFurniture++; if (furniture.completedFlames) support.staticFlames++; }
-        else support.staticMisc++;
+        else if (furniture) {
+          support.staticFurniture++;
+          if (furniture.completedFlames) support.staticFlames++;
+        } else support.staticMisc++;
         continue;
       }
       if (STATIC_TREE_TYPES.includes(t.type)) {
@@ -343,8 +414,8 @@ export function planScene(region, options = {}) {
         }
         for (const c of tree.commands) {
           if (c.treePart === "trunk" || c.treePart === "palm-trunk")
-            queueCommand(trunkCommands, c);
-          else queueCommand(foliageCommands, c);
+            queueCommand(trunkCommands, { ...c, ownerType: t.type });
+          else queueCommand(foliageCommands, { ...c, ownerType: t.type });
         }
         support.tiles++;
         support.staticTrees++;
@@ -467,6 +538,7 @@ export function planScene(region, options = {}) {
         x,
         y,
         type: t.type,
+        ownerType: t.type,
         paintId: paintEnabled ? t.paint || 0 : 0,
         fidelity,
         ...(flipX ? { flipX: true } : {}),
@@ -498,16 +570,31 @@ export function planScene(region, options = {}) {
   // Selection-only contexts carry source neighbors without adding saved Tile data.
   // Whole-world/viewport paths already plan an expanded rectangle before cropping.
   if (tiles && region.context) {
-    const ctx = region.context, halo = STATIC_SPECIAL_OBJECT_HALO;
-    for (let x = -halo; x < w+halo; x++) for (let y = -halo; y < h+halo; y++) {
-      if (x >= 0 && y >= 0 && x < w && y < h) continue;
-      const wx = region.rect.x+x, wy = region.rect.y+y;
-      const t = cellAt(ctx, wx-ctx.rect.x, wy-ctx.rect.y);
-      if (!visible(t) || !STATIC_SPECIAL_OBJECT_TILES.includes(t.type)) continue;
-      const extra = planStaticSpecialObject(region, x, y, t, { revealInvisible, mouseTextColor: options.mouseTextColor });
-      if (extra?.unsupported) { contextOmissions.push({x:wx,y:wy,type:t.type,reason:extra.unsupported}); continue; }
-      for (const c of extra?.commands || []) appendSprite(c, t, x, y, true);
-    }
+    const ctx = region.context,
+      halo = STATIC_SPECIAL_OBJECT_HALO;
+    for (let x = -halo; x < w + halo; x++)
+      for (let y = -halo; y < h + halo; y++) {
+        if (x >= 0 && y >= 0 && x < w && y < h) continue;
+        const wx = region.rect.x + x,
+          wy = region.rect.y + y;
+        const t = cellAt(ctx, wx - ctx.rect.x, wy - ctx.rect.y);
+        if (!visible(t) || !STATIC_SPECIAL_OBJECT_TILES.includes(t.type))
+          continue;
+        const extra = planStaticSpecialObject(region, x, y, t, {
+          revealInvisible,
+          mouseTextColor: options.mouseTextColor,
+        });
+        if (extra?.unsupported) {
+          contextOmissions.push({
+            x: wx,
+            y: wy,
+            type: t.type,
+            reason: extra.unsupported,
+          });
+          continue;
+        }
+        for (const c of extra?.commands || []) appendSprite(c, t, x, y, true);
+      }
   }
   const ordinaryTileCommands = commands.splice(tilePassStart);
   // Preserve full-scene owner traversal when context bodies enter a cropped ROI.
@@ -516,18 +603,58 @@ export function planScene(region, options = {}) {
   ordinaryTileCommands.sort(byOwner);
   specialBehind.sort(byOwner);
   specialAbove.sort(byOwner);
-  for (const c of specialBehind) emit(c);
-  for (const c of trunkCommands) emit(c);
-  for (const c of ordinaryTileCommands) commands.push(c);
-  for (const c of foliageCommands) emit(c);
-  for (const c of specialAbove) emit(c);
+  const tileGroups = [
+    specialBehind,
+    trunkCommands,
+    ordinaryTileCommands,
+    foliageCommands,
+    specialAbove,
+  ];
+  const registry =
+    options.liquids?.enabled && options.liquids?.waterfallRegistry;
+  if (registry) {
+    if (
+      typeof registry.commandsFor !== "function" ||
+      typeof registry.hasOrigin !== "function"
+    )
+      throw new Error("Invalid waterfall registry");
+    const drawLayer = (c) => classifyTileDrawLayer(c.ownerType ?? c.type);
+    for (const group of tileGroups)
+      for (const c of group) if (drawLayer(c) === "non-solid") emit(c);
+    const waterfalls = registry.commandsFor(region.rect);
+    for (const c of waterfalls) add(c);
+    for (const group of tileGroups)
+      for (const c of group)
+        if (drawLayer(c) !== "non-solid") {
+          if (drawLayer(c) === undefined)
+            contextOmissions.push({
+              x: region.rect.x + c.x,
+              y: region.rect.y + c.y,
+              type: c.ownerType ?? c.type,
+              reason: "unknown-waterfall-tile-draw-layer",
+            });
+          emit(c);
+        }
+    support.waterfalls = {
+      commands: waterfalls.length,
+      model: registry.model,
+      scanComplete: registry.scanComplete,
+      stats: registry.stats,
+      failures: registry.failures || [],
+    };
+  } else {
+    for (const group of tileGroups) for (const c of group) emit(c);
+  }
   if (liquidPlan.support.layer === "foreground")
     for (const command of liquidPlan.commands.filter((c) => !c.drawBeforeTiles))
       add(command);
   const warnings = [
     "Static unlit texture preview; not a pixel-exact Terraria screenshot. Region-edge framing has no outside-neighbor context.",
   ];
-  if (contextOmissions.length) warnings.push(`${contextOmissions.length} neighboring object owners have unresolved overhang dependencies; preview is incomplete.`);
+  if (contextOmissions.length)
+    warnings.push(
+      `${contextOmissions.length} neighboring object owners have unresolved overhang dependencies; preview is incomplete.`,
+    );
   if (support.sourceHiddenTiles)
     warnings.push(
       `${support.sourceHiddenTiles} particle-emitter cells intentionally have no static Tile body in the source; no replacement sprite is drawn.`,
@@ -615,6 +742,15 @@ export function planScene(region, options = {}) {
     warnings.push(
       "Paint uses source-derived pixel formulas with explicit input-channel association; unsupported masks/alpha paths are reported separately.",
     );
+  if (support.waterfalls) {
+    warnings.push(
+      "Waterfalls use a fresh static viewport registry, frozen frame/style and bounded source traversal; this does not reproduce an aged runtime registry.",
+    );
+    if (!support.waterfalls.scanComplete || support.waterfalls.failures.length)
+      warnings.push(
+        "Waterfall registry has unresolved dependencies; preview is incomplete.",
+      );
+  }
   warnings.push(...liquidPlan.warnings);
   support.liquidDrawing = liquidPlan.support;
   return {
@@ -697,8 +833,18 @@ export function renderScene(
     for (const c of plan.commands) {
       if (missing.has(c.asset) || invalid.has(c.asset)) continue;
       const frame = sceneFrames?.resolve(c);
-      if (frame?.unsupported) {
+      if (frame?.unsupported || (c.vertexColors && !frame?.base)) {
         skippedEffects++;
+        if (
+          c.vertexColors &&
+          !frame &&
+          !warnings.includes(
+            "Corner vertex colors require a prepared scene frame; no untinted fallback was drawn.",
+          )
+        )
+          warnings.push(
+            "Corner vertex colors require a prepared scene frame; no untinted fallback was drawn.",
+          );
         continue;
       }
       context.save();
@@ -715,18 +861,26 @@ export function renderScene(
           context.closePath();
           context.clip();
         }
-        const drawX = c.flipX ? 0 : c.dx,
-          drawY = c.flipX ? 0 : c.dy;
-        if (c.flipX) {
-          context.translate(c.dx + c.dw, c.dy);
-          context.scale(-1, 1);
+        const flipX = !!c.flipX && !frame?.uvFlipApplied,
+          flipY = !!c.flipY && !frame?.uvFlipApplied;
+        const transformed = flipX || flipY;
+        const drawX = transformed ? 0 : c.dx,
+          drawY = transformed ? 0 : c.dy;
+        if (transformed) {
+          context.translate(
+            c.dx + (flipX ? c.dw : 0),
+            c.dy + (flipY ? c.dh : 0),
+          );
+          context.scale(flipX ? -1 : 1, flipY ? -1 : 1);
         }
+        const frameWidth = frame?.base ? (frame.width ?? c.sw) : c.sw,
+          frameHeight = frame?.base ? (frame.height ?? c.sh) : c.sh;
         context.drawImage(
           frame?.base || get(c.asset),
           frame?.base ? 0 : c.sx,
           frame?.base ? 0 : c.sy,
-          c.sw,
-          c.sh,
+          frameWidth,
+          frameHeight,
           drawX,
           drawY,
           c.dw,
@@ -742,8 +896,8 @@ export function renderScene(
             frame.additive,
             0,
             0,
-            c.sw,
-            c.sh,
+            frameWidth,
+            frameHeight,
             drawX,
             drawY,
             c.dw,

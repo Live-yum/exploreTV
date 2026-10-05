@@ -41,6 +41,12 @@ export function createHalfbrickLiquidSampler(region, options = {}) {
   const worldSurface = options.worldSurface ?? region.source?.worldSurface;
   const lavaOpacity = alpha(options.lavaOpacity ?? 1);
   const isSolid = options.isSolid ?? isSolidOrSlopedTile;
+  const waterfallRegistry = options.waterfallRegistry;
+  if (
+    waterfallRegistry != null &&
+    typeof waterfallRegistry.hasOrigin !== "function"
+  )
+    throw new TypeError("Waterfall registry must provide hasOrigin");
   const reader = options.getWorldTile ?? region.getWorldTile;
   const get = (x, y) =>
     at(region, x, y) ??
@@ -115,24 +121,36 @@ export function createHalfbrickLiquidSampler(region, options = {}) {
       fromEast = east.liquid > 0;
     const fromSouth = south.liquid > 240,
       fromSelf = tile.liquid > 160;
-    const needsBack =
+    let needsBack =
       !BLOCKS_BACK.has(tile.type) &&
       !(fromNorth && tile.wall > 0) &&
       (fromNorth || fromWest || fromEast || fromSouth || fromSelf);
     let waterfallDecision = "not-needed";
     if (needsBack && (west.liquid > 160 || east.liquid > 160)) {
-      // CheckForWaterfall searches registered origin coordinates, not raw wet
-      // sides. Reject possible origins: viewport/quality limits/cache age are
-      // runtime state. A fresh static scan cannot register a disproved origin.
-      const openSide = (n) => !n.liquid && !fullSolid(n) && (n.shape ?? 0) <= 1;
-      const halfOrigin =
-        (north.liquid < 16 || fullSolid(north)) &&
-        (openSide(west) || openSide(east));
-      const cloudOrigin =
-        north.active && CLOUD_ORIGINS.has(north.type) && !tile.liquid;
-      if (halfOrigin || cloudOrigin)
-        return fail("halfbrick-waterfall-state-required");
-      waterfallDecision = "fresh-scan-ineligible";
+      if (waterfallRegistry != null) {
+        const registered = waterfallRegistry.hasOrigin(worldX, worldY);
+        if (typeof registered !== "boolean")
+          return fail("halfbrick-waterfall-state-required");
+        waterfallDecision = registered
+          ? "registered-suppress-behind"
+          : "snapshot-not-registered";
+        // Registry membership suppresses only TileDrawing's behind pass.
+        // The normal upper-half pass below remains independently required.
+        if (registered) needsBack = false;
+      } else {
+        // Without an explicit snapshot, preserve the existing bounded fresh
+        // scan proof. Possible origins still need viewport/cap/cache state.
+        const openSide = (n) =>
+          !n.liquid && !fullSolid(n) && (n.shape ?? 0) <= 1;
+        const halfOrigin =
+          (north.liquid < 16 || fullSolid(north)) &&
+          (openSide(west) || openSide(east));
+        const cloudOrigin =
+          north.active && CLOUD_ORIGINS.has(north.type) && !tile.liquid;
+        if (halfOrigin || cloudOrigin)
+          return fail("halfbrick-waterfall-state-required");
+        waterfallDecision = "fresh-scan-ineligible";
+      }
     } else if (needsBack) waterfallDecision = "no-high-side";
 
     const commands = [],

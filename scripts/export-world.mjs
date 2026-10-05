@@ -1,3 +1,4 @@
+import { createWorldWaterfallRegistry } from "./world-render-engine.mjs";
 import {
   readFileSync,
   writeFileSync,
@@ -187,7 +188,9 @@ export async function exportWorld(
     rowBytes = pixelWidth * 4;
   const band = Buffer.allocUnsafe(rowBytes * bandRows),
     index = buildRowIndex(world);
+  const waterfallRegistry = createWorldWaterfallRegistry(world);
   const renderer = createWorldRenderer({
+    waterfallRegistry,
     assetDir: config.assetDir,
     inputEncoding: config.inputEncoding,
   });
@@ -214,7 +217,13 @@ export async function exportWorld(
     "core/world-tree-context.mjs",
 
     "core/liquid.mjs",
-  "core/liquid-halfbrick.mjs",
+    "core/liquid-halfbrick.mjs",
+    "core/liquid-mixed-halfbrick.mjs",
+    "core/static-waterfalls.mjs",
+    "core/scene-batches.mjs",
+    "core/liquid-composite.mjs",
+    "core/liquid-shimmer.mjs",
+    "core/liquid-special-context.mjs",
     "core/tile-solidity.mjs",
     "core/liquid-visible-level.mjs",
     "core/paint.mjs",

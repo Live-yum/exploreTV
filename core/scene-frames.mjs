@@ -1,5 +1,6 @@
 import { multiplyStaticVertexColor } from "./static-blocks.mjs";
 import { textureSource } from "./assets.mjs";
+import { interpolateShimmerVertexColors } from "./liquid-shimmer.mjs";
 import {
   paintPixelRGBA,
   resolvePaintSettings,
@@ -10,8 +11,22 @@ export const FRAME_LIMITS = Object.freeze({
   maxBytes: 8 * 1024 * 1024,
   maxSide: 64,
 });
+function cornerDomain(c) {
+  const domain = c.vertexDomain ?? {
+    x: c.dx,
+    y: c.dy,
+    width: c.dw,
+    height: c.dh,
+  };
+  return {
+    offsetX: c.dx - domain.x,
+    offsetY: c.dy - domain.y,
+    width: domain.width,
+    height: domain.height,
+  };
+}
 export function sceneFrameKey(c) {
-  return [
+  const ordinary = [
     c.asset,
     c.kind,
     c.type ?? "",
@@ -22,6 +37,32 @@ export function sceneFrameKey(c) {
     c.paintId || 0,
     c.vertexColor ? c.vertexColor.join(",") : "",
   ].join(":");
+  if (!c.vertexColors) return ordinary;
+  // Corner ramps stay attached to destination vertices; flips change only UVs.
+  // Normalize position against the original quad so translated ROI instances
+  // share a frame, while split PointClamp rows keep their own ramp interval.
+  const d = cornerDomain(c);
+  return (
+    ordinary +
+    ":corners:" +
+    JSON.stringify([
+      ["topLeft", "topRight", "bottomRight", "bottomLeft"].map(
+        (k) => c.vertexColors[k],
+      ),
+      c.dw,
+      c.dh,
+      d.offsetX,
+      d.offsetY,
+      d.width,
+      d.height,
+      !!c.flipX,
+      !!c.flipY,
+      c.interpolation ?? "triangles-tl-br",
+      Number.isSafeInteger(c.dx),
+      Number.isSafeInteger(c.dy),
+      c.inputEncoding ?? "",
+    ])
+  );
 }
 /**
  * Split premultiplied source P,A into representable source-over min(P,A),A and
@@ -86,7 +127,8 @@ export function prepareSceneFrames(
   const required = (c) =>
     inputEncoding === "tconvert-game-raw" ||
     (c.paintId || 0) !== 0 ||
-    !!c.vertexColor;
+    !!c.vertexColor ||
+    !!c.vertexColors;
   let scratch = null,
     disposed = false;
   for (const c of plan.commands) {
@@ -120,6 +162,52 @@ export function prepareSceneFrames(
       fail("source-crop-outside-texture");
       continue;
     }
+    const corner = !!c.vertexColors;
+    const width = corner ? c.dw : c.sw,
+      height = corner ? c.dh : c.sh;
+    let domain;
+    if (corner) {
+      if (c.inputEncoding !== undefined && c.inputEncoding !== inputEncoding) {
+        fail("corner-input-encoding-mismatch");
+        continue;
+      }
+      if (
+        ![c.dx, c.dy, width, height].every(Number.isSafeInteger) ||
+        width < 1 ||
+        height < 1 ||
+        width > FRAME_LIMITS.maxSide ||
+        height > FRAME_LIMITS.maxSide
+      ) {
+        fail("invalid-corner-frame-bounds");
+        continue;
+      }
+      if (
+        c.interpolation !== undefined &&
+        c.interpolation !== "triangles-tl-br"
+      ) {
+        fail("unsupported-corner-interpolation");
+        continue;
+      }
+      domain = cornerDomain(c);
+      if (
+        !Object.values(domain).every(Number.isFinite) ||
+        domain.width < 1 ||
+        domain.height < 1 ||
+        domain.offsetX < 0 ||
+        domain.offsetY < 0 ||
+        domain.offsetX + width > domain.width ||
+        domain.offsetY + height > domain.height
+      ) {
+        fail("invalid-corner-vertex-domain");
+        continue;
+      }
+      try {
+        interpolateShimmerVertexColors(c.vertexColors, 0, 0);
+      } catch {
+        fail("invalid-corner-vertex-colors");
+        continue;
+      }
+    }
     const settings = resolvePaintSettings(c.type ?? 0, {
       paintId: c.paintId || 0,
       wall: c.kind === "wall",
@@ -128,7 +216,7 @@ export function prepareSceneFrames(
       fail(settings.reason);
       continue;
     }
-    const reserved = c.sw * c.sh * 8;
+    const reserved = width * height * 8;
     if (support.bytes + reserved > maxBytes) {
       fail("painted-frame-byte-budget");
       continue;
@@ -160,12 +248,22 @@ export function prepareSceneFrames(
         ctx.drawImage(source, c.sx, c.sy, c.sw, c.sh, 0, 0, c.sw, c.sh);
         pixels = ctx.getImageData(0, 0, c.sw, c.sh);
       }
-      const base = new Uint8ClampedArray(pixels.data.length),
-        additive = new Uint8ClampedArray(pixels.data.length);
+      const base = new Uint8ClampedArray(width * height * 4),
+        additive = new Uint8ClampedArray(width * height * 4);
       let hasAdditive = false;
-      for (let i = 0; i < pixels.data.length; i += 4) {
+      for (let i = 0; i < base.length; i += 4) {
+        const x = (i / 4) % width,
+          y = Math.floor(i / 4 / width);
+        let sourceOffset = i;
+        if (corner) {
+          let sx = Math.floor(((x + 0.5) * c.sw) / width),
+            sy = Math.floor(((y + 0.5) * c.sh) / height);
+          if (c.flipX) sx = c.sw - 1 - sx;
+          if (c.flipY) sy = c.sh - 1 - sy;
+          sourceOffset = (sy * c.sw + sx) * 4;
+        }
         const painted = paintPixelRGBA(
-          pixels.data.subarray(i, i + 4),
+          pixels.data.subarray(sourceOffset, sourceOffset + 4),
           c.paintId || 0,
           {
             wall: c.kind === "wall",
@@ -174,9 +272,17 @@ export function prepareSceneFrames(
             alphaMode: "scene-premultiplied",
           },
         );
-        const tinted = c.vertexColor
+        let tinted = c.vertexColor
           ? multiplyStaticVertexColor(painted, c.vertexColor)
           : painted;
+        if (corner) {
+          const vertex = interpolateShimmerVertexColors(
+            c.vertexColors,
+            (domain.offsetX + x + 0.5) / domain.width,
+            (domain.offsetY + y + 0.5) / domain.height,
+          );
+          tinted = multiplyStaticVertexColor(tinted, vertex);
+        }
         const split = splitPremultipliedRGBA(tinted, { opaqueScene });
         base.set(split.base, i);
         if (split.additive) {
@@ -185,9 +291,9 @@ export function prepareSceneFrames(
         }
       }
       const materialize = (data) => {
-        const canvas = createCanvas(c.sw, c.sh),
+        const canvas = createCanvas(width, height),
           target = canvas.getContext("2d"),
-          image = target.createImageData(c.sw, c.sh);
+          image = target.createImageData(width, height);
         image.data.set(data);
         target.putImageData(image, 0, 0);
         return canvas;
@@ -195,10 +301,13 @@ export function prepareSceneFrames(
       frames.set(key, {
         base: materialize(base),
         additive: hasAdditive ? materialize(additive) : null,
+        width,
+        height,
+        uvFlipApplied: corner,
       });
       support.preparedFrames++;
       if (hasAdditive) support.additiveFrames++;
-      support.bytes += c.sw * c.sh * 4 * (hasAdditive ? 2 : 1);
+      support.bytes += width * height * 4 * (hasAdditive ? 2 : 1);
     } catch (error) {
       fail(error.reason || "paint-frame-preparation-failed");
     }

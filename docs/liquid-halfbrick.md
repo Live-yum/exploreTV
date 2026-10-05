@@ -63,6 +63,14 @@ If either origin is geometrically possible and the behind pass needs the check, 
 
 If no registration path is possible, the result records `waterfallDecision: fresh-scan-ineligible`. This is a static reconstruction from a fresh scan of the saved world, not recovery of a previously cached game's state. `FindWaterfalls` normally refreshes periodically; stale origins left by earlier changes cannot be recovered from a WLD. The helper's other decision values are `no-high-side` and `not-needed`. A fully suppressed behind pass need not ask for waterfall state.
 
+### Explicit shared registry
+
+The live helper also accepts `options.waterfallRegistry`, with a synchronous `hasOrigin(worldX, worldY)` method. It queries membership only when the source behind pass is otherwise needed and a raw side exceeds 160. `true` records `registered-suppress-behind` and suppresses only that behind pass; the independent normal upper-half command remains. `false` records `snapshot-not-registered` and permits the source behind geometry, including a geometrically eligible origin excluded by the snapshot's cap. `undefined` or any other non-boolean value remains `halfbrick-waterfall-state-required`; an incomplete supplied registry never falls back to a local negative guess.
+
+Without a registry, the existing fresh-scan proof/rejection behavior remains unchanged. Walls, blocked-behind materials and low side amounts retain their source short circuits when membership cannot affect the result. The registry must be the same snapshot used for waterfall drawing, with its viewport, quality and cap choices explicit. This helper neither builds a registry per cell nor alters its source records.
+
+`test/liquid-waterfall-registry.test.mjs` verifies complete and cap-zero registries, a genuinely incomplete scan, positive membership despite changed local eligibility, dry/partial/full raw halfbricks, preserved normal commands, strict tri-state values, source short circuits, world-coordinate receiver binding, raw-record immutability and shared mixed-halfbrick integration. The separately defined dry mixed-halfbrick helper is now reached only from the corresponding special-context rejection; it retains registry uncertainty and records resolved-versus-drawn cells separately.
+
 ## Verified full-world coverage
 
 The full scan of `fixtures/example-world.wld` processed all 20,160,000 cells. Input SHA-256: `d551a6b360c7af49a07dadbb1e82223ac43ad398e2054c29f500ec5e8b5b1cab`. The baseline renderer hash is `51bc36a8f25419175a7ae6e428f27706507f666f5f2ee4c55d8e64ff6bad8461`. All five relevant source modules remained unchanged during the scan.
