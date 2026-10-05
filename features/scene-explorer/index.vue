@@ -196,6 +196,7 @@ import {
   loadFragment,
   cropFragment,
 } from "../../core/fragment.mjs";
+import { textureMemoryBytes } from "../../core/assets.mjs";
 import { prepareSceneFrames } from "../../core/scene-frames.mjs";
 import { planScene, renderScene } from "../../core/renderer.mjs";
 import {
@@ -348,10 +349,9 @@ function importTextures() {
       const bytes =
         [...assets].reduce(
           (sum, [key, value]) =>
-            sum + (key === name ? 0 : value.width * value.height * 4),
+            sum + (key === name ? 0 : textureMemoryBytes(value)),
           0,
-        ) +
-        image.width * image.height * 4;
+        ) + textureMemoryBytes(image);
       if (bytes > 48 * 1024 * 1024) throw new Error("贴图缓存超过 48 MiB 限制");
       assets.set(name, image);
       assetRevision++;

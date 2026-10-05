@@ -1,8 +1,9 @@
+import { decodePngRgba } from "../core/png-rgba.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { PNG } from "pngjs";
-import { inspectPng } from "../core/assets.mjs";
+import { inspectPng, registerTextureSource } from "../core/assets.mjs";
 import { LIMITS } from "../core/world.mjs";
 function h5Adapter(Image, mockURL) {
   let source = readFileSync(
@@ -30,8 +31,10 @@ function h5Adapter(Image, mockURL) {
     "URL",
     "inspectPng",
     "LIMITS",
+    "decodePngRgba",
+    "registerTextureSource",
     source + ";return {loadTexture};",
-  )(Image, mockURL, inspectPng, LIMITS);
+  )(Image, mockURL, inspectPng, LIMITS, decodePngRgba, registerTextureSource);
 }
 test("failed image decodes and synchronous image errors release every H5 Blob URL", async () => {
   const png = PNG.sync.write(new PNG({ width: 2, height: 3 })),
@@ -65,4 +68,33 @@ test("failed image decodes and synchronous image errors release every H5 Blob UR
     assert.equal(created, 3);
     assert.equal(revoked, 3);
   }
+});
+
+test("successful texture import retains original low-alpha PNG bytes", async () => {
+  const { textureSource } = await import("../core/assets.mjs");
+  const p = new PNG({ width: 1, height: 1 });
+  p.data.set([60, 30, 15, 0]);
+  const png = PNG.sync.write(p);
+  let revoked = 0;
+  const api = h5Adapter(
+    class {
+      width = 1;
+      height = 1;
+      set src(v) {
+        queueMicrotask(() => this.onload?.());
+      }
+    },
+    { createObjectURL: () => "blob:valid", revokeObjectURL: () => revoked++ },
+  );
+  const image = await api.loadTexture(
+    {
+      size: png.length,
+      arrayBuffer: async () =>
+        png.buffer.slice(png.byteOffset, png.byteOffset + png.length),
+    },
+    null,
+  );
+  assert.equal(revoked, 1);
+  assert.deepEqual([...textureSource(image).rawRgba.data], [60, 30, 15, 0]);
+  assert.deepEqual([...textureSource(image).pngBytes], [...png]);
 });

@@ -15,7 +15,7 @@ node scripts/check-mp.mjs
 npm run dev:h5
 ```
 
-从合法来源导入 `Tiles_N.png`、`Wall_N.png`。输入矩形坐标与宽高或在当前场景上拖选矩形，再生成预览。提供缩放与方向平移；保存 `.tvtiles.json` 可重新导入并独立裁剪，无需重新打开原始世界。原始世界只读，不自动联网上传文件。
+从合法来源导入 `Tiles_N.png`、`Wall_N.png` 和 `water_N.png`。输入矩形坐标与宽高或在当前场景上拖选矩形，再生成预览。提供缩放与方向平移；保存 `.tvtiles.json` 可重新导入并独立裁剪，无需重新打开原始世界。原始世界只读，不自动联网上传文件。
 
 ## Verification
 
@@ -30,6 +30,10 @@ node scripts/render-world.mjs /path/world.wld /path/Images 4180 631 48 32
 
 Local reports and screenshots go to ignored `artifacts/`. Never commit private worlds or game textures without explicit publication authorization. Screenshots generated from private input are also not public CI artifacts by default.
 
+第二轮增加：染色开关、PNG 通道契约、整场景黑底预乘合成、液体前/后景与固定帧控制。TConvert 原始通道使用有界 RGBA8 非交错 PNG 解码；不支持的格式明确跳过，不回退到失真读回。标准透明 PNG 模式保持 Canvas 兼容。液体仍是平面静态近似，坡块/混合液体/Shimmer 等明确跳过；亮度仍为 fullbright 贴图检查，不是存档恢复实时光照。
+
+- [Paint/channel scope](docs/paint-scope.md)
+- [Liquid and lighting scope](docs/liquid-lighting-scope.md)
 - [Rendering scope](docs/rendering-scope.md)
 - [Data contract and mini-program integration](docs/integration.md)
 

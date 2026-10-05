@@ -1,3 +1,5 @@
+import { decodePngRgba } from "../core/png-rgba.mjs";
+import { registerTextureSource } from "../core/assets.mjs";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -35,7 +37,13 @@ const worldBytes = readFileSync(file),
   assetHashes = {};
 for (const name of plan.requiredAssets) {
   const bytes = readFileSync(join(assetDir, name));
-  assets.set(name, await loadImage(bytes));
+  assets.set(
+    name,
+    registerTextureSource(await loadImage(bytes), {
+      pngBytes: bytes,
+      rawRgba: decodePngRgba(bytes),
+    }),
+  );
   assetHashes[name] = createHash("sha256").update(bytes).digest("hex");
 }
 const canvas = createCanvas(plan.width, plan.height),

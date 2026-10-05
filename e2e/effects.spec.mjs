@@ -111,5 +111,23 @@ test("paint/channel contracts and liquid controls preserve sprite layering and r
     path: `artifacts/synthetic-effects-${testInfo.project.name}.png`,
     fullPage: true,
   });
+  await page
+    .getByRole("button", { name: "PNG通道：标准透明", exact: true })
+    .click();
+  await page.getByRole("button", { name: "画布：透明", exact: true }).click();
+  for (const alpha of [1, 0]) {
+    await upload("2 导入 PNG 贴图", [
+      {
+        name: "Wall_1.png",
+        mimeType: "image/png",
+        buffer: flat(468, 180, [60, 30, 15, alpha]),
+      },
+    ]);
+    await near([60, 30, 15, 255]);
+  }
+  await page.screenshot({
+    path: `artifacts/synthetic-effects-hidden-rgb-${testInfo.project.name}.png`,
+    fullPage: true,
+  });
   expect(errors).toEqual([]);
 });

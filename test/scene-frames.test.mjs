@@ -1,3 +1,4 @@
+import { registerTextureSource } from "../core/assets.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createCanvas } from "@napi-rs/canvas";
@@ -13,6 +14,10 @@ function texture(rgba, w = 32, h = 32) {
     d = x.createImageData(w, h);
   for (let i = 0; i < d.data.length; i += 4) d.data.set(rgba, i);
   x.putImageData(d, 0, 0);
+  registerTextureSource(c, {
+    pngBytes: new Uint8Array(0),
+    rawRgba: { width: w, height: h, data: d.data },
+  });
   return c;
 }
 const command = (overrides = {}) => ({
@@ -209,4 +214,28 @@ test("Canvas raw-channel fidelity limit is explicit at very low alpha", () => {
   const got = [...c.getContext("2d").getImageData(0, 0, 1, 1).data];
   assert.equal(got[3], 1);
   assert.notDeepEqual(got, [60, 30, 15, 1]);
+});
+test("raw PNG metadata preserves low-alpha and hidden RGB before shader math", () => {
+  for (const rgba of [
+    [60, 30, 15, 1],
+    [60, 30, 15, 0],
+  ]) {
+    const assets = new Map([["Wall_1.png", texture(rgba)]]);
+    const result = render([command()], assets, {
+      inputEncoding: "tconvert-game-raw",
+      opaqueScene: true,
+    });
+    near(result.rgba, [60, 30, 15, 255]);
+    assert.equal(result.result.skippedEffects, 0);
+  }
+});
+test("raw mode never substitutes Canvas readback when original PNG channels are absent", () => {
+  const c = createCanvas(32, 32),
+    assets = new Map([["Wall_1.png", c]]);
+  const result = render([command()], assets, {
+    inputEncoding: "tconvert-game-raw",
+    opaqueScene: true,
+  });
+  assert.equal(result.result.skippedEffects, 1);
+  assert.equal(result.frames.support.reasons["raw-png-bytes-required"], 1);
 });

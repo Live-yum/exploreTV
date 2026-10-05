@@ -15,3 +15,25 @@ test("PNG preflight rejects decompression bombs before image decode", () => {
   assert.throws(() => inspectPng(bad), /dimensions/);
   assert.throws(() => inspectPng(new Uint8Array(30)), /header/);
 });
+
+test("texture cache accounting includes retained encoded and raw image channels", async () => {
+  const { registerTextureSource, textureMemoryBytes, textureSource } =
+    await import("../core/assets.mjs");
+  const image = { width: 2, height: 3 };
+  const pngBytes = new Uint8Array(70),
+    data = new Uint8ClampedArray(24);
+  registerTextureSource(image, {
+    pngBytes,
+    rawRgba: { width: 2, height: 3, data },
+  });
+  assert.equal(textureMemoryBytes(image), 118);
+  assert.equal(textureSource(image).rawRgba.data, data);
+  assert.throws(
+    () =>
+      registerTextureSource(image, {
+        pngBytes,
+        rawRgba: { width: 1, height: 3, data },
+      }),
+    /dimensions/,
+  );
+});

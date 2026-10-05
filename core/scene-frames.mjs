@@ -1,3 +1,4 @@
+import { textureSource } from "./assets.mjs";
 import {
   paintPixelRGBA,
   resolvePaintSettings,
@@ -135,9 +136,27 @@ export function prepareSceneFrames(
       const ctx = scratch.getContext("2d");
       ctx.imageSmoothingEnabled = false;
       ctx.clearRect(0, 0, c.sw, c.sh);
-      ctx.drawImage(source, c.sx, c.sy, c.sw, c.sh, 0, 0, c.sw, c.sh);
-      const pixels = ctx.getImageData(0, 0, c.sw, c.sh),
-        base = new Uint8ClampedArray(pixels.data.length),
+      let pixels;
+      if (inputEncoding === "tconvert-game-raw") {
+        const imported = textureSource(source);
+        if (!imported?.rawRgba)
+          throw new UnsupportedPaintError(
+            imported?.rawError || "raw-png-bytes-required",
+          );
+        const raw = imported.rawRgba;
+        pixels = { data: new Uint8ClampedArray(c.sw * c.sh * 4) };
+        for (let y = 0; y < c.sh; y++) {
+          const start = ((c.sy + y) * raw.width + c.sx) * 4;
+          pixels.data.set(
+            raw.data.subarray(start, start + c.sw * 4),
+            y * c.sw * 4,
+          );
+        }
+      } else {
+        ctx.drawImage(source, c.sx, c.sy, c.sw, c.sh, 0, 0, c.sw, c.sh);
+        pixels = ctx.getImageData(0, 0, c.sw, c.sh);
+      }
+      const base = new Uint8ClampedArray(pixels.data.length),
         additive = new Uint8ClampedArray(pixels.data.length);
       let hasAdditive = false;
       for (let i = 0; i < pixels.data.length; i += 4) {
@@ -198,7 +217,7 @@ export function prepareSceneFrames(
   const warnings = [];
   if (inputEncoding === "tconvert-game-raw")
     warnings.push(
-      "Asset encoding: raw game texture channels. PNG decoding/8-bit rounding is not a GPU bit-identical oracle.",
+      "Asset encoding: raw RGBA8 PNG bytes preserved before shader math. Canvas output blending still has 8-bit rounding; not a GPU bit-identical oracle.",
     );
   if (support.additiveFrames)
     warnings.push(

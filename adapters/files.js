@@ -1,4 +1,5 @@
-import { inspectPng } from "../core/assets.mjs";
+import { decodePngRgba } from "../core/png-rgba.mjs";
+import { inspectPng, registerTextureSource } from "../core/assets.mjs";
 import { LIMITS } from "../core/world.mjs";
 export async function chooseFiles({ multiple = false, accept = ".wld" } = {}) {
   // #ifdef H5
@@ -73,7 +74,15 @@ export async function saveText(text, name) {
   // #endif
 }
 export async function loadTexture(file, canvas) {
-  const info = inspectPng(await readBytes(file, 8 * 1024 * 1024));
+  const pngBytes = await readBytes(file, 8 * 1024 * 1024);
+  const info = inspectPng(pngBytes);
+  let rawRgba = null,
+    rawError = null;
+  try {
+    rawRgba = decodePngRgba(pngBytes);
+  } catch (error) {
+    rawError = "raw-png-unsupported: " + error.message;
+  }
   return await new Promise((resolve, reject) => {
     let image,
       url,
@@ -95,7 +104,11 @@ export async function loadTexture(file, canvas) {
       // #ifdef H5
       URL.revokeObjectURL(url);
       // #endif
-      error ? reject(error) : resolve(image);
+      error
+        ? reject(error)
+        : resolve(
+            registerTextureSource(image, { pngBytes, rawRgba, rawError }),
+          );
     };
     const timer = setTimeout(
       () => finish(new Error("PNG 贴图解码超时")),
