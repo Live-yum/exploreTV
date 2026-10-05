@@ -1,4 +1,5 @@
 import { openWorld, extractRegion, getWorldTileAccessor, cellAt, LIMITS } from "/core/world.mjs";
+import { loadWorldEngine, worldWasmStats } from "/core/world-wasm.mjs";
 import { planScene, renderScene } from "/core/renderer.mjs";
 import { prepareSceneFrames, sceneFrameKey } from "/core/scene-frames.mjs";
 import {
@@ -23,6 +24,14 @@ import {
   LatestRenderQueue,
 } from "/core/viewport.mjs";
 
+const jsWorldEngine = Object.freeze({ backend: "javascript", openWorld, extractRegion, disposeWorld() {} });
+let worldEngine = jsWorldEngine, worldEnginePromise;
+function getWorldEngine() {
+  // A deterministic JS mode is retained for equivalence tests and diagnostics.
+  if (new URL(location.href).searchParams.get("engine") === "javascript")
+    return Promise.resolve(jsWorldEngine);
+  return worldEnginePromise ??= loadWorldEngine();
+}
 const $ = (id) => document.getElementById(id);
 const viewport = $("viewport"),
   canvas = $("world-canvas");
@@ -243,7 +252,7 @@ async function drawViewport(request, current) {
     encoding,
   } = request;
   const view = viewportRegion(nextCamera, selectedWorld, nextSize);
-  const region = extractRegion(selectedWorld, view.context);
+  const region = worldEngine.extractRegion(selectedWorld, view.context);
   region.treeContext = selectedWorld.treeContext;
   region.herbContext = selectedWorld.herbContext;
   region.treeContextUnavailableReason = selectedWorld.treeContextUnavailableReason;
@@ -459,6 +468,8 @@ function commitViewport(result, request, revision) {
     `当前视口：${result.activeTiles.toLocaleString()} 个可见前景 Tile · ${result.drawn.toLocaleString()} 个贴图片段 · ${result.omissions.length.toLocaleString()} 个单元有缺项`;
   $("coverage").classList.toggle("has-gaps", result.omissions.length > 0);
   $("diagnostic-text").textContent = [
+    `解析引擎：${worldEngine.backend}；打开世界 ${Number(viewport.dataset.openMs || 0).toFixed(1)} ms`,
+    ...(worldEngine.fallbackReason ? [`WASM 未启用：${worldEngine.fallbackReason}`] : []),
     `源世界：${world.width} × ${world.height} Tile；逻辑画布：${world.width * 16} × ${world.height * 16} px`,
     `屏幕 Canvas：${viewSize.width} × ${viewSize.height} px；100% = 原始 16 px / Tile`,
     `本次解码（含 ${VIEWPORT_LIMITS.halo} Tile 边界上下文）：${result.decodedTiles.toLocaleString()} / ${VIEWPORT_LIMITS.regionTiles.toLocaleString()} Tile`,
@@ -513,8 +524,19 @@ function resize() {
     canvas.height = size.height;
   }
 }
-function installWorld(bytes, selectedSource, { example = false } = {}) {
-  const parsed = openWorld(bytes); // The column index is built once per imported WLD.
+async function installWorld(bytes, selectedSource, { example = false, revision = worldRevision } = {}) {
+  const engine = await getWorldEngine();
+  if (revision !== worldRevision) return;
+  const openedAt = performance.now();
+  const parsed = engine.openWorld(bytes);
+  const openMs = performance.now() - openedAt;
+  const previous = world;
+  worldEngine = engine;
+  if (previous) engine.disposeWorld(previous);
+  viewport.dataset.backend = engine.backend;
+  viewport.dataset.openMs = String(openMs);
+  viewport.dataset.wasmMemoryBytes = String(worldWasmStats(parsed)?.memoryBytes || 0);
+  viewport.dataset.fallbackReason = engine.fallbackReason || "";
   source.active = false;
   source.cache.clear();
   source = selectedSource;
@@ -564,7 +586,7 @@ $("example").addEventListener("click", async () => {
     status("建立世界列索引…");
     await pause();
     if (revision === worldRevision)
-      installWorld(bytes, selectedSource, { example: true });
+      await installWorld(bytes, selectedSource, { example: true, revision });
   } catch (error) {
     if (revision === worldRevision) {
       status(error.message, true);
@@ -588,7 +610,7 @@ $("world-file").addEventListener("change", async (event) => {
     if (revision !== worldRevision) return;
     const selectedSource = makeSource();
     selectedSource.files = new Map(source.files);
-    installWorld(bytes, selectedSource);
+    await installWorld(bytes, selectedSource, { revision });
   } catch (error) {
     if (revision === worldRevision) {
       status(error.message, true);
@@ -604,7 +626,7 @@ $("texture-files").addEventListener("change", (event) => {
   for (const file of files)
     if (textureName.test(file.name)) next.set(file.name, file);
   if (next.size > ASSET_LIMITS.manifestCount) {
-    status("最多可导入 256 张命名贴图", true);
+    status(`最多可导入 ${ASSET_LIMITS.manifestCount} 张命名贴图`, true);
     return;
   }
   source.files = next;

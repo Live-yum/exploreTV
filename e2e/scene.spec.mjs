@@ -46,7 +46,7 @@ test("import, real sprite API, missing diagnostics, rectangle validation, save a
     mimeType: "application/octet-stream",
     buffer: Buffer.from(fixture.bytes),
   });
-  await expect(page.getByText(/Synthetic 世界 · v269/)).toBeVisible();
+  await expect(page.getByText(/Synthetic 世界 · v269.*rust-wasm/)).toBeVisible();
   await page
     .getByRole("button", { name: "3 生成场景预览", exact: true })
     .click();

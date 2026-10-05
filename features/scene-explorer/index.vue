@@ -191,6 +191,18 @@ import {
 } from "../../core/selection.mjs";
 import { decodeUtf8 } from "../../core/utf8.mjs";
 import { openWorld, extractSceneRegion } from "../../core/world.mjs";
+// #ifdef H5
+import { loadWorldEngine } from "../../core/world-wasm.mjs";
+// #endif
+let worldEngine = { backend: "javascript", openWorld, extractSceneRegion, disposeWorld() {} };
+let worldEnginePromise;
+async function ensureWorldEngine() {
+  // #ifdef H5
+  worldEnginePromise ??= loadWorldEngine();
+  worldEngine = await worldEnginePromise;
+  // #endif
+  return worldEngine;
+}
 import {
   saveFragment,
   loadFragment,
@@ -256,7 +268,7 @@ const selectionStyle = computed(() => {
     height: (a.height / b.height) * canvasHeight.value + "px",
   };
 });
-let canvas, ctx;
+let canvas, ctx, componentDisposed = false;
 const assets = new Map();
 let assetRevision = 0,
   preparedCache = null;
@@ -265,8 +277,10 @@ function clearProcessingFrames() {
   preparedCache = null;
 }
 onBeforeUnmount(() => {
+  componentDisposed = true;
   clearProcessingFrames();
   assets.clear();
+  if (world.value) worldEngine.disposeWorld(world.value);
   world.value = null;
   baseFragment.value = null;
   region.value = null;
@@ -315,7 +329,11 @@ function importWorld() {
   return task(async () => {
     const [file] = await chooseFiles();
     if (!file) return;
-    const next = openWorld(await readBytes(file));
+    const engine = await ensureWorldEngine();
+    const bytes = await readBytes(file);
+    if (componentDisposed) return;
+    const next = engine.openWorld(bytes);
+    if (world.value) engine.disposeWorld(world.value);
     clearProcessingFrames();
     world.value = next;
     baseFragment.value = null;
@@ -324,7 +342,7 @@ function importWorld() {
     selection.value = null;
     zoom.value = 1;
     warnings.value = [];
-    worldInfo.value = `${next.name} · v${next.version} · ${next.width} × ${next.height}`;
+    worldInfo.value = `${next.name} · v${next.version} · ${next.width} × ${next.height} · ${worldEngine.backend}`;
     rect.value = {
       x: Math.max(0, Math.floor(next.width / 2) - 32),
       y: Math.max(0, Math.floor(next.height / 3) - 20),
@@ -472,7 +490,7 @@ function preview() {
       Object.entries(rect.value).map(([k, v]) => [k, Number(v)]),
     );
     region.value = world.value
-      ? extractSceneRegion(world.value, r)
+      ? worldEngine.extractSceneRegion(world.value, r)
       : cropFragment(baseFragment.value, r);
     selection.value = null;
     await draw();
@@ -498,7 +516,7 @@ function pan(dx, dy) {
       world.value.width,
       world.value.height,
     );
-    region.value = extractSceneRegion(world.value, rect.value);
+    region.value = worldEngine.extractSceneRegion(world.value, rect.value);
     selection.value = null;
     await draw();
   });
@@ -589,6 +607,7 @@ function importFragment() {
       decodeUtf8(await readBytes(file, 16 * 1024 * 1024)),
     );
     clearProcessingFrames();
+    if (world.value) worldEngine.disposeWorld(world.value);
     world.value = null;
     baseFragment.value = region.value;
     worldInfo.value = `已保存片段 · ${region.value.source.name} · v${region.value.version}`;

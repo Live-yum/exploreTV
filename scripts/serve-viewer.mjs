@@ -11,6 +11,7 @@ const types = {
   ".json": "application/json; charset=utf-8",
   ".png": "image/png",
   ".wld": "application/octet-stream",
+  ".wasm": "application/wasm",
 };
 /** Never expose the checkout root, private fixtures, artifacts, or dotfiles. */
 export function allowedViewerPath(pathname) {
@@ -24,6 +25,7 @@ export function allowedViewerPath(pathname) {
     return pathname.slice(1);
   if (/^\/core\/[a-z][a-z0-9-]*\.mjs$/.test(pathname)) return pathname.slice(1);
   if (
+    pathname === "/wasm-core/dist/exploretv_wld_core.wasm" ||
     pathname === "/fixtures/example-world.wld" ||
     pathname === "/example/asset-manifest.json"
   )
@@ -68,7 +70,7 @@ export function createViewerServer(root = repository) {
         "Cache-Control": "no-cache",
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy":
-          "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+          "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
       });
       response.end(request.method === "HEAD" ? undefined : bytes);
     } catch {

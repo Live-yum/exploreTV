@@ -151,6 +151,9 @@ test("serial render queue discards stale asynchronous results and coalesces pend
 });
 test("viewer URL allowlist excludes private files, encoded traversal, and unrelated assets", () => {
   assert.equal(allowedViewerPath("/"), "viewer/index.html");
+  assert.equal(allowedViewerPath("/wasm-core/dist/exploretv_wld_core.wasm"), "wasm-core/dist/exploretv_wld_core.wasm");
+  assert.equal(allowedViewerPath("/wasm-core/dist/other.wasm"), null);
+  assert.equal(allowedViewerPath("/wasm-core/.cargo/config.toml"), null);
   assert.equal(
     allowedViewerPath("/fixtures/example-world.wld"),
     "fixtures/example-world.wld",
@@ -174,6 +177,8 @@ test("viewer server denies traversal, symlink escapes, and non-read methods", as
   const root = await mkdtemp(join(tmpdir(), "exploretv-viewer-"));
   await mkdir(join(root, "viewer"));
   await mkdir(join(root, "core"));
+  await mkdir(join(root, "wasm-core/dist"), { recursive: true });
+  await writeFile(join(root, "wasm-core/dist/exploretv_wld_core.wasm"), new Uint8Array([0,97,115,109,1,0,0,0]));
   await writeFile(join(root, "viewer/index.html"), "viewer");
   await writeFile(join(root, "secret.mjs"), "private");
   await symlink(join(root, "secret.mjs"), join(root, "core/leak.mjs"));
@@ -182,6 +187,11 @@ test("viewer server denies traversal, symlink escapes, and non-read methods", as
   const url = `http://127.0.0.1:${server.address().port}`;
   try {
     assert.equal(await (await fetch(url)).text(), "viewer");
+    const wasm = await fetch(url + "/wasm-core/dist/exploretv_wld_core.wasm");
+    assert.equal(wasm.headers.get("content-type"), "application/wasm");
+    const policy = wasm.headers.get("content-security-policy");
+    assert.ok(policy.includes("script-src 'self' 'wasm-unsafe-eval'"));
+    assert.ok(!policy.includes("'unsafe-eval'"));
     assert.equal((await fetch(url + "/core/leak.mjs")).status, 403);
     assert.equal(
       (await fetch(url + "/viewer/%2e%2e%2fsecret.mjs")).status,

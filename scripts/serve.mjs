@@ -8,6 +8,7 @@ const types = {
   ".css": "text/css",
   ".png": "image/png",
   ".mjs": "text/javascript",
+  ".wasm": "application/wasm",
 };
 createServer(async (req, res) => {
   try {

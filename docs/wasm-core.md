@@ -127,8 +127,7 @@ requests clear old output. A failed open cannot retain a previous valid world.
 
 Use `application/wasm` for the one fixed binary path. The viewer's restrictive
 CSP must explicitly permit WASM compilation; the narrow directive is
-`script-src 'self' 'wasm-unsafe-eval'`, not general `unsafe-eval`. Changing a
-security policy requires the applicable user approval before integration.
+`script-src 'self' 'wasm-unsafe-eval'`, not general `unsafe-eval`. Keep the permission limited to this application when WebAssembly is enabled.
 
 The standalone Chromium benchmark measures the compiled module independently of
 viewer integration. Passing it alone is not evidence that the viewer loaded WASM.
@@ -174,8 +173,40 @@ The separate native Rust median open was 66.40 ms. This is **not** a browser
 result. The complete machine-readable timings, phases and artifact hash are in
 `wasm-core/bench/node-wasm.json` and `native-rust.json`.
 
-Local Chromium could not start because the executor rejected its local socket;
-the escalated launch failed before Chromium started. No browser timing is claimed
-from that attempt. Run the provided `--browser` benchmark in CI with Playwright
-Chromium installed (or set `CHROMIUM_PATH` explicitly), and keep its JSON as
-evidence. Integrated viewer verification remains separate.
+## Verified independent Chromium CI result
+
+[Actions at 63b9eb4](https://github.com/Live-yum/exploreTV/actions/runs/37274206922)
+rebuilt the committed artifact byte-for-byte and ran the real module in Chromium
+145.0.7632.6, separately from the product viewer. Warm end-to-end medians:
+
+| Operation | JavaScript | WASM, including copies and JS output | Ratio |
+| --- | ---: | ---: | ---: |
+| Open actual world | 477.90 ms | 73.30 ms | 6.52× |
+| (4000,400), 128×128 | 1.20 ms | 1.20 ms | 1.00× |
+| (2000,1000), 256×256 | 20.40 ms | 8.60 ms | 2.37× |
+| (7000,2100), 128×128 | 7.70 ms | 2.30 ms | 3.35× |
+
+These are parser/extraction measurements, not end-to-end scene drawing or full-PNG
+export speedups. Compilation and fetch are separately recorded in
+`wasm-core/bench/ci-wasm-chromium.json`. The same CI's Node run showed one small
+shallow rectangle slower with WASM (2.36 ms JS, 3.76 ms WASM), so acceleration is
+not universal. See `ci-wasm-node.json` for all samples. Hardware, browser, JIT and
+allocation behavior affect results; these measurements are not mobile guarantees.
+The integration uses the compiled core in the standalone viewer and the Vue H5
+fragment page. The standalone server permits only the fixed WASM binary URL and
+adds the narrow `wasm-unsafe-eval` CSP token; it does not permit general
+`unsafe-eval`. `?engine=javascript` forces the original standalone reader for
+comparison. Diagnostics report the active backend and fallback reason.
+
+WASM loading/compilation failures retain the JavaScript path. Malformed worlds
+are rejected without silently switching decoders or discarding the last valid
+world. World replacement and fragment-only imports release WASM handles; emitted
+fragments keep independent raw Tile bytes. The mini-program build explicitly
+keeps the JavaScript reader, without assuming `WXWebAssembly` has the standard
+browser API. Actual WeChat-device WASM loading remains unimplemented/unverified.
+
+The integration adds browser checks at DPR 1 and 2 for a real binary response,
+active backend, byte-identical Canvas output versus forced JS, repeated imports,
+invalid-world rejection and missing-binary fallback. See the corresponding
+exact-head Actions result for execution evidence; implementation alone is not
+browser acceptance.

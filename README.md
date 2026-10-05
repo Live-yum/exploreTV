@@ -60,3 +60,14 @@ Local reports and export files go to ignored `artifacts/`. Only the designated e
 The fragment retains all serialized Tile fields, including flags/frames/coatings. It excludes non-Tile sections: chest contents, signs, tile entities, NPCs. Multi-cell objects crossing the selection are truncated. Restore validation is into an independent Tile grid, not a game-loadable `.wld` writer.
 
 No deployment, GitHub Pages, app-store publication, signing, or credential changes are included.
+
+## Rust → WebAssembly decoder
+
+The original Rust core accelerates WLD validation, column indexing and region extraction;
+it preserves the existing JS Tile/fragment contract and has a 128 MiB linear-memory cap.
+The 28,904-byte compiled module and pinned reproducible build are included.
+H5 and the standalone viewer select WASM when available, with explicit JavaScript
+fallback; the WeChat build currently retains JavaScript. This does not accelerate
+Canvas drawing or PNG compression. The independent Chromium CI measured real-world
+opening at 477.9 ms JS versus 73.3 ms WASM, while one small region had no gain.
+See [ABI, browser boundaries and complete benchmarks](docs/wasm-core.md).
