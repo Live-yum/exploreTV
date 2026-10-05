@@ -467,7 +467,7 @@ test("ordinary prepared frames retain source crop sizes, old cache identity and 
 
 // Optional original-asset integration: assert the actual pond reaches prepared
 // native frames without the corner metadata being lost at the renderer boundary.
-test("actual frozen pond corner frames match the standalone raw-pixel compositor", async (t) => {
+test("actual frozen pond corner frames match the standalone raw-pixel compositor", async () => {
   const { existsSync, readFileSync } = await import("node:fs");
   const { loadImage } = await import("@napi-rs/canvas");
   const { openWorld, extractSceneRegion } = await import("../core/world.mjs");
@@ -476,12 +476,7 @@ test("actual frozen pond corner frames match the standalone raw-pixel compositor
   );
   const { decodePngRgba } = await import("../core/png-rgba.mjs");
   const worldFile = new URL("../fixtures/example-world.wld", import.meta.url),
-    folder = new URL("../fixtures/private/shimmer/", import.meta.url);
-  if (
-    !existsSync(worldFile) ||
-    Object.keys(SHIMMER_ASSETS).some((n) => !existsSync(new URL(n, folder)))
-  )
-    return t.skip("Private original fixture/assets unavailable");
+    folder = new URL("../example/assets/", import.meta.url);
   const world = openWorld(readFileSync(worldFile)),
     region = extractSceneRegion(world, {
       x: 789,

@@ -341,14 +341,10 @@ test("TileBatch triangles differ from bilinear and retain alpha-zero additive RG
 });
 
 const fixture = new URL("../fixtures/example-world.wld", import.meta.url);
-const assetFolder = new URL("../fixtures/private/shimmer/", import.meta.url);
-const canRun =
-  existsSync(fixture) &&
-  Object.keys(SHIMMER_ASSETS).every((n) => existsSync(new URL(n, assetFolder)));
+const assetFolder = new URL("../example/assets/", import.meta.url);
 
 test(
   "pinned full-world census, all saved cells and all 24 dry shape events have bounded original texture commands",
-  { skip: !canRun },
   async () => {
     const bytes = readFileSync(fixture),
       world = openWorld(bytes),
