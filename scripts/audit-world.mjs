@@ -182,3 +182,5 @@ console.log(
     runtimeSeconds: result.runtimeSeconds,
   }),
 );
+if (Object.keys(result.missingAssets).length || Object.keys(result.invalidCrops).length)
+  throw Error("World texture audit failed: missing assets or out-of-bounds source crops (see report)");
