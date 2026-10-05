@@ -35,3 +35,36 @@ All references are pinned to `8255d34616c780af12079425ac92a0a7aed87d71`:
 - [Cosmetic framing](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria/WorldGen.cs#L82677), [thorn roots and leaf merges](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria/WorldGen.cs#L83329), [moss/grass transitions](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria/WorldGen.cs#L83474), and [ordinary atlas frames](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria/WorldGen.cs#L85687) justify the bounded approximation.
 
 Tests cover static atlas selection, family-specific dimensions and anchors, hidden neighbors, preservation of unpainted overlays, additive alpha-zero color, input immutability, and explicit rejection of unrelated large-frame, saved-frame, or thorn-shape cases. No synthetic test is claimed to establish game screenshot parity.
+
+## Additional ordinary materials
+
+Types 158 (Rich Mahogany), 311 (Dynasty Wood), 321 (Boreal Wood), 357
+(Marble), 369 (Granite), 399 (Crimson Hardened Sand), 495 (Shell Pile),
+and 668 (Dirtiest Block) use their actual Tiles_<id> atlases and the existing
+explicitly approximate static-block framing mode. The pinned Main initialization
+marks these materials solid; GetTileDrawTexture selects their own type texture,
+and they use the ordinary 16×16 source rectangle. No material-specific glow
+layer or animation clock was identified for these types in TileDrawing.
+
+This closes missing-resource cells, not exact framing parity. The existing
+variant-zero cardinal approximation still omits dirt/cross-material merges,
+some diagonal decisions and the source's adjacent-halfbrick seam corrections.
+Boreal/Dynasty/Marble/Granite smooth-border seam handling is not silently claimed
+as implemented. The source's dedicated slope-atlas set only includes 421/422;
+these materials use the existing shape-clipping path. Raw Tile fields remain
+unchanged.
+
+Pinned references: [solid initialization](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria/Main.cs#L7681),
+[wood and stone initialization](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria/Main.cs#L9692),
+[shell/sand initialization](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria/Main.cs#L10334),
+[type texture selection](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria.GameContent.Drawing/TileDrawing.cs#L1454),
+[ordinary shape/seam drawing](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria.GameContent.Drawing/TileDrawing.cs#L1565).
+
+The actual-world audit after this batch visits all 20,160,000 cells, adds 2,427
+planned material cells, and leaves 2,750 explicit unsupported Tile cells. All
+350 required PNGs are present and all source rectangles stay within their
+atlases. Eight new atlases are fully decoded in regression tests; all 16
+cardinal variants are in bounds and nonempty. A real mahogany-house rectangle
+(275,1780), 64×56, renders 5,716 commands with zero missing/invalid textures
+and unchanged fragment raw bytes. Its other 18 unsupported Tile cells remain
+reported; the image is not a complete game-render oracle.

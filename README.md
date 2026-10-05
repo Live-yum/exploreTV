@@ -2,7 +2,7 @@
 
 独立的 Vue3 / uni-app 功能探索：导入 `.wld` → 选择矩形 → 使用真实 PNG Tile/Wall 贴图预览 → 保存并重读验证 Tile 片段。
 
-**当前是部分静态近似渲染，绝非完整 Terraria 游戏窗口等价截图。** 预览不会拿地图色块冒充真实纹理；缺失贴图和未实现对象会明确报告。示例地图由用户授权公开；仅附带本查看工具实际必要的342张纹理，权利仍属Re-Logic，参见example/assets/NOTICE.md。私有源代码和游戏程序不分发。
+**当前是部分静态近似渲染，绝非完整 Terraria 游戏窗口等价截图。** 预览不会拿地图色块冒充真实纹理；缺失贴图和未实现对象会明确报告。示例地图由用户授权公开；仅附带本查看工具实际必要的376张纹理，权利仍属Re-Logic，参见example/assets/NOTICE.md。私有源代码和游戏程序不分发。
 
 ## 全地图细节查看与导出
 
@@ -71,3 +71,17 @@ fallback; the WeChat build currently retains JavaScript. This does not accelerat
 Canvas drawing or PNG compression. The independent Chromium CI measured real-world
 opening at 477.9 ms JS versus 73.3 ms WASM, while one small region had no gain.
 See [ABI, browser boundaries and complete benchmarks](docs/wasm-core.md).
+
+## Coverage checkpoint
+
+The actual 8400×2400 example's complete planner audit now accounts for every
+visible active Tile: 11,068,783 planned cells and 15,485 source-defined emitters
+with no static Tile body. Unsupported Tile cells, missing PNGs and invalid
+source crops are all zero for this fixture; all 376 required PNGs are checked.
+This is not full game-equivalence: 16,251 liquid-geometry omission events remain,
+and terrain/wall merging, frozen variation/time and omitted runtime effects
+retain the documented approximations. Missing liquid/effects stay reported.
+A scene is capped at 131,072 commands; overly complex selections fail clearly
+and can be reduced. Full-world export uses bounded chunks. Special-object
+selection contexts preserve owner order and include intersecting overhangs
+without adding neighboring Tile records to the saved fragment.

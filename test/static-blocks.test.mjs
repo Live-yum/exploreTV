@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { decodePngRgba } from "../core/png-rgba.mjs";
 import {
   planStaticBlock,
   multiplyStaticVertexColor,
@@ -29,6 +31,27 @@ function fixture(type, neighbors = {}) {
 }
 const plan = (f, options) => planStaticBlock(f.region, 1, 1, f.tile, options);
 const first = (p) => (Array.isArray(p) ? p[0] : p);
+
+test("additional ordinary-material atlases decode and every static cardinal crop is real and nonempty", () => {
+  for (const id of [158, 311, 321, 357, 369, 399, 495, 668]) {
+    const atlas = decodePngRgba(readFileSync(new URL(`../example/assets/Tiles_${id}.png`, import.meta.url)));
+    for (let mask = 0; mask < 16; mask++) {
+      const neighbors = {};
+      for (const [bit, slot] of [[1,3],[2,1],[4,7],[8,5]])
+        if (mask & bit) neighbors[slot] = tile(id);
+      const f = fixture(id, neighbors), before = JSON.stringify(f), c = first(plan(f));
+      assert.equal(c.asset, `Tiles_${id}.png`);
+      assert.equal(c.fidelity, "approximate-static-block");
+      assert.ok(c.sx >= 0 && c.sy >= 0 && c.sx+c.sw <= atlas.width && c.sy+c.sh <= atlas.height);
+      let nonempty = false;
+      for (let y = c.sy; y < c.sy+c.sh; y++)
+        for (let x = c.sx; x < c.sx+c.sw; x++)
+          nonempty ||= atlas.data[(y*atlas.width+x)*4+3] !== 0;
+      assert.ok(nonempty, `${id}, mask ${mask}`);
+      assert.equal(JSON.stringify(f), before);
+    }
+  }
+});
 
 test("verified full blocks select real cardinal atlas sprites without inventing persisted frames", () => {
   for (const id of STATIC_SOLID_BLOCKS) {
@@ -125,7 +148,7 @@ test("alpha-zero moss vertex colors preserve additive RGB through frame preparat
 });
 
 test("unknown, stored-frame and unsupported thorn-shape inputs stay explicit", () => {
-  assert.equal(plan(fixture(357)), null);
+  assert.equal(plan(fixture(753)), null);
   assert.equal(plan(fixture(165)), null);
   const f = fixture(162);
   f.tile.frameX = 0;

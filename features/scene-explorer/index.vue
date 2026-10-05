@@ -361,7 +361,7 @@ function importTextures() {
     for (const file of files) {
       const name = file.name?.split("/").pop();
       if (
-        !/^(Tiles|Wall|water|Tree_Tops|Tree_Branches|Glow|Flame|Liquid|LiquidSlope)_\d+\.png$/.test(
+        !/^(?:(Tiles|Wall|water|Tree_Tops|Tree_Branches|Glow|Flame|Liquid|LiquidSlope|Extra)_\d+|SunAltar|SunOrb)\.png$/.test(
           name,
         )
       )
@@ -461,7 +461,7 @@ async function draw() {
   if (result.missingAssets?.length)
     warnings.value.push("缺少贴图：" + result.missingAssets.join(", "));
   renderLabel.value = `${region.value.rect.width} × ${region.value.rect.height} 格 · (${region.value.rect.x}, ${region.value.rect.y}) · 静态近似`;
-  status.value = `已绘制 ${result.drawn || 0} 个贴图片段。${result.missingAssets.length || plan.support.unsupportedTiles || result.skippedEffects || plan.support.liquidDrawing.unsupported ? "预览不完整，请查看下方缺失信息。" : ""}缺失内容不会用地图色块替代。`;
+  status.value = `已绘制 ${result.drawn || 0} 个贴图片段。${result.missingAssets.length || plan.support.unsupportedTiles || plan.contextOmissions?.length || result.skippedEffects || plan.support.liquidDrawing.unsupported ? "预览不完整，请查看下方缺失信息。" : ""}缺失内容不会用地图色块替代。`;
 }
 function toggleEffect(which) {
   return task(async () => {

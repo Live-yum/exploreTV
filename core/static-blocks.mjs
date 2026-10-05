@@ -2,7 +2,7 @@ import { cellAt } from "./world.mjs";
 
 /** Original static terrain rules; the inspected behavior is documented separately. */
 export const STATIC_SOLID_BLOCKS = Object.freeze([
-  162, 381, 384, 481, 482, 483, 539, 633,
+  158, 162, 311, 321, 357, 369, 381, 384, 399, 481, 482, 483, 495, 539, 633, 668,
 ]);
 export const STATIC_THORN_TILES = Object.freeze([32, 69, 352, 655]);
 export const STATIC_BLOCK_TILES = Object.freeze([

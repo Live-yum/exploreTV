@@ -16,6 +16,17 @@ const region = (width, height, cells) => ({
   raw: [],
   version: 269,
 });
+
+test("multi-draw static flames obey the scene command budget without silently truncating", () => {
+  const r = region(1, 1, [tile(33, {frameX:0,frameY:0})]);
+  const complete = planScene(r, {maxCommands:8});
+  assert.equal(complete.commands.length, 8);
+  assert.equal(complete.support.staticFlames, 1);
+  assert.equal(complete.support.unsupportedTiles, 0);
+  assert.throws(() => planScene(r, {maxCommands:7}), /command budget exceeded/);
+  for (const maxCommands of [0, -1, 1.5, 131073, Infinity])
+    assert.throws(() => planScene(r, {maxCommands}), /Invalid scene command budget/);
+});
 const mock = () => {
   const calls = [];
   return {

@@ -630,6 +630,7 @@ export function planStaticFurnitureNext(region, x, y, tile, options = {}) {
     return {
       commands,
       partial: true,
+      pendingFlames: true,
       unsupported:
         "Furniture flame overlay requires source-confirmed frozen flame geometry",
       dependencies: [STATIC_FURNITURE_PENDING_FLAMES[tile.type]],

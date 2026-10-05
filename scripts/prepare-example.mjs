@@ -31,7 +31,7 @@ export const IMPORT_LIMITS = Object.freeze({
   totalBytes: 64 * 1024 * 1024,
 });
 const NAME =
-  /^(?:Tiles_|Wall_|water_|Tree_Tops_|Tree_Branches_|Glow_|Liquid_|Flame_|LiquidSlope_)(?:0|[1-9][0-9]{0,4})\.png$/;
+  /^(?:(?:Tiles_|Wall_|water_|Tree_Tops_|Tree_Branches_|Glow_|Liquid_|Flame_|LiquidSlope_|Extra_)(?:0|[1-9][0-9]{0,4})|SunAltar|SunOrb)\.png$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const USAGE = `Usage: node scripts/prepare-example.mjs <local-png-directory> [options]

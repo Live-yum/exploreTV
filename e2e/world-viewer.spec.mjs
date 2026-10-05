@@ -402,3 +402,37 @@ test("real forest loads separate crowns and branches at native detail", async ({
     fullPage: true,
   });
 });
+
+test("real special objects and plants request their actual atlases with no unsupported Tile cells", async ({page}, testInfo) => {
+  test.setTimeout(120000);
+  const seen = new Set();
+  page.on("request", r => seen.add(r.url().split("/").pop()));
+  await page.goto(origin);
+  await page.getByRole("button", {name:"打开示例世界",exact:true}).click();
+  await expect.poll(async () => (await state(page)).drawn, {timeout:60000}).toBeTruthy();
+  await settled(page);
+  const points = [
+    [835,847,"Extra_181.png","pylon"],
+    [1373,1107,"SunOrb.png","altar"],
+    [4549,488,"Extra_198.png","relic"],
+    [214,799,"Glow_329.png","tulip"],
+    [326,1252,"Flame_3.png","chandelier"],
+    [6433,466,"Tiles_80.png","cactus"],
+  ];
+  for (const [x,y,asset,label] of points) {
+    const before = Number((await state(page)).revision);
+    await page.locator("#tile-x").fill(String(x));
+    await page.locator("#tile-y").fill(String(y));
+    await page.getByRole("button", {name:"跳转",exact:true}).click();
+    await expect.poll(async () => {
+      const s = await state(page); return s.busy === "false" && Number(s.revision) > before;
+    }, {timeout:60000}).toBe(true);
+    const current = await state(page);
+    expect(current.backend).toBe("rust-wasm");
+    expect(current.unsupported).toBe("0");
+    expect(current.skipped).toBe("0");
+    expect(seen.has(asset), label).toBe(true);
+    await expect(page.locator("#diagnostic-text")).not.toContainText("Missing textures:");
+    await page.screenshot({path:`artifacts/world-viewer-${label}-${testInfo.project.name}.png`,fullPage:true});
+  }
+});

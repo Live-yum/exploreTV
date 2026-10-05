@@ -31,7 +31,7 @@ export function allowedViewerPath(pathname) {
   )
     return pathname.slice(1);
   if (
-    /^\/example\/assets\/(?:Tiles_|Wall_|water_|Tree_Tops_|Tree_Branches_|Glow_|Liquid_|Flame_|LiquidSlope_)\d+\.png$/.test(
+    /^\/example\/assets\/(?:(?:Tiles_|Wall_|water_|Tree_Tops_|Tree_Branches_|Glow_|Liquid_|Flame_|LiquidSlope_|Extra_)\d+|SunAltar|SunOrb)\.png$/.test(
       pathname,
     )
   )
