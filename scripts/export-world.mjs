@@ -207,6 +207,7 @@ export async function exportWorld(
     "core/static-blocks.mjs",
     "core/static-trees.mjs",
     "core/static-misc.mjs",
+    "core/static-furniture-next.mjs",
     "core/world-tree-context.mjs",
 
     "core/liquid.mjs",

@@ -144,6 +144,7 @@ async function main(argv) {
     "core/static-blocks.mjs",
     "core/static-trees.mjs",
     "core/static-misc.mjs",
+    "core/static-furniture-next.mjs",
     "core/world-tree-context.mjs",
 
     "core/liquid.mjs",
@@ -357,6 +358,7 @@ async function main(argv) {
       important: world.important,
       source: SOURCE,
       treeContext: world.treeContext,
+    herbContext: world.herbContext,
       getWorldTile: getWorldTileAccessor(world),
     };
   }

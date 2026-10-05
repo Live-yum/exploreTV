@@ -355,7 +355,7 @@ test("real forest loads separate crowns and branches at native detail", async ({
   const treeRequests = new Set();
   page.on("request", (r) => {
     const name = r.url().split("/").pop();
-    if (/^Tree_(Tops|Branches)_/.test(name)) treeRequests.add(name);
+    if (/^(Tree_(Tops|Branches)_|Flame_)/.test(name)) treeRequests.add(name);
   });
   await page.goto(origin);
   await page.getByRole("button", { name: "打开示例世界", exact: true }).click();
@@ -382,6 +382,9 @@ test("real forest loads separate crowns and branches at native detail", async ({
   expect(Number(current.cachePeakBytes)).toBeLessThanOrEqual(48 * 1024 * 1024);
   expect(treeRequests.has("Tree_Tops_10.png")).toBe(true);
   expect(treeRequests.has("Tree_Branches_10.png")).toBe(true);
+  expect(treeRequests.has("Flame_15.png")).toBe(true);
+  expect(current.unsupported).toBe("0");
+  expect(current.omissions).toBe("0");
   await expect(page.locator("#diagnostic-text")).not.toContainText(
     "Missing textures:",
   );

@@ -343,7 +343,7 @@ function importTextures() {
     for (const file of files) {
       const name = file.name?.split("/").pop();
       if (
-        !/^(Tiles|Wall|water|Tree_Tops|Tree_Branches|Glow|Liquid|LiquidSlope)_\d+\.png$/.test(
+        !/^(Tiles|Wall|water|Tree_Tops|Tree_Branches|Glow|Flame|Liquid|LiquidSlope)_\d+\.png$/.test(
           name,
         )
       )

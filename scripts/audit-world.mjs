@@ -145,6 +145,7 @@ for (const n of [
   "static-blocks",
   "static-trees",
   "static-misc",
+  "static-furniture-next",
   "liquid",
   "liquid-visible-level",
   "paint",

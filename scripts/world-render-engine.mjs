@@ -84,6 +84,7 @@ export function readIndexedRegion(world, index, rect) {
     version: world.version,
     important: world.important,
     treeContext: world.treeContext,
+    herbContext: world.herbContext,
     getWorldTile: getWorldTileAccessor(world),
     source: {
       signature: world.signature,

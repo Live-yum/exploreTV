@@ -31,7 +31,7 @@ const createCanvas = (width, height) =>
 const staging = createCanvas(1, 1),
   committed = createCanvas(1, 1);
 const textureName =
-  /^(?:Tiles_|Wall_|water_|Tree_Tops_|Tree_Branches_|Glow_|Liquid_|LiquidSlope_)\d+\.png$/;
+  /^(?:Tiles_|Wall_|water_|Tree_Tops_|Tree_Branches_|Glow_|Liquid_|Flame_|LiquidSlope_)\d+\.png$/;
 let world = null,
   camera = { x: 0, y: 0, zoom: 1 },
   size = { width: 1, height: 1 };
@@ -245,6 +245,7 @@ async function drawViewport(request, current) {
   const view = viewportRegion(nextCamera, selectedWorld, nextSize);
   const region = extractRegion(selectedWorld, view.context);
   region.treeContext = selectedWorld.treeContext;
+  region.herbContext = selectedWorld.herbContext;
   region.treeContextUnavailableReason = selectedWorld.treeContextUnavailableReason;
   region.getWorldTile = getWorldTileAccessor(selectedWorld);
   const fullPlan = planScene(region, {

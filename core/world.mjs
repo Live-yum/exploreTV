@@ -1,3 +1,4 @@
+import { readWorldHerbContext } from "./static-furniture-next.mjs";
 import { readWorldTreeContext } from "./world-tree-context.mjs";
 import { decodeUtf8 } from "./utf8.mjs";
 /** Original bounded modern WLD tile reader; no game source/assets bundled. */
@@ -251,6 +252,8 @@ export function openWorld(input) {
       200,
     );
   }
+  try { world.herbContext = readWorldHerbContext(world); }
+  catch (error) { world.herbContextUnavailableReason = String(error.message || error).slice(0, 200); }
   return Object.freeze(world);
 }
 export function extractRegion(world, rect) {
@@ -304,6 +307,7 @@ export function extractSceneRegion(world, rect, padding = 12) {
     throw new FormatError("Invalid render padding");
   const region = extractRegion(world, rect);
   region.treeContext = world.treeContext;
+  region.herbContext = world.herbContext;
   region.treeContextUnavailableReason = world.treeContextUnavailableReason;
   region.getWorldTile = getWorldTileAccessor(world);
   const x = Math.max(0, region.rect.x - padding),

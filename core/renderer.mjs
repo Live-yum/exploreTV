@@ -19,6 +19,8 @@ import {
   SOURCE_HIDDEN_TILES,
 } from "./static-misc.mjs";
 export { STATIC_MISC_TILES, SOURCE_HIDDEN_TILES } from "./static-misc.mjs";
+import { planStaticFurnitureNext, STATIC_FURNITURE_NEXT_TILES } from "./static-furniture-next.mjs";
+export { STATIC_FURNITURE_NEXT_TILES } from "./static-furniture-next.mjs";
 const BLOCK_FRAME = [
   [162, 54],
   [108, 54],
@@ -169,6 +171,7 @@ export function planScene(region, options = {}) {
     staticBlocks: 0,
     staticTrees: 0,
     staticMisc: 0,
+    staticFurniture: 0,
     sourceHiddenTiles: 0,
   };
   const visible = (t) => t?.active && (revealInvisible || !t.invisibleBlock);
@@ -277,7 +280,8 @@ export function planScene(region, options = {}) {
         reject(t, x, y);
         continue;
       }
-      const misc = planStaticMisc(region, x, y, t, {
+      const furniture = planStaticFurnitureNext(region, x, y, t, { revealInvisible, paintEnabled });
+      const misc = furniture || planStaticMisc(region, x, y, t, {
         revealInvisible,
         paintEnabled,
       });
@@ -310,7 +314,8 @@ export function planScene(region, options = {}) {
             paintId: paintEnabled ? (c.paintId ?? t.paint ?? 0) : 0,
           });
         support.tiles++;
-        support.staticMisc++;
+        if (furniture) support.staticFurniture++;
+        else support.staticMisc++;
         continue;
       }
       if (STATIC_TREE_TYPES.includes(t.type)) {
