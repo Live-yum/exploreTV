@@ -1,4 +1,4 @@
-import { openWorld, extractRegion, cellAt, LIMITS } from "/core/world.mjs";
+import { openWorld, extractRegion, getWorldTileAccessor, cellAt, LIMITS } from "/core/world.mjs";
 import { planScene, renderScene } from "/core/renderer.mjs";
 import { prepareSceneFrames, sceneFrameKey } from "/core/scene-frames.mjs";
 import {
@@ -244,6 +244,9 @@ async function drawViewport(request, current) {
   } = request;
   const view = viewportRegion(nextCamera, selectedWorld, nextSize);
   const region = extractRegion(selectedWorld, view.context);
+  region.treeContext = selectedWorld.treeContext;
+  region.treeContextUnavailableReason = selectedWorld.treeContextUnavailableReason;
+  region.getWorldTile = getWorldTileAccessor(selectedWorld);
   const fullPlan = planScene(region, {
     paintEnabled: true,
     liquids: { enabled: true, layer: "background", waterStyle: 0 },
