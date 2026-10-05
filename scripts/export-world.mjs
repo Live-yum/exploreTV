@@ -416,19 +416,22 @@ export async function exportWorld(
     if (writer) await writer.abort(error);
     if (tilesTemporary)
       rmSync(tilesTemporary, { recursive: true, force: true });
-    writeFileSync(
-      `${config.outputPath}.progress.json`,
-      JSON.stringify(
-        {
-          phase: "aborted",
-          processedCells,
-          writtenRows,
-          message: error.message,
-        },
-        null,
-        2,
-      ),
-    );
+    // If exclusive writer creation failed, this attempt owns no PNG/progress
+    // state. Preserve a possibly running earlier export's progress report.
+    if (writer)
+      writeFileSync(
+        `${config.outputPath}.progress.json`,
+        JSON.stringify(
+          {
+            phase: "aborted",
+            processedCells,
+            writtenRows,
+            message: error.message,
+          },
+          null,
+          2,
+        ),
+      );
     throw error;
   } finally {
     renderer.dispose();

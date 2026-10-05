@@ -1,6 +1,9 @@
 import { test, expect } from "@playwright/test";
 import { PNG } from "pngjs";
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { openWorld, extractRegion } from "../core/world.mjs";
+import { decodePngRgba } from "../core/png-rgba.mjs";
 import { fixtureWorld, record } from "../test/fixture.mjs";
 
 const origin = "http://127.0.0.1:4174";
@@ -106,15 +109,13 @@ test("full detail camera pans, anchors zoom, reaches far edges, and shows omissi
   expect(initial.zoom).toBe("1");
   expect(Number(initial.unsupported)).toBeGreaterThan(0);
   expect(fetched.sort()).toEqual(["Tiles_0.png", "Tiles_1.png"]);
-  const backing = await page
-    .locator("#world-canvas")
-    .evaluate((element) => ({
-      width: element.width,
-      height: element.height,
-      cssWidth: element.getBoundingClientRect().width,
-      cssHeight: element.getBoundingClientRect().height,
-      pixel: [...element.getContext("2d").getImageData(2, 2, 1, 1).data],
-    }));
+  const backing = await page.locator("#world-canvas").evaluate((element) => ({
+    width: element.width,
+    height: element.height,
+    cssWidth: element.getBoundingClientRect().width,
+    cssHeight: element.getBoundingClientRect().height,
+    pixel: [...element.getContext("2d").getImageData(2, 2, 1, 1).data],
+  }));
   expect(backing.width).toBe(Math.floor(backing.cssWidth));
   expect(backing.height).toBe(Math.floor(backing.cssHeight));
   const wx = Math.floor(Number(initial.cameraX) + 2),
@@ -133,10 +134,28 @@ test("full detail camera pans, anchors zoom, reaches far edges, and shows omissi
   const dragged = await settled(page, initial.revision);
   expect(Number(dragged.cameraX)).toBeCloseTo(Number(initial.cameraX) - 96, 5);
   expect(Number(dragged.cameraY)).toBeCloseTo(Number(initial.cameraY) - 64, 5);
-  const anchor = { x: 231, y: 181 };
-  await page.mouse.move(box.x + anchor.x, box.y + anchor.y);
+  const requestedAnchor = { x: 231, y: 181 };
+  await page.locator("#viewport").evaluate((element) => {
+    element.addEventListener(
+      "wheel",
+      (event) => {
+        const bounds = element.getBoundingClientRect();
+        element.dataset.testWheelAnchor = JSON.stringify({
+          x: event.clientX - bounds.left,
+          y: event.clientY - bounds.top,
+        });
+      },
+      { capture: true, once: true },
+    );
+  });
+  await page.mouse.move(box.x + requestedAnchor.x, box.y + requestedAnchor.y);
   await page.mouse.wheel(0, -200);
   const zoomed = await settled(page, dragged.revision);
+  // Chromium quantizes wheel client coordinates. A fractional DOM top means
+  // the delivered local anchor need not equal the mouse.move request exactly.
+  const anchor = JSON.parse(zoomed.testWheelAnchor);
+  expect(Math.abs(anchor.x - requestedAnchor.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(anchor.y - requestedAnchor.y)).toBeLessThanOrEqual(1);
   expect(Number(zoomed.zoom)).toBeGreaterThan(1);
   expect(Number(zoomed.cameraX) + anchor.x / Number(zoomed.zoom)).toBeCloseTo(
     Number(dragged.cameraX) + anchor.x,
@@ -200,13 +219,11 @@ test("newer navigation wins delayed texture loads; repeated import and max scree
   const bounded = await settled(page);
   expect(Number(bounded.decodedTiles)).toBeLessThanOrEqual(65536);
   expect(Number(bounded.canvasPixels)).toBeLessThanOrEqual(1920 * 1024);
-  await page
-    .locator("#world-file")
-    .setInputFiles({
-      name: "again.wld",
-      mimeType: "application/octet-stream",
-      buffer: worldBytes,
-    });
+  await page.locator("#world-file").setInputFiles({
+    name: "again.wld",
+    mimeType: "application/octet-stream",
+    buffer: worldBytes,
+  });
   const imported = await settled(page, bounded.revision);
   expect(imported.zoom).toBe("1");
   await expect(page.locator("#diagnostic-text")).toContainText(
@@ -249,20 +266,63 @@ test("bundled authorized example opens native building detail and reaches the re
   await expect(page.locator("#diagnostic-text")).not.toContainText(
     "SHA-256 与清单不符",
   );
-  const colors = await page.locator("#world-canvas").evaluate((element) => {
-    const data = element
-        .getContext("2d")
-        .getImageData(0, 0, element.width, element.height).data,
-      colors = new Set();
-    for (let index = 0; index < data.length; index += 28)
-      colors.add(`${data[index]},${data[index + 1]},${data[index + 2]}`);
-    return colors.size;
-  });
-  expect(colors).toBeGreaterThan(100);
+  // Capture before the oracle so a failure still leaves the exact visible scene.
   await page.screenshot({
     path: `artifacts/world-viewer-example-building-${testInfo.project.name}.png`,
     fullPage: true,
   });
+  const exampleWorld = openWorld(await readFile("fixtures/example-world.wld"));
+  const samples = [];
+  // Known example furniture: a platform, the top of a chair, and a workbench.
+  // Compare every opaque source pixel against its saved WLD frame directly.
+  // This checks real artwork/cropping, independent of the viewer's planner and
+  // without assuming that this dark, sparse scene has an arbitrary color count.
+  for (const [x, y, type] of [
+    [4460, 488, 19],
+    [4513, 499, 15],
+    [4514, 500, 18],
+  ]) {
+    const tile = extractRegion(exampleWorld, { x, y, width: 1, height: 1 })
+      .cells[0];
+    expect(tile.active).toBe(true);
+    expect(tile.type).toBe(type);
+    expect(tile.paint).toBe(0);
+    expect(tile.shape).toBe(0);
+    expect(tile.invisibleBlock).toBe(false);
+    const atlas = decodePngRgba(
+      await readFile(`example/assets/Tiles_${type}.png`),
+    );
+    const before = samples.length;
+    for (let v = 0; v < 16; v++)
+      for (let u = 0; u < 16; u++) {
+        const offset = ((tile.frameY + v) * atlas.width + tile.frameX + u) * 4;
+        const expected = [...atlas.data.subarray(offset, offset + 4)];
+        // Full alpha removes backend-dependent premultiplication/blend rounding.
+        if (expected[3] !== 255) continue;
+        samples.push({
+          x: Math.floor(x * 16 + u - Number(initial.cameraX)),
+          y: Math.floor(y * 16 + v - Number(initial.cameraY)),
+          expected,
+        });
+      }
+    expect(samples.length).toBeGreaterThan(before);
+  }
+  const actual = await page
+    .locator("#world-canvas")
+    .evaluate((element, points) => {
+      const context = element.getContext("2d");
+      return points.map((point) => {
+        if (
+          point.x < 0 ||
+          point.y < 0 ||
+          point.x >= element.width ||
+          point.y >= element.height
+        )
+          throw new Error("Known scene sample is outside the current viewport");
+        return [...context.getImageData(point.x, point.y, 1, 1).data];
+      });
+    }, samples);
+  expect(actual).toEqual(samples.map((point) => point.expected));
   const previous = initial.revision;
   await page.locator("#tile-x").fill("8399");
   await page.locator("#tile-y").fill("2399");

@@ -227,3 +227,17 @@ test("export CLI rejects oversized bands, malformed rectangles, and invalid hash
   ])
     assert.throws(() => parseExportCli(["w", "a", "out", ...args]));
 });
+
+test("refusing an existing partial preserves the earlier export's data and progress", async (t) => {
+  const { config } = setup(t, 2, 2);
+  const partial = `${config.outputPath}.partial`,
+    progress = `${config.outputPath}.progress.json`;
+  writeFileSync(partial, "owned by earlier export");
+  writeFileSync(progress, '{"phase":"export","writtenRows":1}');
+  await assert.rejects(exportWorld(config), /EEXIST/);
+  assert.equal(readFileSync(partial, "utf8"), "owned by earlier export");
+  assert.equal(
+    readFileSync(progress, "utf8"),
+    '{"phase":"export","writtenRows":1}',
+  );
+});
