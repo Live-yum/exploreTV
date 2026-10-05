@@ -23,6 +23,7 @@ import {
   HALO_TILES,
 } from "./world-render-engine.mjs";
 import { createPngWriter } from "./png-stream.mjs";
+import { boxDownsampleRgba } from "./downsample-rgba.mjs";
 
 const USAGE = `Usage: node --expose-gc scripts/export-world.mjs <world.wld> <png-directory> <output.png> [options]
 
@@ -146,6 +147,12 @@ export async function exportWorld(
   { signal, onProgress = () => {} } = {},
 ) {
   validateConfig(config);
+  const pixelsPerTile = config.pixelsPerTile ?? 16;
+  if (![1, 2, 4, 8, 16].includes(pixelsPerTile))
+    throw new Error("pixelsPerTile must be 1, 2, 4, 8 or 16");
+  const overview = pixelsPerTile < 16;
+  if (overview && config.tilesPath)
+    throw new Error("Direct overview does not emit full-resolution tile files");
   throwIfAborted(signal);
   const started = performance.now();
   if (statSync(config.worldPath).size > LIMITS.fileBytes)
@@ -182,9 +189,9 @@ export async function exportWorld(
     throw new Error(
       "Tile export exceeds 100000 pieces; increase chunk-tiles or band-tiles",
     );
-  const pixelWidth = rect.width * 16,
-    pixelHeight = rect.height * 16;
-  const bandRows = Math.min(config.bandTiles, rect.height) * 16,
+  const pixelWidth = rect.width * pixelsPerTile,
+    pixelHeight = rect.height * pixelsPerTile;
+  const bandRows = Math.min(config.bandTiles, rect.height) * pixelsPerTile,
     rowBytes = pixelWidth * 4;
   const band = Buffer.allocUnsafe(rowBytes * bandRows),
     index = buildRowIndex(world);
@@ -199,6 +206,8 @@ export async function exportWorld(
   const sourceHashes = {};
   for (const relative of [
     "scripts/export-world.mjs",
+    "scripts/export-overview.mjs",
+    "scripts/downsample-rgba.mjs",
     "scripts/png-stream.mjs",
     "scripts/world-render-engine.mjs",
     "core/world.mjs",
@@ -244,7 +253,8 @@ export async function exportWorld(
     chunks = 0,
     peakRssBytes = 0,
     renderSeconds = 0,
-    compressionSeconds = 0;
+    compressionSeconds = 0,
+    downsampleSeconds = 0;
   const tiles = [];
   try {
     if (tilesTemporary) mkdirSync(tilesTemporary, { recursive: true });
@@ -258,7 +268,7 @@ export async function exportWorld(
     for (let y = rect.y; y < rect.y + rect.height; y += config.bandTiles) {
       throwIfAborted(signal);
       const height = Math.min(config.bandTiles, rect.y + rect.height - y),
-        currentRows = height * 16;
+        currentRows = height * pixelsPerTile;
       let bandCells = 0;
       for (let x = rect.x; x < rect.x + rect.width; x += config.chunkTiles) {
         throwIfAborted(signal);
@@ -277,18 +287,28 @@ export async function exportWorld(
             (x - region.rect.x) * 16,
             (y - region.rect.y) * 16,
             width * 16,
-            currentRows,
+            height * 16,
           );
-        const data = Buffer.from(
-            rgba.data.buffer,
-            rgba.data.byteOffset,
-            rgba.data.byteLength,
-          ),
-          chunkRowBytes = width * 16 * 4;
+        const fullData = Buffer.from(
+          rgba.data.buffer,
+          rgba.data.byteOffset,
+          rgba.data.byteLength,
+        );
+        const reduceStarted = performance.now();
+        const data = overview
+          ? boxDownsampleRgba(
+              fullData,
+              width * 16,
+              height * 16,
+              16 / pixelsPerTile,
+            )
+          : fullData;
+        downsampleSeconds += (performance.now() - reduceStarted) / 1000;
+        const chunkRowBytes = width * pixelsPerTile * 4;
         for (let py = 0; py < currentRows; py++)
           data.copy(
             band,
-            py * rowBytes + (x - rect.x) * 16 * 4,
+            py * rowBytes + (x - rect.x) * pixelsPerTile * 4,
             py * chunkRowBytes,
             (py + 1) * chunkRowBytes,
           );
@@ -382,7 +402,9 @@ export async function exportWorld(
     const png = await writer.finish();
     if (tilesTemporary) renameSync(tilesTemporary, config.tilesPath);
     const report = {
-      schema: "exploretv-full-resolution-export-v1",
+      schema: overview
+        ? "exploretv-direct-overview-export-v1"
+        : "exploretv-full-resolution-export-v1",
       worldSha256,
       worldDimensions: { width: world.width, height: world.height },
       worldRect: rect,
@@ -392,7 +414,21 @@ export async function exportWorld(
           rect.y === 0 &&
           rect.width === world.width &&
           rect.height === world.height),
-      pixelsPerTile: 16,
+      pixelsPerTile,
+      renderPixelsPerTile: 16,
+      reduction: overview
+        ? {
+            method: "integer-area-premultiplied-alpha",
+            factor: 16 / pixelsPerTile,
+            colorSpace:
+              "encoded-sRGB (same composited byte space as full export)",
+            inputPixelsPerOutput: (16 / pixelsPerTile) ** 2,
+            fullResolutionFileWritten: false,
+            fullResolutionTilesWritten: false,
+            fullResolutionImageAllocated: false,
+            compositeBeforeReduction: true,
+          }
+        : null,
       png,
       tiles: config.tilesPath
         ? {
@@ -410,10 +446,12 @@ export async function exportWorld(
       bandBufferBytes: band.length,
       rowIndexBytes: index.bytes,
       rawRgbaBytes: pixelWidth * pixelHeight * 4,
+      fullResolutionRgbaBytes: rect.width * rect.height * 16 * 16 * 4,
       peakSampledRssBytes: Math.max(peakRssBytes, process.memoryUsage().rss),
       osPeakRssBytes: process.resourceUsage().maxRSS * 1024,
       renderSeconds: +renderSeconds.toFixed(2),
       compressionSeconds: +compressionSeconds.toFixed(2),
+      downsampleSeconds: +downsampleSeconds.toFixed(2),
       runtimeSeconds: +((performance.now() - started) / 1000).toFixed(2),
       inputEncoding: config.inputEncoding,
       sourceHashes,
@@ -421,10 +459,17 @@ export async function exportWorld(
       storedFrameTileIds: [...STORED_FRAME_TILES],
       ...stats,
       limitations: [
-        "Static fullbright rendering at 16 pixels per tile, without dynamic lighting.",
+        `Static fullbright composition at 16 pixels per tile, exported at ${pixelsPerTile} pixels per tile, without dynamic lighting.`,
         "Uses the same supported sprite, wall, paint and static-liquid paths as the overview renderer; it does not add unsupported game objects.",
         "Missing sources, invalid crops, unsupported tile types, and unsupported liquid neighborhoods are recorded. Black can represent empty space or an omitted feature.",
-        "PNG dimensions are standards-valid but exceed the dimension/pixel budgets of many ordinary viewers; use the optional ordinary-size tile files for compatibility.",
+        ...(overview
+          ? [
+              "Area reduction uses all composited source pixels but small details can blend away at the selected overview scale; use the full-detail export to inspect individual pixels.",
+              "Render coverage and unsupported-feature limitations are unchanged; reduced output is not a separate map-palette rendering.",
+            ]
+          : [
+              "PNG dimensions are standards-valid but exceed the dimension/pixel budgets of many ordinary viewers; use the optional ordinary-size tile files for compatibility.",
+            ]),
       ],
     };
     writeFileSync(`${config.outputPath}.json`, JSON.stringify(report, null, 2));

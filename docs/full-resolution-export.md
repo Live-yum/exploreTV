@@ -27,14 +27,14 @@ All three positional paths are required. The final PNG and optional tile directo
 | ------------------------------ | ------------------------------------------------------------------------------------ |
 | `--tiles <directory>`          | Also write PNG pieces and their exact pixel placement manifest                       |
 | `--band-tiles <1..32>`         | Height of the in-memory full-width band; default 16 tiles, or 256 pixels             |
-| `--chunk-tiles <1..236>`       | Width of each rendered piece; default 128 tiles, or 2048 pixels                      |
+| `--chunk-tiles <1..252>`       | Width of each rendered piece; default 128 tiles, or 2048 pixels                      |
 | `--region <x,y,width,height>`  | Export a smaller rectangle in world tile coordinates, for a pilot or selected region |
 | `--expect-world-sha256 <hash>` | Require the exact 64-character hexadecimal SHA-256 of the input world                |
 | `--input-encoding <encoding>`  | `tconvert-game-raw` by default, or `standard-straight` for matching RGBA8 inputs     |
 | `--compression-level <0..9>`   | zlib compression level; default 6                                                    |
 | `--help`                       | Print usage without reading or writing files                                         |
 
-Omitting `--region` exports the entire world. A region export is explicitly marked as such in its report. There is no scale or downsampling option: output remains 16 pixels per tile.
+Omitting `--region` exports the entire world. A region export is explicitly marked as such in its report. This full-resolution command has no scale or downsampling option: output remains 16 pixels per tile. For a separate direct small output from the world and textures, use [export-overview.mjs](direct-overview-export.md); it does not first create this full-resolution PNG or piece files.
 
 Compatibility output is limited to 100,000 pieces so the manifest stays bounded. Increase the band or chunk size if your settings exceed that limit; the default large-world export uses 9,900 pieces.
 

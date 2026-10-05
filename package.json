@@ -12,7 +12,8 @@
     "dev:viewer": "node scripts/serve-viewer.mjs",
     "prepare:example": "node scripts/prepare-example.mjs",
     "render:full": "node scripts/render-full-world.mjs",
-    "export:full": "node scripts/export-world.mjs"
+    "export:full": "node scripts/export-world.mjs",
+    "export:overview": "node scripts/export-overview.mjs"
   },
   "dependencies": {
     "vue": "3.5.13"

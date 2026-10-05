@@ -22,6 +22,14 @@ npm run dev:viewer
 npm run export:full -- fixtures/example-world.wld example/assets artifacts/full-resolution.png --tiles artifacts/full-resolution-tiles
 ```
 
+直接从世界文件和真实纹理生成缩小版全景，无需先生成完整大 PNG 或分块包：
+
+```sh
+npm run export:overview -- fixtures/example-world.wld example/assets artifacts/world-overview.png
+```
+
+默认输出完整范围的 8400×2400 PNG（每 Tile 1 px），保留原分辨率导出入口。内部复用 16 px/Tile 合成器，逐块面积缩小后立即写出；不是地图配色缩略图。支持 1/2/4/8 px/Tile，详见[直接缩小全景流程](docs/direct-overview-export.md)。
+
 原分辨率导出采用流式PNG，不创建整张巨型Canvas。超大PNG不保证普通浏览器可打开，兼容分块输出可按清单重建完整细节。命令选项与实际内存/文件限制以导出文档为准。普通缩小全景只作overview，不等同于原分辨率全图。
 
 ## Run

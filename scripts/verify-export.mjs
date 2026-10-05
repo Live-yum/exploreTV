@@ -333,7 +333,25 @@ export async function verifyExport(
     png = await verifyExportPng(path),
     sourceReport = existsSync(`${path}.json`) ? readJson(`${path}.json`) : null;
   if (sourceReport) {
-    assert.equal(sourceReport.schema, "exploretv-full-resolution-export-v1");
+    assert.ok(
+      [
+        "exploretv-full-resolution-export-v1",
+        "exploretv-direct-overview-export-v1",
+      ].includes(sourceReport.schema),
+      "Recognized export report schema",
+    );
+    assert.equal(
+      sourceReport.png.width,
+      sourceReport.worldRect.width * sourceReport.pixelsPerTile,
+    );
+    assert.equal(
+      sourceReport.png.height,
+      sourceReport.worldRect.height * sourceReport.pixelsPerTile,
+    );
+    assert.equal(
+      sourceReport.processedCells,
+      sourceReport.worldRect.width * sourceReport.worldRect.height,
+    );
     assert.equal(sourceReport.png.width, png.width);
     assert.equal(sourceReport.png.height, png.height);
     assert.equal(sourceReport.png.rows, png.rows);
@@ -353,7 +371,10 @@ export async function verifyExport(
       })
     : null;
   const report = {
-    schema: "exploretv-full-resolution-verification-v1",
+    schema:
+      sourceReport?.schema === "exploretv-direct-overview-export-v1"
+        ? "exploretv-direct-overview-png-verification-v1"
+        : "exploretv-full-resolution-verification-v1",
     status: "passed",
     png,
     tiles,
