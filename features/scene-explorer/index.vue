@@ -342,7 +342,12 @@ function importTextures() {
     const files = await chooseFiles({ multiple: true, accept: ".png" });
     for (const file of files) {
       const name = file.name?.split("/").pop();
-      if (!/^(Tiles|Wall|water)_\d+\.png$/.test(name)) continue;
+      if (
+        !/^(Tiles|Wall|water|Tree_Tops|Tree_Branches|Glow|Liquid|LiquidSlope)_\d+\.png$/.test(
+          name,
+        )
+      )
+        continue;
       if (assets.size >= 256 && !assets.has(name))
         throw new Error("贴图缓存达到 256 张上限，请重开页面释放");
       const image = await loadTexture(file, canvas);

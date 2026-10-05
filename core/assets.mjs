@@ -3,6 +3,7 @@ export const ASSET_LIMITS = Object.freeze({
   decodedBytes: 16 * 1024 * 1024,
   cacheBytes: 48 * 1024 * 1024,
   count: 256,
+  manifestCount: 512,
 });
 export function inspectPng(bytes) {
   if (bytes.length < 24 || bytes.length > ASSET_LIMITS.encodedBytes)

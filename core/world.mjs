@@ -1,3 +1,4 @@
+import { readWorldTreeContext } from "./world-tree-context.mjs";
 import { decodeUtf8 } from "./utf8.mjs";
 /** Original bounded modern WLD tile reader; no game source/assets bundled. */
 export const LIMITS = Object.freeze({
@@ -227,7 +228,7 @@ export function openWorld(input) {
   columns[width] = r.pos;
   if (r.pos !== sections[2])
     throw new FormatError("Tile section length mismatch");
-  return Object.freeze({
+  const world = {
     signature,
     version,
     name,
@@ -241,7 +242,16 @@ export function openWorld(input) {
     sections,
     columns,
     records,
-  });
+  };
+  try {
+    world.treeContext = readWorldTreeContext(world);
+  } catch (error) {
+    world.treeContextUnavailableReason = String(error.message || error).slice(
+      0,
+      200,
+    );
+  }
+  return Object.freeze(world);
 }
 export function extractRegion(world, rect) {
   rect = validateRect(rect, world.width, world.height);
@@ -293,6 +303,9 @@ export function extractSceneRegion(world, rect, padding = 12) {
   if (!Number.isSafeInteger(padding) || padding < 0 || padding > 16)
     throw new FormatError("Invalid render padding");
   const region = extractRegion(world, rect);
+  region.treeContext = world.treeContext;
+  region.treeContextUnavailableReason = world.treeContextUnavailableReason;
+  region.getWorldTile = getWorldTileAccessor(world);
   const x = Math.max(0, region.rect.x - padding),
     y = Math.max(0, region.rect.y - padding);
   const width =
@@ -309,4 +322,50 @@ export function extractSceneRegion(world, rect, padding = 12) {
     region.contextUnavailableReason =
       "Render halo exceeds the bounded region budget";
   return region;
+}
+
+// At most sixteen decoded RLE columns remain reachable per open world.
+const worldLookups = new WeakMap();
+export function getWorldTileAccessor(world) {
+  if (worldLookups.has(world)) return worldLookups.get(world);
+  const columns = new Map();
+  const lookup = (x, y) => {
+    if (
+      !Number.isSafeInteger(x) ||
+      !Number.isSafeInteger(y) ||
+      x < 0 ||
+      y < 0 ||
+      x >= world.width ||
+      y >= world.height
+    )
+      return null;
+    let runs = columns.get(x);
+    if (runs) {
+      columns.delete(x);
+      columns.set(x, runs);
+    } else {
+      runs = [];
+      const reader = new Reader(world.bytes, world.sections[2]);
+      reader.pos = world.columns[x];
+      let end = 0;
+      while (end < world.height) {
+        const record = decodeRecord(reader, world.important);
+        end += record.repeats + 1;
+        runs.push({ end, tile: Object.freeze(record.tile) });
+      }
+      columns.set(x, runs);
+      if (columns.size > 16) columns.delete(columns.keys().next().value);
+    }
+    let lo = 0,
+      hi = runs.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (y < runs[mid].end) hi = mid;
+      else lo = mid + 1;
+    }
+    return runs[lo].tile;
+  };
+  lookup.cacheInfo = () => ({ columns: columns.size, maxColumns: 16 });
+  worldLookups.set(world, lookup);
+  return lookup;
 }

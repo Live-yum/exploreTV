@@ -239,3 +239,14 @@ test("raw mode never substitutes Canvas readback when original PNG channels are 
   assert.equal(result.result.skippedEffects, 1);
   assert.equal(result.frames.support.reasons["raw-png-bytes-required"], 1);
 });
+
+test('flipped half-intensity sprites preserve both source-over and additive layer orientation', () => {
+ const source=createCanvas(2,1),context=source.getContext('2d'),raw=context.createImageData(2,1);
+ raw.data.set([200,0,0,64, 0,200,0,64]);context.putImageData(raw,0,0);
+ registerTextureSource(source,{pngBytes:new Uint8Array(),rawRgba:{width:2,height:1,data:raw.data}});
+ const assets=new Map([['Wall_1.png',source]]),commands=[command({sw:2,sh:1,dw:2,dh:1,flipX:true,opacity:0.5})],p={...plan(commands),width:2,height:1};
+ const frames=prepareSceneFrames(p,assets,createCanvas,{inputEncoding:'tconvert-game-raw',opaqueScene:true}),out=createCanvas(2,1);
+ renderScene(out.getContext('2d'),p,assets,{sceneFrames:frames});
+ const pixels=out.getContext('2d').getImageData(0,0,2,1).data;
+ near([...pixels.slice(0,4)],[0,100,0,255]);near([...pixels.slice(4,8)],[100,0,0,255]);
+});

@@ -347,3 +347,55 @@ test("bundled authorized example opens native building detail and reaches the re
   expect(Number(far.canvasPixels)).toBeLessThanOrEqual(1920 * 1024);
   expect(errors).toEqual([]);
 });
+
+test("real forest loads separate crowns and branches at native detail", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(90000);
+  const treeRequests = new Set();
+  page.on("request", (r) => {
+    const name = r.url().split("/").pop();
+    if (/^Tree_(Tops|Branches)_/.test(name)) treeRequests.add(name);
+  });
+  await page.goto(origin);
+  await page.getByRole("button", { name: "打开示例世界", exact: true }).click();
+  await expect
+    .poll(async () => (await state(page)).drawn, { timeout: 60000 })
+    .toBeTruthy();
+  const first = await settled(page);
+  await page.locator("#tile-x").fill("4422");
+  await page.locator("#tile-y").fill("229");
+  await page.getByRole("button", { name: "跳转", exact: true }).click();
+  await expect
+    .poll(
+      async () => {
+        const s = await state(page);
+        return (
+          s.busy === "false" && Number(s.revision) > Number(first.revision)
+        );
+      },
+      { timeout: 60000 },
+    )
+    .toBeTruthy();
+  const current = await state(page);
+  expect(current.zoom).toBe("1");
+  expect(Number(current.cachePeakBytes)).toBeLessThanOrEqual(48 * 1024 * 1024);
+  expect(treeRequests.has("Tree_Tops_10.png")).toBe(true);
+  expect(treeRequests.has("Tree_Branches_10.png")).toBe(true);
+  await expect(page.locator("#diagnostic-text")).not.toContainText(
+    "Missing textures:",
+  );
+  const green = await page.locator("#world-canvas").evaluate((c) => {
+    const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4)
+      if (d[i + 1] > d[i] * 1.3 && d[i + 1] > d[i + 2] * 1.15 && d[i + 1] > 45)
+        n++;
+    return n;
+  });
+  expect(green).toBeGreaterThan(500);
+  await page.screenshot({
+    path: `artifacts/world-viewer-real-forest-${testInfo.project.name}.png`,
+    fullPage: true,
+  });
+});

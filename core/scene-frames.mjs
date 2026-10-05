@@ -1,3 +1,4 @@
+import { multiplyStaticVertexColor } from "./static-blocks.mjs";
 import { textureSource } from "./assets.mjs";
 import {
   paintPixelRGBA,
@@ -19,6 +20,7 @@ export function sceneFrameKey(c) {
     c.sw,
     c.sh,
     c.paintId || 0,
+    c.vertexColor ? c.vertexColor.join(",") : "",
   ].join(":");
 }
 /**
@@ -82,7 +84,9 @@ export function prepareSceneFrames(
   const get = (name) =>
     assets instanceof Map ? assets.get(name) : assets?.[name];
   const required = (c) =>
-    inputEncoding === "tconvert-game-raw" || (c.paintId || 0) !== 0;
+    inputEncoding === "tconvert-game-raw" ||
+    (c.paintId || 0) !== 0 ||
+    !!c.vertexColor;
   let scratch = null,
     disposed = false;
   for (const c of plan.commands) {
@@ -170,7 +174,10 @@ export function prepareSceneFrames(
             alphaMode: "scene-premultiplied",
           },
         );
-        const split = splitPremultipliedRGBA(painted, { opaqueScene });
+        const tinted = c.vertexColor
+          ? multiplyStaticVertexColor(painted, c.vertexColor)
+          : painted;
+        const split = splitPremultipliedRGBA(tinted, { opaqueScene });
         base.set(split.base, i);
         if (split.additive) {
           additive.set(split.additive, i);

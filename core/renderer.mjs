@@ -1,6 +1,24 @@
 /** Original texture-only preview planner. See docs/rendering-scope.md for fidelity limits. */
 import { cellAt } from "./world.mjs";
 import { planLiquids } from "./liquid.mjs";
+import { planStaticNature, STATIC_NATURE_TYPES } from "./static-nature.mjs";
+export { STATIC_NATURE_TYPES } from "./static-nature.mjs";
+import { planStaticObject, STATIC_OBJECT_TILES } from "./static-objects.mjs";
+export { STATIC_OBJECT_TILES } from "./static-objects.mjs";
+import {
+  planStaticBlock,
+  STATIC_BLOCK_TILES,
+  STATIC_SOLID_BLOCKS,
+} from "./static-blocks.mjs";
+export { STATIC_BLOCK_TILES, STATIC_SOLID_BLOCKS } from "./static-blocks.mjs";
+import { planStaticTree, STATIC_TREE_TYPES } from "./static-trees.mjs";
+export { STATIC_TREE_TYPES } from "./static-trees.mjs";
+import {
+  planStaticMisc,
+  STATIC_MISC_TILES,
+  SOURCE_HIDDEN_TILES,
+} from "./static-misc.mjs";
+export { STATIC_MISC_TILES, SOURCE_HIDDEN_TILES } from "./static-misc.mjs";
 const BLOCK_FRAME = [
   [162, 54],
   [108, 54],
@@ -60,7 +78,8 @@ export const ORDINARY_BLOCKS = Object.freeze([
   193, 194, 195, 196, 197, 198, 199, 200, 202, 203, 204, 206, 208, 211, 221,
   222, 223, 224, 225, 226, 229, 230, 232, 234, 239, 248, 250, 251, 252, 253,
   // Source-verified full solids with ordinary 18px frames; merges stay approximate.
-  123, 151, 367, 368, 383, 396, 397, 402, 403, 404,
+  123,
+  151, 367, 368, 383, 396, 397, 402, 403, 404,
 ]);
 const ordinary = new Set(ORDINARY_BLOCKS);
 export const STORED_FRAME_TILES = Object.freeze([
@@ -124,7 +143,10 @@ export function planScene(region, options = {}) {
   const commands = [],
     assets = new Set(),
     unsupported = new Map(),
-    unsupportedCells = [];
+    unsupportedCells = [],
+    foliageCommands = [],
+    trunkCommands = [],
+    sourceHiddenCells = [];
   const support = {
     tiles: 0,
     walls: 0,
@@ -142,17 +164,24 @@ export function planScene(region, options = {}) {
     shapes: 0,
     staticTorches: 0,
     approximateRopes: 0,
+    staticNature: 0,
+    staticObjects: 0,
+    staticBlocks: 0,
+    staticTrees: 0,
+    staticMisc: 0,
+    sourceHiddenTiles: 0,
   };
   const visible = (t) => t?.active && (revealInvisible || !t.invisibleBlock);
   const add = (c) => {
     commands.push(c);
     assets.add(c.asset);
   };
-  const reject = (t, x, y) => {
+  const reject = (t, x, y, reason) => {
     unsupportedCells.push({
       x: x + (region.rect.x || 0),
       y: y + (region.rect.y || 0),
       type: t.type,
+      ...(reason ? { reason } : {}),
     });
     support.unsupportedTiles++;
     unsupported.set(t.type, (unsupported.get(t.type) || 0) + 1);
@@ -204,14 +233,30 @@ export function planScene(region, options = {}) {
   const liquidPlan = planLiquids(region, {
     ...options.liquids,
     isSolid: (tile) =>
-      ordinary.has(tile.type)
+      ordinary.has(tile.type) || STATIC_SOLID_BLOCKS.includes(tile.type)
         ? true
-        : [4, 19, 213, 353, 365, 366, 504].includes(tile.type)
+        : [
+              4,
+              19,
+              213,
+              353,
+              365,
+              366,
+              504,
+              ...STATIC_NATURE_TYPES,
+              ...STATIC_OBJECT_TILES,
+              ...STATIC_TREE_TYPES,
+              ...STATIC_MISC_TILES,
+            ].includes(tile.type)
           ? false
           : undefined,
   });
   if (liquidPlan.support.layer === "background")
-    for (const command of liquidPlan.commands) add(command);
+    for (const command of liquidPlan.commands.filter((c) => !c.drawBeforeTiles))
+      add(command);
+  for (const command of liquidPlan.commands.filter((c) => c.drawBeforeTiles))
+    add(command);
+  const tilePassStart = commands.length;
   for (let x = 0; x < w; x++)
     for (let y = 0; y < h; y++) {
       const t = cellAt(region, x, y);
@@ -232,19 +277,109 @@ export function planScene(region, options = {}) {
         reject(t, x, y);
         continue;
       }
+      const misc = planStaticMisc(region, x, y, t, {
+        revealInvisible,
+        paintEnabled,
+      });
+      if (misc) {
+        if (misc.unsupported) {
+          reject(t, x, y, misc.unsupported);
+          continue;
+        }
+        if (misc.hidden) {
+          support.sourceHiddenTiles++;
+          sourceHiddenCells.push({
+            x: x + region.rect.x,
+            y: y + region.rect.y,
+            type: t.type,
+            reason: misc.reason,
+          });
+          continue;
+        }
+        for (const c of misc.commands)
+          add({
+            kind: "tile",
+            x,
+            y,
+            type: c.type ?? t.type,
+            ...c,
+            dx: x * 16 + (c.offsetX || 0),
+            dy: y * 16 + (c.offsetY || 0),
+            dw: c.sw,
+            dh: c.sh,
+            paintId: paintEnabled ? (c.paintId ?? t.paint ?? 0) : 0,
+          });
+        support.tiles++;
+        support.staticMisc++;
+        continue;
+      }
+      if (STATIC_TREE_TYPES.includes(t.type)) {
+        const tree = planStaticTree(region, x, y, t, {
+          revealInvisible,
+          paintEnabled,
+          treeContext: options.treeContext || region.treeContext,
+          getWorldTile: options.getWorldTile || region.getWorldTile,
+        });
+        if (!tree.supported) {
+          reject(t, x, y, tree.reason);
+          continue;
+        }
+        for (const c of tree.commands) {
+          if (c.treePart === "trunk" || c.treePart === "palm-trunk")
+            trunkCommands.push(c);
+          else foliageCommands.push(c);
+        }
+        support.tiles++;
+        support.staticTrees++;
+        continue;
+      }
       let sx,
         sy,
         sh = 16,
         sw = 16,
         offsetX = 0,
         offsetY = 0,
-        fidelity;
+        fidelity,
+        flipX = false,
+        opacity = 1,
+        spriteAsset = `Tiles_${t.type}.png`,
+        extraLayers = [];
       const hasFrame =
         Number.isInteger(t.frameX) &&
         Number.isInteger(t.frameY) &&
         t.frameX >= 0 &&
         t.frameY >= 0;
-      if (hasFrame && stored.has(t.type)) {
+      const nature = planStaticNature(region, x, y, t, { revealInvisible });
+      const object = planStaticObject(region, x, y, t, { revealInvisible });
+      const block = planStaticBlock(region, x, y, t, { revealInvisible });
+      if (nature) {
+        if (!nature.supported) {
+          reject(t, x, y, nature.reason);
+          continue;
+        }
+        ({ sx, sy, sw, sh, offsetX, offsetY, flipX, opacity, fidelity } =
+          nature);
+        support.staticNature++;
+      } else if (object) {
+        if (object.unsupported || shape) {
+          reject(t, x, y, object.unsupported || "shaped-static-object");
+          continue;
+        }
+        ({ sx, sy, sw, sh, offsetX, offsetY, flipX, opacity, fidelity } =
+          object);
+        support.staticObjects++;
+      } else if (block) {
+        if (block.unsupported) {
+          reject(t, x, y, block.unsupported);
+          continue;
+        }
+        const layers = Array.isArray(block) ? block : [block];
+        const base = layers[0];
+        extraLayers = layers.slice(1);
+        ({ sx, sy, sw, sh, offsetX, offsetY, flipX, opacity, fidelity } = base);
+        spriteAsset = base.asset;
+        support.staticBlocks++;
+      } else if (hasFrame && stored.has(t.type)) {
         sx = t.frameX;
         sy = t.frameY;
         if (t.type === 18) {
@@ -303,7 +438,7 @@ export function planScene(region, options = {}) {
       }
       const command = {
         kind: "tile",
-        asset: "Tiles_" + t.type + ".png",
+        asset: spriteAsset,
         sx,
         sy,
         sw,
@@ -317,6 +452,8 @@ export function planScene(region, options = {}) {
         type: t.type,
         paintId: paintEnabled ? t.paint || 0 : 0,
         fidelity,
+        ...(flipX ? { flipX: true } : {}),
+        ...(opacity !== 1 ? { opacity } : {}),
       };
       if (shape === 1) {
         command.sh = 8;
@@ -328,13 +465,53 @@ export function planScene(region, options = {}) {
         support.shapes++;
       }
       add(command);
+      for (const layer of extraLayers) {
+        const overlay = {
+          ...command,
+          asset: layer.asset,
+          paintId: layer.paintId ?? command.paintId,
+          vertexColor: layer.vertexColor,
+          staticOverlay: true,
+          fidelity: layer.fidelity,
+        };
+        add(overlay);
+      }
       support.tiles++;
     }
+  const ordinaryTileCommands = commands.splice(tilePassStart);
+  for (const c of trunkCommands) add(c);
+  for (const c of ordinaryTileCommands) commands.push(c);
+  for (const c of foliageCommands) add(c);
   if (liquidPlan.support.layer === "foreground")
-    for (const command of liquidPlan.commands) add(command);
+    for (const command of liquidPlan.commands.filter((c) => !c.drawBeforeTiles))
+      add(command);
   const warnings = [
     "Static unlit texture preview; not a pixel-exact Terraria screenshot. Region-edge framing has no outside-neighbor context.",
   ];
+  if (support.sourceHiddenTiles)
+    warnings.push(
+      `${support.sourceHiddenTiles} particle-emitter cells intentionally have no static Tile body in the source; no replacement sprite is drawn.`,
+    );
+  if (support.staticMisc)
+    warnings.push(
+      `${support.staticMisc} misc cells use source-specific saved/indexed frames, static phases and required alpha/glow layers.`,
+    );
+  if (support.staticTrees)
+    warnings.push(
+      `${support.staticTrees} tree cells use real root/world-style metadata and separate trunk/branch/crown textures at zero wind; dynamic leaves and lighting are omitted.`,
+    );
+  if (support.staticBlocks)
+    warnings.push(
+      `${support.staticBlocks} static terrain cells use source-based base/glow layers and fixed adjacency variation; cross-material merges remain approximate.`,
+    );
+  if (support.staticObjects)
+    warnings.push(
+      `${support.staticObjects} object cells use source-based saved-frame geometry at animation zero / zero wind; emitted glow and motion are not reconstructed.`,
+    );
+  if (support.staticNature)
+    warnings.push(
+      `${support.staticNature} nature cells use source-based fixed variant / zero-wind static framing; random variants and dynamic vine-strip effects are not reconstructed.`,
+    );
   if (support.staticTorches)
     warnings.push(
       support.staticTorches +
@@ -405,6 +582,7 @@ export function planScene(region, options = {}) {
     warnings,
     support,
     unsupportedCells,
+    sourceHiddenCells,
     paintEnabled,
     requiredAssets: [...assets].sort(),
     width: w * 16,
@@ -496,14 +674,20 @@ export function renderScene(
           context.closePath();
           context.clip();
         }
+        const drawX = c.flipX ? 0 : c.dx,
+          drawY = c.flipX ? 0 : c.dy;
+        if (c.flipX) {
+          context.translate(c.dx + c.dw, c.dy);
+          context.scale(-1, 1);
+        }
         context.drawImage(
           frame?.base || get(c.asset),
           frame?.base ? 0 : c.sx,
           frame?.base ? 0 : c.sy,
           c.sw,
           c.sh,
-          c.dx,
-          c.dy,
+          drawX,
+          drawY,
           c.dw,
           c.dh,
         );
@@ -519,8 +703,8 @@ export function renderScene(
             0,
             c.sw,
             c.sh,
-            c.dx,
-            c.dy,
+            drawX,
+            drawY,
             c.dw,
             c.dh,
           );

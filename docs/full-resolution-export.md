@@ -27,7 +27,7 @@ All three positional paths are required. The final PNG and optional tile directo
 | ------------------------------ | ------------------------------------------------------------------------------------ |
 | `--tiles <directory>`          | Also write PNG pieces and their exact pixel placement manifest                       |
 | `--band-tiles <1..32>`         | Height of the in-memory full-width band; default 16 tiles, or 256 pixels             |
-| `--chunk-tiles <1..252>`       | Width of each rendered piece; default 128 tiles, or 2048 pixels                      |
+| `--chunk-tiles <1..236>`       | Width of each rendered piece; default 128 tiles, or 2048 pixels                      |
 | `--region <x,y,width,height>`  | Export a smaller rectangle in world tile coordinates, for a pilot or selected region |
 | `--expect-world-sha256 <hash>` | Require the exact 64-character hexadecimal SHA-256 of the input world                |
 | `--input-encoding <encoding>`  | `tconvert-game-raw` by default, or `standard-straight` for matching RGBA8 inputs     |
@@ -52,7 +52,7 @@ Use coordinates and dimensions that fit the input world. PNG size and export tim
 
 The exporter reads the world's validated column index and builds sparse RLE row checkpoints, allowing scanline-order access without repeatedly decoding entire columns. Only the currently rendered region, native canvases, bounded texture/frame caches, and one RGBA band are needed.
 
-For the 134400-pixel-wide example, the default band is 134400×256×4 = **137,625,600 bytes**, about 131.25 MiB. Increasing `--band-tiles` to 32 doubles that band allocation. The renderer adds a two-tile halo to each piece so wall overlap and neighbor framing are preserved, then copies only the non-overlapping core into the band. PNG pieces contain the same core pixels. The native rendering canvas is bounded by the configured piece width and band height, never by the world's full pixel dimensions.
+For the 134400-pixel-wide example, the default band is 134400×256×4 = **137,625,600 bytes**, about 131.25 MiB. Increasing `--band-tiles` to 32 doubles that band allocation. The renderer adds a ten-tile visual halo to each piece so wall overlap and neighbor framing are preserved, then copies only the non-overlapping core into the band. PNG pieces contain the same core pixels. The native rendering canvas is bounded by the configured piece width and band height, never by the world's full pixel dimensions.
 
 The PNG writer uses RGBA8, scanline Sub filtering, streaming zlib compression, bounded IDAT chunks with CRCs, and writable-stream backpressure. It verifies each band's byte length and rejects too many or too few rows. The final byte count and SHA-256 refer to the encoded PNG, not the raw pixel stream.
 

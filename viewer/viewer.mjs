@@ -30,7 +30,8 @@ const createCanvas = (width, height) =>
   Object.assign(document.createElement("canvas"), { width, height });
 const staging = createCanvas(1, 1),
   committed = createCanvas(1, 1);
-const textureName = /^(?:Tiles_|Wall_|water_)\d+\.png$/;
+const textureName =
+  /^(?:Tiles_|Wall_|water_|Tree_Tops_|Tree_Branches_|Glow_|Liquid_|LiquidSlope_)\d+\.png$/;
 let world = null,
   camera = { x: 0, y: 0, zoom: 1 },
   size = { width: 1, height: 1 };
@@ -100,7 +101,7 @@ function parseManifest(manifest) {
   if (
     manifest.schemaVersion !== 1 ||
     !Array.isArray(manifest.textures) ||
-    manifest.textures.length > ASSET_LIMITS.count
+    manifest.textures.length > ASSET_LIMITS.manifestCount
   )
     throw new Error("示例贴图清单格式无效");
   const entries = new Map();
@@ -598,7 +599,7 @@ $("texture-files").addEventListener("change", (event) => {
   const next = new Map(source.files);
   for (const file of files)
     if (textureName.test(file.name)) next.set(file.name, file);
-  if (next.size > ASSET_LIMITS.count) {
+  if (next.size > ASSET_LIMITS.manifestCount) {
     status("最多可导入 256 张命名贴图", true);
     return;
   }

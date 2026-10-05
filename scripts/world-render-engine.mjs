@@ -2,13 +2,18 @@ import { readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
-import { Reader, decodeRecord, validateRect } from "../core/world.mjs";
+import {
+  Reader,
+  decodeRecord,
+  validateRect,
+  getWorldTileAccessor,
+} from "../core/world.mjs";
 import { planScene, renderScene } from "../core/renderer.mjs";
 import { decodePngRgba } from "../core/png-rgba.mjs";
 import { registerTextureSource, textureMemoryBytes } from "../core/assets.mjs";
 import { prepareSceneFrames, sceneFrameKey } from "../core/scene-frames.mjs";
 
-export const HALO_TILES = 2;
+export const HALO_TILES = 10;
 export function paddedWorldRect(world, rect, padding = HALO_TILES) {
   validateRect(rect, world.width, world.height);
   const x = Math.max(0, rect.x - padding),
@@ -78,6 +83,8 @@ export function readIndexedRegion(world, index, rect) {
     cells,
     version: world.version,
     important: world.important,
+    treeContext: world.treeContext,
+    getWorldTile: getWorldTileAccessor(world),
     source: {
       signature: world.signature,
       name: world.name,
@@ -109,6 +116,7 @@ export function createWorldRenderer({
     effectFailures: {},
     liquidUnsupported: {},
     unsupportedTiles: {},
+    sourceHiddenTiles: {},
   };
   const {
     assetHashes,
@@ -245,6 +253,14 @@ export function createWorldRenderer({
         stats.plannedCommands++;
         add(commandCounts, c.kind);
       }
+      for (const c of plan.sourceHiddenCells || [])
+        if (
+          c.x >= core.x &&
+          c.y >= core.y &&
+          c.x < core.x + core.width &&
+          c.y < core.y + core.height
+        )
+          add(stats.sourceHiddenTiles, c.type);
       for (const c of plan.unsupportedCells)
         if (
           c.x >= core.x &&

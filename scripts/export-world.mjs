@@ -201,6 +201,13 @@ export async function exportWorld(
     "core/world.mjs",
     "core/utf8.mjs",
     "core/renderer.mjs",
+    "core/static-nature.mjs",
+    "core/static-objects.mjs",
+    "core/static-blocks.mjs",
+    "core/static-trees.mjs",
+    "core/static-misc.mjs",
+    "core/world-tree-context.mjs",
+
     "core/liquid.mjs",
     "core/paint.mjs",
     "core/scene-frames.mjs",

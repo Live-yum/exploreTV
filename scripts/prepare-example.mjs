@@ -27,10 +27,11 @@ import { decodePngRgba, PNG_RGBA_LIMITS } from "../core/png-rgba.mjs";
 const PROJECT = fileURLToPath(new URL("../", import.meta.url));
 export const IMPORT_LIMITS = Object.freeze({
   manifestBytes: 256 * 1024,
-  files: 256,
+  files: 512,
   totalBytes: 64 * 1024 * 1024,
 });
-const NAME = /^(?:Tiles_|Wall_|water_)(?:0|[1-9][0-9]{0,4})\.png$/;
+const NAME =
+  /^(?:Tiles_|Wall_|water_|Tree_Tops_|Tree_Branches_|Glow_|Liquid_|LiquidSlope_)(?:0|[1-9][0-9]{0,4})\.png$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const USAGE = `Usage: node scripts/prepare-example.mjs <local-png-directory> [options]

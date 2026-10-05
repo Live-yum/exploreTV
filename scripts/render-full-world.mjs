@@ -16,8 +16,17 @@ import {
   decodeRecord,
   LIMITS,
   validateRect,
+  getWorldTileAccessor,
 } from "../core/world.mjs";
-import { ORDINARY_BLOCKS, STORED_FRAME_TILES } from "../core/renderer.mjs";
+import {
+  ORDINARY_BLOCKS,
+  STORED_FRAME_TILES,
+  STATIC_NATURE_TYPES,
+  STATIC_OBJECT_TILES,
+  STATIC_BLOCK_TILES,
+  STATIC_TREE_TYPES,
+  STATIC_MISC_TILES,
+} from "../core/renderer.mjs";
 import { createCanvas } from "@napi-rs/canvas";
 import { createWorldRenderer } from "./world-render-engine.mjs";
 
@@ -30,7 +39,7 @@ Options:
   --input-encoding <encoding>          tconvert-game-raw (default) or standard-straight
   --help                              Print this help without reading or writing files
 
-Details use world tile coordinates. Each side must be 1..252 tiles and inside the world.
+Details use world tile coordinates. Each side must be 1..236 tiles and inside the world.
 PNG textures must be supplied by the user unless redistribution permission is verified.
 The renderer never downloads, uploads, or publishes assets or outputs.`;
 
@@ -65,11 +74,11 @@ export function parseCli(argv) {
         ![x, y, width, height].every(Number.isSafeInteger) ||
         width < 1 ||
         height < 1 ||
-        width > 252 ||
-        height > 252
+        width > 236 ||
+        height > 236
       )
         throw new Error(
-          "Detail coordinates must be safe integers and dimensions 1..252 tiles",
+          "Detail coordinates must be safe integers and dimensions 1..236 tiles",
         );
       if (names.has(name.toLowerCase()))
         throw new Error(`Duplicate detail name: ${name}`);
@@ -129,6 +138,13 @@ async function main(argv) {
     "core/world.mjs",
     "core/utf8.mjs",
     "core/renderer.mjs",
+    "core/static-nature.mjs",
+    "core/static-objects.mjs",
+    "core/static-blocks.mjs",
+    "core/static-trees.mjs",
+    "core/static-misc.mjs",
+    "core/world-tree-context.mjs",
+
     "core/liquid.mjs",
     "core/paint.mjs",
     "core/scene-frames.mjs",
@@ -152,6 +168,13 @@ async function main(argv) {
     Object.entries(counts)
       .map(([id, count]) => ({ id: /^\d+$/.test(id) ? +id : id, count }))
       .sort((a, b) => b.count - a.count);
+  const conditionalTypes = new Set([
+    ...STATIC_NATURE_TYPES,
+    ...STATIC_OBJECT_TILES,
+    ...STATIC_BLOCK_TILES,
+    ...STATIC_TREE_TYPES,
+    ...STATIC_MISC_TILES,
+  ]);
   const supports = (t) => {
     const hasFrame =
       Number.isInteger(t.frameX) &&
@@ -161,7 +184,8 @@ async function main(argv) {
     return (
       t.shape >= 0 &&
       t.shape <= 5 &&
-      ((hasFrame && stored.has(t.type)) ||
+      (conditionalTypes.has(t.type) ||
+        (hasFrame && stored.has(t.type)) ||
         (!hasFrame && (ordinary.has(t.type) || t.type === 353)))
     );
   };
@@ -177,6 +201,9 @@ async function main(argv) {
     activeCells: 0,
     supportedVisibleTileCells: 0,
     unsupportedVisibleTileCells: 0,
+    contextDependentCandidateCells: 0,
+    coverageMeaning:
+      "RLE candidates only; actual framing/root/shape context can still reject cells during planning",
     visibleWallCells: 0,
     hiddenTileCells: 0,
     hiddenWallCells: 0,
@@ -200,6 +227,8 @@ async function main(argv) {
         if (t.invisibleBlock) inventory.hiddenTileCells += n;
         else if (supports(t)) {
           inventory.supportedVisibleTileCells += n;
+          if (conditionalTypes.has(t.type))
+            inventory.contextDependentCandidateCells += n;
           add(inventory.requiredTextures, `Tiles_${t.type}.png`, n);
         } else {
           inventory.unsupportedVisibleTileCells += n;
@@ -257,7 +286,7 @@ async function main(argv) {
   if (config.inventoryOnly) return;
 
   const CHUNK = 128,
-    HALO = 2;
+    HALO = 10;
   const SOURCE = {
     signature: world.signature,
     name: world.name,
@@ -325,6 +354,8 @@ async function main(argv) {
       version: world.version,
       important: world.important,
       source: SOURCE,
+      treeContext: world.treeContext,
+      getWorldTile: getWorldTileAccessor(world),
     };
   }
   const renderer = createWorldRenderer({
@@ -439,10 +470,16 @@ async function main(argv) {
     world.width * world.height,
     "Full-world coverage mismatch",
   );
-  assert.equal(
-    Object.values(unsupportedTiles).reduce((a, b) => a + b, 0),
-    inventory.unsupportedVisibleTileCells,
-    "Unsupported-tile inventory/renderer mismatch",
+  const actualUnsupported = Object.values(unsupportedTiles).reduce(
+    (a, b) => a + b,
+    0,
+  );
+  assert.ok(
+    actualUnsupported >= inventory.unsupportedVisibleTileCells &&
+      actualUnsupported <=
+        inventory.unsupportedVisibleTileCells +
+          inventory.contextDependentCandidateCells,
+    "Context-dependent unsupported count outside independently scanned candidate bounds",
   );
   assert.equal(
     plannedCommands,

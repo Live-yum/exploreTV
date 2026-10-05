@@ -28,7 +28,11 @@ export function allowedViewerPath(pathname) {
     pathname === "/example/asset-manifest.json"
   )
     return pathname.slice(1);
-  if (/^\/example\/assets\/(?:Tiles_|Wall_|water_)\d+\.png$/.test(pathname))
+  if (
+    /^\/example\/assets\/(?:Tiles_|Wall_|water_|Tree_Tops_|Tree_Branches_|Glow_|Liquid_|LiquidSlope_)\d+\.png$/.test(
+      pathname,
+    )
+  )
     return pathname.slice(1);
   return null;
 }
