@@ -14,7 +14,12 @@ import { join } from "node:path";
 import { PNG } from "pngjs";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { fixtureWorld, record } from "./fixture.mjs";
-import { openWorld, extractRegion } from "../core/world.mjs";
+import {
+  openWorld,
+  extractRegion,
+  decodeRecord,
+  Reader,
+} from "../core/world.mjs";
 import { planScene, renderScene } from "../core/renderer.mjs";
 import { decodePngRgba } from "../core/png-rgba.mjs";
 import { registerTextureSource } from "../core/assets.mjs";
@@ -28,6 +33,7 @@ import {
 import {
   buildRowIndex,
   readIndexedRegion,
+  readIndexedTile,
 } from "../scripts/world-render-engine.mjs";
 
 function setup(t, width = 131, height = 35) {
@@ -267,4 +273,65 @@ test("refusing an existing partial preserves the earlier export's data and progr
     readFileSync(progress, "utf8"),
     '{"phase":"export","writtenRows":1}',
   );
+});
+
+test("sparse indexed random reads equal full-column decoder at RLE/checkpoint/world boundaries", () => {
+  const width = 37,
+    height = 99;
+  const columns = Array.from({ length: width }, (_, x) => [
+    record({ type: x % 2, repeats: 18, wall: 1 }),
+    record({ type: null, repeats: 33, liquid: 255 }),
+    record({ type: 1, repeats: 45, paint: 2 }),
+  ]);
+  const world = openWorld(fixtureWorld({ width, height, columns }).bytes),
+    expected = extractRegion(world, { x: 0, y: 0, width, height });
+  for (const stride of [1, 7, 16, 64, 128]) {
+    const index = buildRowIndex(world, stride),
+      region = readIndexedRegion(world, index, {
+        x: 5,
+        y: 17,
+        width: 17,
+        height: 49,
+      });
+    for (let x = 0; x < width; x++)
+      for (let y = 0; y < height; y++) {
+        assert.deepEqual(
+          readIndexedTile(world, index, x, y),
+          expected.cells[x * height + y],
+        );
+        assert.deepEqual(
+          region.getWorldTile(x, y),
+          expected.cells[x * height + y],
+        );
+      }
+    for (const [x, y] of [
+      [-1, 0],
+      [0, -1],
+      [width, 0],
+      [0, height],
+      [0.5, 2],
+      [2, NaN],
+    ])
+      assert.equal(readIndexedTile(world, index, x, y), null);
+  }
+});
+
+test("read-only record decode omits only unused raw copies and preserves parser cursor", () => {
+  for (const options of [
+    { type: 1, repeats: 37, wall: 2, paint: 3 },
+    { type: null, repeats: 5, liquid: 128 },
+    { type: 1, shape: 4, wireRed: true },
+  ]) {
+    const bytes = record(options),
+      a = new Reader(bytes),
+      b = new Reader(bytes),
+      important = new Uint8Array(512);
+    const original = decodeRecord(a, important),
+      lean = decodeRecord(b, important, false);
+    assert.deepEqual(lean.tile, original.tile);
+    assert.equal(lean.repeats, original.repeats);
+    assert.equal(lean.raw, null);
+    assert.equal(a.pos, b.pos);
+    assert.ok(original.raw instanceof Uint8Array);
+  }
 });

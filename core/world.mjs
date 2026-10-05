@@ -91,7 +91,7 @@ export function validateRect(rect, width, height) {
     throw new FormatError("Region budget exceeded");
   return { x, y, width: w, height: h };
 }
-export function decodeRecord(r, important) {
+export function decodeRecord(r, important, keepRaw = true) {
   const start = r.pos,
     h1 = r.u8(),
     h2 = h1 & 1 ? r.u8() : 0,
@@ -143,8 +143,8 @@ export function decodeRecord(r, important) {
     code = h1 >> 6,
     repeats = code === 0 ? 0 : code === 1 ? r.u8() : r.i16();
   if (repeats < 0) throw new FormatError("Negative RLE");
-  const raw = Uint8Array.from(r.bytes.subarray(start, end));
-  raw[0] &= 63;
+  const raw = keepRaw ? Uint8Array.from(r.bytes.subarray(start, end)) : null;
+  if (raw) raw[0] &= 63;
   return { tile, raw, repeats };
 }
 export function openWorld(input) {
@@ -219,7 +219,7 @@ export function openWorld(input) {
   for (let x = 0; x < width; x++) {
     columns[x] = r.pos;
     for (let y = 0; y < height; ) {
-      const rec = decodeRecord(r, important);
+      const rec = decodeRecord(r, important, false);
       if (y + rec.repeats >= height)
         throw new FormatError("RLE crosses column");
       y += rec.repeats + 1;
@@ -252,8 +252,14 @@ export function openWorld(input) {
       200,
     );
   }
-  try { world.herbContext = readWorldHerbContext(world); }
-  catch (error) { world.herbContextUnavailableReason = String(error.message || error).slice(0, 200); }
+  try {
+    world.herbContext = readWorldHerbContext(world);
+  } catch (error) {
+    world.herbContextUnavailableReason = String(error.message || error).slice(
+      0,
+      200,
+    );
+  }
   return Object.freeze(world);
 }
 export function extractRegion(world, rect) {
@@ -353,7 +359,7 @@ export function getWorldTileAccessor(world) {
       reader.pos = world.columns[x];
       let end = 0;
       while (end < world.height) {
-        const record = decodeRecord(reader, world.important);
+        const record = decodeRecord(reader, world.important, false);
         end += record.repeats + 1;
         runs.push({ end, tile: Object.freeze(record.tile) });
       }

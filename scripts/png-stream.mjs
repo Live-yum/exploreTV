@@ -142,7 +142,7 @@ export async function createPngWriter({
       busy = false;
     }
   }
-  async function finish() {
+  async function finish({ beforePublish = () => {} } = {}) {
     check();
     if (busy) throw new Error("PNG write in progress");
     if (rows !== height) {
@@ -165,6 +165,10 @@ export async function createPngWriter({
       } catch (e) {
         if (e.code !== "ENOENT") throw e;
       }
+      await beforePublish();
+      if (signal?.aborted || state === "aborted")
+        throw new Error("PNG export aborted");
+      if (fatal) throw fatal;
       await link(partial, path);
       await unlink(partial);
       state = "finished";

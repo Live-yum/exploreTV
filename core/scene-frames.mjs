@@ -11,6 +11,135 @@ export const FRAME_LIMITS = Object.freeze({
   maxBytes: 8 * 1024 * 1024,
   maxSide: 64,
 });
+export const SCENE_FRAME_CACHE_LIMITS = Object.freeze({
+  maxFrames: 8192,
+  maxBytes: 32 * 1024 * 1024,
+});
+const frameCaches = new WeakMap();
+function releaseFrame(frame) {
+  for (const canvas of [frame.base, frame.additive])
+    if (canvas) {
+      canvas.width = 1;
+      canvas.height = 1;
+    }
+}
+/**
+ * Bounded LRU of exact prepared surfaces. Source textures must remain immutable
+ * while cached; re-registering a texture invalidates its previous identity.
+ * Frames borrowed by a live preparation are pinned until that view is disposed.
+ * Clearing/disposal retires pinned entries without invalidating their borrowers.
+ */
+export function createSceneFrameCache({
+  maxFrames = SCENE_FRAME_CACHE_LIMITS.maxFrames,
+  maxBytes = SCENE_FRAME_CACHE_LIMITS.maxBytes,
+} = {}) {
+  if (
+    !Number.isSafeInteger(maxFrames) ||
+    maxFrames < 1 ||
+    maxFrames > SCENE_FRAME_CACHE_LIMITS.maxFrames ||
+    !Number.isSafeInteger(maxBytes) ||
+    maxBytes < 1 ||
+    maxBytes > SCENE_FRAME_CACHE_LIMITS.maxBytes
+  )
+    throw new Error("Invalid reusable scene-frame cache budget");
+  const entries = new Map(),
+    identities = new WeakMap();
+  let nextIdentity = 1,
+    disposed = false;
+  const stats = {
+    frames: 0,
+    bytes: 0,
+    peakBytes: 0,
+    hits: 0,
+    misses: 0,
+    evictions: 0,
+    bypasses: 0,
+  };
+  const identity = (object) => {
+    if (!object) return 0;
+    let id = identities.get(object);
+    if (!id) {
+      id = nextIdentity++;
+      identities.set(object, id);
+    }
+    return id;
+  };
+  const retire = (key, entry) => {
+    entries.delete(key);
+    stats.frames--;
+    stats.bytes -= entry.bytes;
+    entry.retained = false;
+    if (!entry.references) releaseFrame(entry.frame);
+  };
+  const clear = () => {
+    for (const [key, entry] of entries) retire(key, entry);
+  };
+  const cache = {
+    stats,
+    clear,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      clear();
+    },
+  };
+  frameCaches.set(cache, {
+    assertActive() {
+      if (disposed) throw new Error("Reusable scene-frame cache is disposed");
+    },
+    key(key, source, createCanvas, inputEncoding, opaqueScene) {
+      return JSON.stringify([
+        identity(source),
+        identity(textureSource(source)),
+        identity(createCanvas),
+        source.naturalWidth ?? source.width,
+        source.naturalHeight ?? source.height,
+        inputEncoding,
+        !!opaqueScene,
+        key,
+      ]);
+    },
+    acquire(key) {
+      const entry = entries.get(key);
+      if (!entry) {
+        stats.misses++;
+        return null;
+      }
+      stats.hits++;
+      entries.delete(key);
+      entries.set(key, entry);
+      entry.references++;
+      return entry;
+    },
+    retain(key, frame, bytes) {
+      if (bytes > maxBytes) {
+        stats.bypasses++;
+        return null;
+      }
+      for (const [oldKey, entry] of entries) {
+        if (entries.size < maxFrames && stats.bytes + bytes <= maxBytes) break;
+        if (entry.references) continue;
+        retire(oldKey, entry);
+        stats.evictions++;
+      }
+      if (entries.size >= maxFrames || stats.bytes + bytes > maxBytes) {
+        stats.bypasses++;
+        return null;
+      }
+      const entry = { frame, bytes, references: 1, retained: true };
+      entries.set(key, entry);
+      stats.frames++;
+      stats.bytes += bytes;
+      stats.peakBytes = Math.max(stats.peakBytes, stats.bytes);
+      return entry;
+    },
+    release(entry) {
+      entry.references--;
+      if (!entry.references && !entry.retained) releaseFrame(entry.frame);
+    },
+  });
+  return cache;
+}
 function cornerDomain(c) {
   const domain = c.vertexDomain ?? {
     x: c.dx,
@@ -99,6 +228,8 @@ export function prepareSceneFrames(
     opaqueScene = false,
     maxFrames = FRAME_LIMITS.maxFrames,
     maxBytes = FRAME_LIMITS.maxBytes,
+    frameCache = null,
+    keyCache = null,
   } = {},
 ) {
   if (!["standard-straight", "tconvert-game-raw"].includes(inputEncoding))
@@ -112,6 +243,12 @@ export function prepareSceneFrames(
     maxBytes > FRAME_LIMITS.maxBytes
   )
     throw new Error("Invalid painted-frame budget");
+  const cache = frameCache === null ? null : frameCaches.get(frameCache);
+  if (frameCache !== null && !cache)
+    throw new Error("Invalid reusable scene-frame cache");
+  cache?.assertActive();
+  const keyFor = (c) => keyCache?.get(c) ?? sceneFrameKey(c);
+  const borrowed = new Map();
   const frames = new Map(),
     failures = new Map(),
     support = {
@@ -134,7 +271,7 @@ export function prepareSceneFrames(
   for (const c of plan.commands) {
     if (!required(c)) continue;
     if (c.paintId) support.paintedCommands++;
-    const key = sceneFrameKey(c);
+    const key = keyFor(c);
     if (frames.has(key) || failures.has(key)) continue;
     if (frames.size + failures.size >= maxFrames) continue;
     const fail = (reason) => failures.set(key, reason);
@@ -221,13 +358,23 @@ export function prepareSceneFrames(
       fail("painted-frame-byte-budget");
       continue;
     }
+    const cacheKey = cache?.key(
+      key,
+      source,
+      createCanvas,
+      inputEncoding,
+      opaqueScene,
+    );
+    const cached = cache?.acquire(cacheKey);
+    if (cached) {
+      frames.set(key, cached.frame);
+      borrowed.set(key, cached);
+      support.preparedFrames++;
+      if (cached.frame.additive) support.additiveFrames++;
+      support.bytes += cached.bytes;
+      continue;
+    }
     try {
-      scratch ??= createCanvas(c.sw, c.sh);
-      scratch.width = c.sw;
-      scratch.height = c.sh;
-      const ctx = scratch.getContext("2d");
-      ctx.imageSmoothingEnabled = false;
-      ctx.clearRect(0, 0, c.sw, c.sh);
       let pixels;
       if (inputEncoding === "tconvert-game-raw") {
         const imported = textureSource(source);
@@ -245,11 +392,23 @@ export function prepareSceneFrames(
           );
         }
       } else {
+        scratch ??= createCanvas(c.sw, c.sh);
+        scratch.width = c.sw;
+        scratch.height = c.sh;
+        const ctx = scratch.getContext("2d");
+        ctx.imageSmoothingEnabled = false;
+        ctx.clearRect(0, 0, c.sw, c.sh);
         ctx.drawImage(source, c.sx, c.sy, c.sw, c.sh, 0, 0, c.sw, c.sh);
         pixels = ctx.getImageData(0, 0, c.sw, c.sh);
       }
       const base = new Uint8ClampedArray(width * height * 4),
         additive = new Uint8ClampedArray(width * height * 4);
+      // Raw game channels already inhabit the shader's premultiplied domain.
+      // Paint 0/31 is exactly the identity here, including RGB above alpha.
+      // Keep vertex tinting and source-over/additive splitting unchanged.
+      const rawIdentity =
+        inputEncoding === "tconvert-game-raw" &&
+        (!c.paintId || c.paintId === 31);
       let hasAdditive = false;
       for (let i = 0; i < base.length; i += 4) {
         const x = (i / 4) % width,
@@ -262,16 +421,15 @@ export function prepareSceneFrames(
           if (c.flipY) sy = c.sh - 1 - sy;
           sourceOffset = (sy * c.sw + sx) * 4;
         }
-        const painted = paintPixelRGBA(
-          pixels.data.subarray(sourceOffset, sourceOffset + 4),
-          c.paintId || 0,
-          {
-            wall: c.kind === "wall",
-            specialSettings: settings.specialSettings,
-            inputEncoding,
-            alphaMode: "scene-premultiplied",
-          },
-        );
+        const sample = pixels.data.subarray(sourceOffset, sourceOffset + 4);
+        const painted = rawIdentity
+          ? sample
+          : paintPixelRGBA(sample, c.paintId || 0, {
+              wall: c.kind === "wall",
+              specialSettings: settings.specialSettings,
+              inputEncoding,
+              alphaMode: "scene-premultiplied",
+            });
         let tinted = c.vertexColor
           ? multiplyStaticVertexColor(painted, c.vertexColor)
           : painted;
@@ -298,13 +456,17 @@ export function prepareSceneFrames(
         target.putImageData(image, 0, 0);
         return canvas;
       };
-      frames.set(key, {
+      const frame = {
         base: materialize(base),
         additive: hasAdditive ? materialize(additive) : null,
         width,
         height,
         uvFlipApplied: corner,
-      });
+      };
+      frames.set(key, frame);
+      const bytes = width * height * 4 * (hasAdditive ? 2 : 1);
+      const retained = cache?.retain(cacheKey, frame, bytes);
+      if (retained) borrowed.set(key, retained);
       support.preparedFrames++;
       if (hasAdditive) support.additiveFrames++;
       support.bytes += width * height * 4 * (hasAdditive ? 2 : 1);
@@ -315,7 +477,7 @@ export function prepareSceneFrames(
   const resolve = (c) => {
     if (disposed) return { unsupported: "prepared-frames-disposed" };
     if (!required(c)) return null;
-    const key = sceneFrameKey(c);
+    const key = keyFor(c);
     return (
       frames.get(key) || {
         unsupported: failures.get(key) || "painted-frame-count-budget",
@@ -350,12 +512,12 @@ export function prepareSceneFrames(
   const dispose = () => {
     if (disposed) return;
     disposed = true;
-    for (const frame of frames.values())
-      for (const canvas of [frame.base, frame.additive])
-        if (canvas) {
-          canvas.width = 1;
-          canvas.height = 1;
-        }
+    for (const [key, frame] of frames) {
+      const entry = borrowed.get(key);
+      if (entry) cache.release(entry);
+      else releaseFrame(frame);
+    }
+    borrowed.clear();
     if (scratch) {
       scratch.width = 1;
       scratch.height = 1;

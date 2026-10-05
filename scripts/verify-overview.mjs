@@ -140,6 +140,21 @@ if (flags.includes("--example")) {
     "d551a6b360c7af49a07dadbb1e82223ac43ad398e2054c29f500ec5e8b5b1cab",
   );
   assert.equal(report.fullWorld, true);
+  assert.equal(
+    Object.keys(report.assetHashes).length,
+    384,
+    "Complete pinned texture set",
+  );
+  assert.deepEqual(
+    report.commandCounts,
+    { liquid: 1179913, waterfall: 82467, tile: 11161090, wall: 5200671 },
+    "Complete original command counts",
+  );
+  assert.equal(
+    createHash("sha256").update(image.data).digest("hex"),
+    "7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e",
+    "All 20,160,000 pixels match the independent full-detail reduction baseline",
+  );
   for (const [name, x, y, w, h] of [
     ["surface-and-forest", 4095, 480, 65, 65],
     ["water", 65, 918, 65, 49],
@@ -237,11 +252,20 @@ const result = {
   verifiedSourceFiles: Object.keys(report.sourceHashes).length,
   verifiedTextures: Object.keys(report.assetHashes).length,
   pixelsPerTile: report.pixelsPerTile,
+  wholeImagePixelSha256: createHash("sha256").update(image.data).digest("hex"),
+  pinnedWholeImageComparedPixels: flags.includes("--example")
+    ? image.width * image.height
+    : null,
   processedCells: report.processedCells,
   patches: results,
   alphaRange: [255, 255],
   checks: [
     "Every PNG CRC, encoded hash, filtered scanline and dimension",
+    ...(flags.includes("--example")
+      ? [
+          "All 20,160,000 pinned example pixels match the original full-detail reduction hash; all 384 textures and command counts match",
+        ]
+      : []),
     "Full export rectangle and exact world-cell/row accounting",
     "All output alpha values",
     "Bounded full-detail patches independently area-reduced, including seams and world corners",

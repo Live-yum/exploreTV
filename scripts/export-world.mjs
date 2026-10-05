@@ -1,3 +1,5 @@
+import { getHeapStatistics } from "node:v8";
+import { applyOpaqueOverview } from "./overview-fast-path.mjs";
 import { createWorldWaterfallRegistry } from "./world-render-engine.mjs";
 import {
   readFileSync,
@@ -9,6 +11,7 @@ import {
   rmSync,
 } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
+import { cpus, availableParallelism, platform, arch, release } from "node:os";
 import { pathToFileURL } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
@@ -41,7 +44,7 @@ The whole world is exported when --region is omitted. Existing output PNG/tile
 directories are refused. No world or texture is uploaded or published. Large PNG
 dimensions exceed many viewers' limits; --tiles provides ordinary-size pieces.`;
 
-export function parseExportCli(argv) {
+export function parseExportCli(argv, { pixelsPerTile = 16 } = {}) {
   if (argv.includes("--help")) return { help: true };
   const positional = [];
   const config = {
@@ -92,6 +95,7 @@ export function parseExportCli(argv) {
     );
   return validateConfig({
     ...config,
+    pixelsPerTile,
     worldPath: positional[0],
     assetDir: positional[1],
     outputPath: positional[2],
@@ -100,7 +104,7 @@ export function parseExportCli(argv) {
 
 function validateConfig(config) {
   for (const [name, min, max] of [
-    ["bandTiles", 1, 32],
+    ["bandTiles", 1, (config.pixelsPerTile ?? 16) < 16 ? 128 : 32],
     ["chunkTiles", 1, 252],
     ["compressionLevel", 0, 9],
   ])
@@ -155,6 +159,7 @@ export async function exportWorld(
     throw new Error("Direct overview does not emit full-resolution tile files");
   throwIfAborted(signal);
   const started = performance.now();
+  const cpuStarted = process.cpuUsage();
   if (statSync(config.worldPath).size > LIMITS.fileBytes)
     throw new Error("World file size budget exceeded");
   if (!statSync(config.assetDir).isDirectory())
@@ -173,6 +178,8 @@ export async function exportWorld(
     worldSha256 = createHash("sha256").update(bytes).digest("hex");
   if (config.expectedWorldSha256 && config.expectedWorldSha256 !== worldSha256)
     throw new Error("World SHA-256 mismatch");
+  const worldReadHashSeconds = (performance.now() - started) / 1000;
+  let setupStarted = performance.now();
   const world = openWorld(bytes),
     rect = config.region || {
       x: 0,
@@ -182,6 +189,16 @@ export async function exportWorld(
     };
   if (rect.x + rect.width > world.width || rect.y + rect.height > world.height)
     throw new Error("Export region is outside world");
+  const worldParseSeconds = (performance.now() - setupStarted) / 1000;
+  if (
+    overview &&
+    rect.width * rect.height >= 1000000 &&
+    (typeof global.gc !== "function" ||
+      getHeapStatistics().heap_size_limit > 120000000)
+  )
+    throw new Error(
+      "Large overview requires bounded Node memory: use npm run export:overview, or --expose-gc --max-old-space-size=96 --max-semi-space-size=2",
+    );
   const plannedChunks =
     Math.ceil(rect.width / config.chunkTiles) *
     Math.ceil(rect.height / config.bandTiles);
@@ -193,10 +210,29 @@ export async function exportWorld(
     pixelHeight = rect.height * pixelsPerTile;
   const bandRows = Math.min(config.bandTiles, rect.height) * pixelsPerTile,
     rowBytes = pixelWidth * 4;
+  setupStarted = performance.now();
   const band = Buffer.allocUnsafe(rowBytes * bandRows),
     index = buildRowIndex(world);
-  const waterfallRegistry = createWorldWaterfallRegistry(world);
+  const rowIndexSeconds = (performance.now() - setupStarted) / 1000;
+  const waterfallRegistry = createWorldWaterfallRegistry(world, {
+    compact: overview,
+  });
+  if (overview && global.gc) {
+    global.gc();
+    await new Promise(setImmediate);
+  }
+  const checkOverviewBudget = () => {
+    if (!overview) return;
+    if (process.resourceUsage().maxRSS * 1024 > 500000000)
+      throw new Error(
+        "Overview exceeded the 500,000,000-byte total process RSS limit",
+      );
+    if ((performance.now() - started) / 1000 >= 600)
+      throw new Error("Overview exceeded the 600-second generation limit");
+  };
+  checkOverviewBudget();
   const renderer = createWorldRenderer({
+    lowMemory: overview,
     waterfallRegistry,
     assetDir: config.assetDir,
     inputEncoding: config.inputEncoding,
@@ -208,6 +244,8 @@ export async function exportWorld(
     "scripts/export-world.mjs",
     "scripts/export-overview.mjs",
     "scripts/downsample-rgba.mjs",
+    "scripts/overview-fast-path.mjs",
+    "scripts/compact-waterfall-registry.mjs",
     "scripts/png-stream.mjs",
     "scripts/world-render-engine.mjs",
     "core/world.mjs",
@@ -280,7 +318,11 @@ export async function exportWorld(
           paddedWorldRect(world, core),
         );
         const renderStarted = performance.now();
-        await renderer.drawRegion(region, canvas, { core, count: true });
+        const drawn = await renderer.drawRegion(region, canvas, {
+          core,
+          count: true,
+          overview: pixelsPerTile === 1,
+        });
         const rgba = canvas
           .getContext("2d")
           .getImageData(
@@ -303,6 +345,8 @@ export async function exportWorld(
               16 / pixelsPerTile,
             )
           : fullData;
+        if (drawn.opaqueOverview)
+          applyOpaqueOverview(data, core, region, drawn.opaqueOverview);
         downsampleSeconds += (performance.now() - reduceStarted) / 1000;
         const chunkRowBytes = width * pixelsPerTile * 4;
         for (let py = 0; py < currentRows; py++)
@@ -333,6 +377,11 @@ export async function exportWorld(
         renderSeconds += (performance.now() - renderStarted) / 1000;
         bandCells += width * height;
         chunks++;
+        if (overview) {
+          if (global.gc) global.gc();
+          await new Promise(setImmediate);
+          checkOverviewBudget();
+        }
       }
       assert.equal(
         bandCells,
@@ -346,6 +395,7 @@ export async function exportWorld(
         currentRows,
       );
       compressionSeconds += (performance.now() - compressionStarted) / 1000;
+      checkOverviewBudget();
       processedCells += bandCells;
       writtenRows += currentRows;
       peakRssBytes = Math.max(peakRssBytes, process.memoryUsage().rss);
@@ -364,6 +414,7 @@ export async function exportWorld(
         JSON.stringify(progress, null, 2),
       );
       await onProgress(progress);
+      checkOverviewBudget();
       if (global.gc) global.gc();
     }
     throwIfAborted(signal);
@@ -399,7 +450,9 @@ export async function exportWorld(
         ),
       );
     }
-    const png = await writer.finish();
+    checkOverviewBudget();
+    const png = await writer.finish({ beforePublish: checkOverviewBudget });
+    checkOverviewBudget();
     if (tilesTemporary) renameSync(tilesTemporary, config.tilesPath);
     const report = {
       schema: overview
@@ -450,14 +503,46 @@ export async function exportWorld(
       peakSampledRssBytes: Math.max(peakRssBytes, process.memoryUsage().rss),
       osPeakRssBytes: process.resourceUsage().maxRSS * 1024,
       renderSeconds: +renderSeconds.toFixed(2),
+      timingMeaning:
+        "Runtime is exporter wall time; render includes prepare/draw/reduction. Phase times exclude pauses for native finalization.",
       compressionSeconds: +compressionSeconds.toFixed(2),
       downsampleSeconds: +downsampleSeconds.toFixed(2),
       runtimeSeconds: +((performance.now() - started) / 1000).toFixed(2),
       inputEncoding: config.inputEncoding,
+      resourceLimits: overview
+        ? {
+            rssBytes: 500000000,
+            runtimeSeconds: 600,
+            preferredRssBytes: 200000000,
+            renderingProcesses: 1,
+            childProcesses: 0,
+          }
+        : null,
+      preparationSeconds: {
+        worldReadHash: worldReadHashSeconds,
+        worldParse: worldParseSeconds,
+        rowIndex: rowIndexSeconds,
+        waterfalls: waterfallRegistry.buildMilliseconds / 1000,
+      },
+      environment: {
+        node: process.version,
+        platform: platform(),
+        arch: arch(),
+        release: release(),
+        cpuModel: cpus()[0]?.model ?? "unknown",
+        logicalCpus: cpus().length,
+        availableParallelism: availableParallelism(),
+        rendererWorkers: 1,
+        processCpuSeconds:
+          (process.cpuUsage(cpuStarted).user +
+            process.cpuUsage(cpuStarted).system) /
+          1e6,
+      },
       sourceHashes,
       ordinaryBlockIds: [...ORDINARY_BLOCKS],
       storedFrameTileIds: [...STORED_FRAME_TILES],
       ...stats,
+      frameCache: stats.frameCache ? { ...stats.frameCache } : null,
       limitations: [
         `Static fullbright composition at 16 pixels per tile, exported at ${pixelsPerTile} pixels per tile, without dynamic lighting.`,
         "Uses the same supported sprite, wall, paint and static-liquid paths as the overview renderer; it does not add unsupported game objects.",
@@ -472,7 +557,9 @@ export async function exportWorld(
             ]),
       ],
     };
+    checkOverviewBudget();
     writeFileSync(`${config.outputPath}.json`, JSON.stringify(report, null, 2));
+    checkOverviewBudget();
     writeFileSync(
       `${config.outputPath}.progress.json`,
       JSON.stringify(
@@ -487,6 +574,7 @@ export async function exportWorld(
         2,
       ),
     );
+    checkOverviewBudget();
     return report;
   } catch (error) {
     if (writer) await writer.abort(error);
@@ -503,6 +591,9 @@ export async function exportWorld(
             processedCells,
             writtenRows,
             message: error.message,
+            osPeakRssBytes: process.resourceUsage().maxRSS * 1024,
+            runtimeSeconds: (performance.now() - started) / 1000,
+            completePngRetainedForDiagnostics: existsSync(config.outputPath),
           },
           null,
           2,

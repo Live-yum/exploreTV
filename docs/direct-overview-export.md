@@ -1,146 +1,195 @@
-# Direct small panorama export
+# Direct panorama: bounded memory and time
 
-The full-detail and small panoramas are separate outputs. `export:full` still
-exports 16 pixels per world tile. `export:overview` reads a `.wld` and the real
-PNG textures directly and writes a small full-extent panorama, defaulting to
-one pixel per world tile. An 8400×2400 world produces **8400×2400**, without
-first creating a 134400×38400 PNG or 9,900 full-detail PNG pieces.
+`export:overview` reads a `.wld` and real PNG textures directly. The bundled
+8400×2400 world produces **8400×2400**, with every source tile covered. It does
+not first write a 134400×38400 image or 9,900 full-detail pieces.
+`export:full` still supplies the unchanged 16-pixel-per-tile output.
+
+The current acceptance limits are **500,000,000 bytes total generation RSS** and
+**600 seconds cold end-to-end**, with **200,000,000 bytes preferred**. MB here is
+decimal, not MiB. The preferred target is distinct from the hard limit. Results
+must be measured on the actual machine; there is no universal runtime promise.
 
 ## Run
 
 ```sh
 npm ci --ignore-scripts
-node --expose-gc scripts/export-overview.mjs \
+npm run export:overview -- \
   fixtures/example-world.wld example/assets artifacts/world-overview.png \
   --expect-world-sha256 d551a6b360c7af49a07dadbb1e82223ac43ad398e2054c29f500ec5e8b5b1cab
 ```
 
-Or use `npm run export:overview -- <world.wld> <png-directory> <output.png>`.
-The example paths are for the authorized bundled example; your own local
-world/texture paths are supported. Inputs remain read-only and no export is
-uploaded or published by these commands. Original artwork rights and the
-existing [asset notice](../example/assets/NOTICE.md) still apply.
+The npm command starts Node with `--expose-gc --max-old-space-size=96
+--max-semi-space-size=2`. For direct invocation, include those same flags:
 
-Choose a fresh output filename; existing final and partial PNGs are refused.
-The parent directory is created. A final PNG appears only after all rows have
-been written. Ctrl-C/SIGTERM removes this attempt's partial PNG and records an
-aborted progress state. A machine crash can leave a `.partial` file; it is not
-a finished panorama. There is no resume option.
+```sh
+node --expose-gc --max-old-space-size=96 --max-semi-space-size=2 \
+  scripts/export-overview.mjs world.wld textures output.png
+```
 
-## Options
+Large programmatic overview exports also require that bounded Node configuration;
+otherwise they fail before building the costly world-wide effect registry.
+There is one renderer process, no renderer child processes and no parallel-worker
+option. Native library threads are included in that process's RSS.
 
-| Option                           | Meaning                                                      |
-| -------------------------------- | ------------------------------------------------------------ |
-| `--pixels-per-tile <1\|2\|4\|8>` | Output scale; default 1                                      |
-| `--band-tiles <1..32>`           | Render band height; default 32 world tiles                   |
-| `--chunk-tiles <1..252>`         | Render chunk width; default 128 world tiles                  |
-| `--region <x,y,width,height>`    | Optional crop in world tiles; omitted means the entire world |
-| `--expect-world-sha256 <hash>`   | Refuse a different input file                                |
-| `--input-encoding <encoding>`    | `tconvert-game-raw` (default) or `standard-straight`         |
-| `--compression-level <0..9>`     | PNG compression level; default 6                             |
-| `--help`                         | Display usage without opening files                          |
+Inputs remain read-only and nothing is uploaded by the export. The bundled
+world and 384 textures retain their existing [asset notice](../example/assets/NOTICE.md).
+Choose a fresh output filename: existing final and partial PNGs are refused.
+The final PNG appears only after every row is written. Ctrl-C/SIGTERM removes
+this attempt's partial PNG and records an aborted progress state. A crash may
+leave `.partial`; it is not a completed image. There is no resume mode. A late
+budget failure may retain a complete PNG for diagnostics, but its aborted
+progress sidecar prevents it from passing export verification.
 
-Integer scales divide 16 exactly, so every reduction block aligns to a world
-tile and chunk boundaries need no interpolation. Fractional scales and arbitrary
-pixel dimensions are intentionally unsupported. Use the unchanged
-[full-resolution exporter](full-resolution-export.md) for 16 px/tile, optional
-full-detail compatibility pieces, and full-resolution pilot regions. The
-small exporter rejects `--tiles` to avoid accidentally generating large files.
+| Option                           | Meaning                                              |
+| -------------------------------- | ---------------------------------------------------- |
+| `--pixels-per-tile <1\|2\|4\|8>` | Output scale, default 1                              |
+| `--band-tiles <1..128>`          | Render band height, default 64                       |
+| `--chunk-tiles <1..252>`         | Render chunk width, default 128                      |
+| `--region <x,y,width,height>`    | Optional world-tile crop, default whole world        |
+| `--expect-world-sha256 <hash>`   | Refuse a different world                             |
+| `--input-encoding <encoding>`    | `tconvert-game-raw` (default) or `standard-straight` |
+| `--compression-level <0..9>`     | PNG compression level, default 6                     |
+| `--help`                         | Usage without opening inputs                         |
 
-## Fidelity and bounded memory
+Integer scales divide 16 exactly; fractional scales and arbitrary dimensions are
+unsupported. The overview rejects `--tiles`. Full-resolution export keeps its
+original 16-row default, 32-row maximum and optional piece output. Different
+worlds/scales/chunks can require more work; exceeding a resource limit is an
+explicit failure, not a completed lower-quality panorama.
 
-The small exporter uses the **same compositor** as the full-resolution path:
-original atlases, stored frames, walls, paint, source alpha encoding, frozen
-liquids, and the explicit whole-world static-waterfall registry. It renders
-each bounded region with the same ten-tile halo at 16 px/tile. After compositing
-to the same opaque black scene, it averages every 16×16 source pixel block
-(default scale), immediately discards that high-resolution region, and streams
-the reduced band to the final PNG.
+## Exact optimizations
 
-This is exact aligned box/area reduction in the composited encoded-sRGB byte
-space. Accumulation is premultiplied-alpha aware, with one rounding step; the
-current fullbright compositor produces alpha 255 everywhere. Every thin line
-and transparent source pixel contributes to the final pixel according to its
-composited coverage. Small features may still visually blend away at overview
-scale. No map-color palette, representative source-pixel sample, or reduced
-texture atlas replaces the detailed composition.
+The original scene planner, atlas crops, paint, alpha-over/additive blending,
+frozen liquids, complete waterfall registry and ten-tile halo remain in use.
 
-For the example, the output band is just **8400×32×4 = 1,075,200 bytes**. The
-renderer still needs a bounded high-resolution core/halo canvas, sparse world
-index, decoded assets and frame caches. It does not allocate a full-world
-high-resolution canvas or a full-width high-resolution band. Native allocator
-and renderer overhead mean RSS is higher than the output band size; measured
-peak RSS is reported rather than inferred from that buffer.
+- The overview caches exact prepared frames, up to 1,024 frames / 2 MiB pixel
+  storage. Native object overhead is additional. Source registration, dimensions,
+  encoding, paint and vertex effects participate in keys; live borrowers pin
+  frames until done. Private per-plan frame keys are interned once.
+- Raw paint 0/31 is already an identity in the premultiplied shader contract.
+  Redundant shader work and unused raw-mode scratch canvases are skipped.
+- Raw PNG atlases are decoded once into raw RGBA when needed, without a duplicate
+  native atlas image. A 16 MiB LRU bounds retained raw texture data. Standard
+  straight-alpha input retains its ordinary native-image path.
+- Sparse RLE checkpoints and bounded per-region cursors avoid repeatedly decoding
+  whole columns for neighboring tiles. Read-only parsing can omit unused raw
+  record copies. The fragment path still keeps its original raw records.
+- The complete 1,969-origin / 82,467-command example waterfall registry is
+  compacted into exact typed columns plus templates and a spatial index. Its
+  numeric/index storage is 3,219,369 bytes. Query order, nested colors, field
+  presence and numeric precision remain exact. The ordinary renderer/verifier
+  can still use the original registry as an independent reference.
+- At **1 px/tile only**, an aligned, unscaled, unclipped, unflipped final 16×16
+  frame proven fully opaque after paint can supply its exact cached mean.
+  Every later touching draw blocks unsafe use. A preceding command is omitted
+  only when its entire destination is covered by proven cells. Transparency,
+  alpha holes, additive effects, walls, liquids, slopes and overhangs otherwise
+  use the original full-detail compositor before area reduction. Validation
+  and complete logical command accounting remain intact.
+- After each bounded chunk, explicit GC is followed by a **macrotask** yield so
+  N-API ImageData finalizers run. GC alone in a microtask-only loop did not stop
+  native readback accumulation. `clearAllCache()` did not solve that problem.
 
-The full-detail renderer still does its work. This path eliminates the huge
-PNG's compression, disk storage and subsequent read/decode, plus optional piece
-encoding, but does not promise a proportional rendering speedup. The default
-32-tile bands differ from the full export's 16-tile default, also affecting
-halo work. Do not treat measurements on different machines or different settings
-as a controlled speed benchmark.
+Independent averaging of translucent textures is not used: it would change
+occlusion. All composited source pixels contribute to exact aligned area means
+in the same encoded-sRGB byte space. Small detail can visually blend away at
+this output scale; use `export:full` to inspect original pixels.
 
-All documented game-rendering approximations remain: frozen fullbright preview,
-terrain/wall adjacency approximations, no dynamic game lighting, NPCs, particles
-or live background scenery. Reduction adds no supported objects. Missing atlases,
-invalid crops, unsupported tiles/liquid neighborhoods and effect failures remain
-visible in the report. Black can represent empty space or an omitted feature.
+The output band is 8400×64×4 = **2,150,400 bytes**. RSS additionally includes
+world/index data, effect registry, bounded detailed canvases, caches, V8 and
+native allocator overhead. Buffer arithmetic alone is not a memory measurement.
+The exporter checks OS peak RSS and elapsed time after chunks. CI additionally
+monitors the exporter plus its harness and validates their conservative summed
+OS peaks, including all native threads.
 
-## Provenance and verification
+## Measurements and rejected approaches
 
-An output `world-overview.png` has:
+Final acceptance evidence is the exact commit's `cold-benchmark.json` and
+`.fidelity.json`, published by the direct-overview workflow. The former includes
+process startup through shutdown, world read/parse, registry/index creation,
+texture decoding, cold cache construction, composition, reduction and PNG write.
+Dependency installation and separate correctness verification are excluded.
+Application caches start empty; OS file-cache state is uncontrolled. No persistent
+texture cache or separately claimed warm whole-world result is required.
 
-- `world-overview.png.json`: full input extent, input/source/texture hashes,
-  output SHA-256, render and output scales, reduction method, complete command
-  and omission counts, processed cells, rows, chunks, buffer sizes, elapsed time,
-  reduction time (included in render time), compression time and peak RSS.
-- `world-overview.png.progress.json`: last completed band and terminal state.
+Exploratory runs, **not current acceptance results**:
 
-Basic verification streams every PNG CRC, hash and inflated row without
-allocating its complete image:
+- Four render workers generated the complete image in 157.28 s on a Linux x64
+  Xeon Platinum 8573C / Node 24.19.0 machine with 9 available logical CPUs, but
+  used about 3.15 GB. This was rejected under the newer memory limit. Parallel
+  export is not shipped as the default or a supposedly compliant option.
+- An initial serial low-memory version took 671.85 s and peaked at 467,140,608
+  bytes for the exporter alone. It missed the runtime target and left inadequate
+  harness-memory margin. It is not a passing result.
+- Both exploratory whole images matched all **20,160,000 pixels** of the earlier
+  independent full-detail reduction. Canonical decoded RGBA SHA-256:
+  `7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e`.
+  PNG file hashes can differ with compression/stream boundaries.
+- A fully ordered cached tile-stack compositor was pixel-exact, but a real
+  8400×128 ROI took 69.99 s versus 43.85 s for the simpler compact-registry path.
+  It was rejected: key construction, cache misses and native readbacks outweighed
+  fewer draw calls. The default keeps only the proven opaque-final shortcut.
+- An isolated gcc `-O3` C reduction kernel took 4.24 ms for a real 16 MiB chunk,
+  but subprocess plus pipe overhead raised it to 83.30 ms versus 19.01 ms for
+  in-process JS (ten-run medians). Native subprocess reduction was rejected.
+  Thirty-five BigInt-oracle cases covered all factors and alpha edge values.
+- A linear JS reduction variant measured 16.08 ms and alpha-checked opaque JS
+  22.48 ms. Reduction was a minor stage, so neither is added to the default.
+- A new Rust/WASM reducer could not be built locally because the temporary
+  compiler was no longer installed. Existing WASM copy timings alone are not a
+  reducer benchmark. The existing decoder, committed module and CI Rust build
+  remain unchanged; no unmeasured speedup is claimed.
+
+Do not divide timings from different machines/settings into a controlled speedup
+claim. The 200 MB preference must be reported separately even when the 500 MB
+hard limit and ten-minute limit pass.
+
+## Verification
+
+The PNG report records source/input/384 texture hashes, complete extent, cells,
+rows, commands and omissions, cache counters, phase times, runtime/CPU details and
+OS RSS. `.progress.json` records terminal state. No full-resolution feature or
+previously supported object is removed.
 
 ```sh
 node scripts/verify-export.mjs artifacts/world-overview.png
-```
-
-For ordinary-size small outputs (up to 128 MiB decoded), independently compare
-bounded full-detail renders against the small panorama:
-
-```sh
 node scripts/verify-overview.mjs \
   fixtures/example-world.wld example/assets artifacts/world-overview.png --example
+npm test
 ```
 
-This writes `.fidelity.json` in addition to `.verification.json`. It checks all
-output alpha values, exact extent/cell/row counts, current source-code hashes,
-every recorded texture hash, and thirteen real patches:
-all four corners, center, render seams, surface/forest, water, lava, honey, rain,
-Shimmer and mixed half-bricks. Each patch is rendered as one bounded full-detail
-image and area-reduced using a separately implemented pixel sum. All compared
-bytes must match exactly. `--example` pins the public world and also requires
-its known omission counts to remain zero; omit it for generic local worlds.
-The whole-file PNG check covers all rows, while visual comparisons deliberately
-remain bounded patches. This is a compositor regression baseline, not a
-pixel-perfect running-game oracle.
+`--example` requires the complete pinned texture set and original command counts,
+zero known omissions, all pixel alpha values, and the **entire decoded pixel
+hash**. It also independently renders thirteen real patches including world
+corners, seams, trees, water, lava, honey, rain, Shimmer and mixed half-bricks.
+Generic worlds can omit `--example`. Comparison decoding is bounded to 128 MiB;
+larger outputs retain the streaming PNG verifier.
 
-Tests compare all four scales with full-export baselines, including odd world
-sizes and band/chunk boundaries, alpha contracts, thin features, invalid flags,
-full extent/crops and interrupted/duplicate exports:
+Tests cover all paint IDs, alpha edge values, clips, flips, overlaps, additive
+channels, LRU ownership, source invalidation, RLE/checkpoint boundaries, compact
+registry field/order equality, all output scales, odd seams, cancelled/duplicate
+exports and lossless fragment records. This verifies a static compositor baseline,
+not a pixel-perfect running-game oracle. Fullbright lighting, frozen effects,
+approximate terrain/wall joins and omitted runtime scenery/NPCs remain documented.
 
-```sh
-node --test test/overview-export.test.mjs test/export-world.test.mjs test/png-stream.test.mjs
-```
+## GitHub Actions
 
-## Rebuild in GitHub Actions
+A PR head message containing `[export-overview]` requests the direct rebuild.
+`[export-full]` remains separate; the giant export is not implicitly regenerated.
+The workflow is read-only and uploads PNG and reports as
+`direct-small-panorama-<commit>` for seven days, including available diagnostics
+on failure. It does not merge, release, deploy or change credentials.
 
-`Export direct small panorama` is separate from `Export full-resolution example`.
-A PR head commit containing `[export-overview]` requests the direct small rebuild;
-ordinary commits skip that expensive job. Manual `workflow_dispatch` is supported
-once the workflow exists on the default branch. It does not launch the full
-export. The workflow has read-only repository permissions.
-
-The job checks pinned resources, runs tests, exports the actual world, verifies
-full PNG structure and the thirteen fidelity patches, and uploads
-`direct-small-panorama-<commit>` containing the PNG and JSON reports. Budgets are
-45 minutes for export, 2 GiB sampled RSS, 128 MiB output, and 512 MiB initial free
-disk; the overall job has a 60-minute timeout. Artifacts expire after seven days.
-This is neither a release nor a deployment.
+Generation fails acceptance at ≥600 seconds or a conservative sum above
+**500,000,000 bytes**. A tiny C monitor uses Linux `wait4` for the exporter's
+entire-lifetime OS peak, including shutdown; the monitor and Node harness peaks
+are also included, plus a 1 MiB reporting-tail reserve. Their contemporaneous
+process-tree RSS is sampled each second where `/proc` exposes a consistent
+process namespace; unavailable sampling is explicitly marked and acceptance
+still uses the conservative full-lifetime peak sum. Building the measurement-only helper
+with the installed C compiler occurs before timing; the ordinary npm export
+requires neither the helper nor a compiler. The exporter creates no children. There is a 128 MiB output guard
+and a 512 MiB free-disk minimum. Verification runs after generation, outside its
+runtime and memory measurement. The preferred 200 MB result is explicitly
+reported, never inferred from the hard-limit pass.

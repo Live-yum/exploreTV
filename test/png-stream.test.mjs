@@ -90,3 +90,26 @@ test("PNG streaming supports the real-world width without a giant canvas", async
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("cancellation during the final publication hook never publishes a PNG", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "png-final-cancel-"));
+  try {
+    const path = join(dir, "out.png"),
+      controller = new AbortController();
+    const writer = await createPngWriter({
+      path,
+      width: 1,
+      height: 1,
+      signal: controller.signal,
+    });
+    await writer.writeRows(Buffer.from([1, 2, 3, 255]), 1);
+    await assert.rejects(
+      writer.finish({ beforePublish: async () => controller.abort() }),
+      /abort/i,
+    );
+    await assert.rejects(stat(path), { code: "ENOENT" });
+    await assert.rejects(stat(path + ".partial"), { code: "ENOENT" });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

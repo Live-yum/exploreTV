@@ -374,7 +374,7 @@ test("overview CLI accepts bounded defaults and supported flags but refuses inva
   assert.deepEqual(parseOverviewCli(["--help"]), { help: true });
   const defaults = parseOverviewCli(["w", "a", "out"]);
   assert.equal(defaults.pixelsPerTile, 1);
-  assert.equal(defaults.bandTiles, 32);
+  assert.equal(defaults.bandTiles, 64);
   assert.equal(defaults.chunkTiles, 128);
   assert.equal(defaults.compressionLevel, 6);
   assert.equal(defaults.inputEncoding, "tconvert-game-raw");
@@ -417,10 +417,14 @@ test("overview CLI accepts bounded defaults and supported flags but refuses inva
       scale,
     ]),
     ...[
+      ["--workers"],
+      ["--workers", "0"],
+      ["--workers", "5"],
+      ["--workers", "2x"],
       ["--pixels-per-tile"],
       ["--pixels-per-tile", "--region", "0,0,1,1"],
       ["--band-tiles", "0"],
-      ["--band-tiles", "33"],
+      ["--band-tiles", "129"],
       ["--chunk-tiles", "0"],
       ["--chunk-tiles", "253"],
       ["--region", "0,0,0,2"],

@@ -42,10 +42,11 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: node scripts/prepare-example.mjs example/assets --check
-      - run: node --test test/png-stream.test.mjs test/export-world.test.mjs test/overview-export.test.mjs
+      - run: node --test test/png-stream.test.mjs test/export-world.test.mjs test/overview-export.test.mjs test/overview-fast-path.test.mjs test/scene-frame-cache.test.mjs test/compact-waterfall-registry.test.mjs test/overview-budget.test.mjs
       - run: node scripts/run-overview-ci.mjs
       - run: node scripts/verify-overview.mjs fixtures/example-world.wld example/assets artifacts/direct-overview/world-1px.png --example
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: direct-small-panorama-${{ github.event.pull_request.head.sha || github.sha }}
           path: |

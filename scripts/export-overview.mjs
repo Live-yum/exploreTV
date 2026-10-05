@@ -2,13 +2,13 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseExportCli, exportWorld } from "./export-world.mjs";
 
-const USAGE = `Usage: node --expose-gc scripts/export-overview.mjs <world.wld> <png-directory> <output.png> [options]
+const USAGE = `Usage: npm run export:overview -- <world.wld> <png-directory> <output.png> [options]
 
 Directly export a small full-extent panorama from the world and real textures.
 Each bounded region is composited at 16 px/tile, area-reduced immediately, and
 streamed to the final PNG. No giant full-resolution PNG or tile files are made.
   --pixels-per-tile <1|2|4|8>    Output scale; default 1 (8400x2400 for a large world)
-  --band-tiles <1..32>          Bounded render stripe height; default 32
+  --band-tiles <1..128>         Bounded render stripe height; default 64
   --chunk-tiles <1..252>        Bounded render width; default 128
   --region <x,y,width,height>   Optional world-tile crop; default entire world
   --expect-world-sha256 <hash>  Refuse a different input world
@@ -36,8 +36,8 @@ export function parseOverviewCli(argv) {
       pixelsPerTile = Number(value);
     } else rest.push(argv[i]);
   }
-  const config = parseExportCli(rest);
-  if (!rest.includes("--band-tiles")) config.bandTiles = 32;
+  const config = parseExportCli(rest, { pixelsPerTile });
+  if (!rest.includes("--band-tiles")) config.bandTiles = 64;
   return { ...config, pixelsPerTile };
 }
 

@@ -13,7 +13,7 @@
     "prepare:example": "node scripts/prepare-example.mjs",
     "render:full": "node scripts/render-full-world.mjs",
     "export:full": "node scripts/export-world.mjs",
-    "export:overview": "node scripts/export-overview.mjs"
+    "export:overview": "node --expose-gc --max-old-space-size=96 --max-semi-space-size=2 scripts/export-overview.mjs"
   },
   "dependencies": {
     "vue": "3.5.13"

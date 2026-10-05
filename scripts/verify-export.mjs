@@ -329,6 +329,14 @@ export async function verifyExport(
   path,
   { tilesPath = null, reportPath = `${path}.verification.json` } = {},
 ) {
+  if (existsSync(`${path}.progress.json`)) {
+    const progress = readJson(`${path}.progress.json`);
+    assert.equal(
+      progress.phase,
+      "done",
+      "Export progress must be terminal done; aborted or unfinished exports cannot pass",
+    );
+  }
   const started = performance.now(),
     png = await verifyExportPng(path),
     sourceReport = existsSync(`${path}.json`) ? readJson(`${path}.json`) : null;

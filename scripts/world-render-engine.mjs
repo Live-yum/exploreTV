@@ -1,3 +1,5 @@
+import { compactWaterfallRegistry } from "./compact-waterfall-registry.mjs";
+import { prepareOpaqueOverview } from "./overview-fast-path.mjs";
 import { createStaticWaterfallRegistry } from "../core/static-waterfalls.mjs";
 import { sceneFrameReservedBytes } from "../core/scene-batches.mjs";
 import { readFileSync, existsSync, statSync } from "node:fs";
@@ -13,7 +15,11 @@ import {
 import { planScene, renderScene } from "../core/renderer.mjs";
 import { decodePngRgba } from "../core/png-rgba.mjs";
 import { registerTextureSource, textureMemoryBytes } from "../core/assets.mjs";
-import { prepareSceneFrames, sceneFrameKey } from "../core/scene-frames.mjs";
+import {
+  prepareSceneFrames,
+  sceneFrameKey,
+  createSceneFrameCache,
+} from "../core/scene-frames.mjs";
 
 export const HALO_TILES = 10;
 export function paddedWorldRect(world, rect, padding = HALO_TILES) {
@@ -42,7 +48,7 @@ export function buildRowIndex(world, stride = 16) {
     let next = 0;
     for (let y = 0; y < world.height; ) {
       const offset = r.pos,
-        rec = decodeRecord(r, world.important),
+        rec = decodeRecord(r, world.important, false),
         end = y + rec.repeats + 1;
       while (next < end) {
         const i = x * bands + Math.floor(next / stride);
@@ -61,15 +67,76 @@ export function buildRowIndex(world, stride = 16) {
     bytes: offsets.byteLength + starts.byteLength,
   };
 }
+/** Random read using the same validated sparse index, never a whole-column decode. */
+export function readIndexedTile(world, index, x, y) {
+  if (
+    !Number.isSafeInteger(x) ||
+    !Number.isSafeInteger(y) ||
+    x < 0 ||
+    y < 0 ||
+    x >= world.width ||
+    y >= world.height
+  )
+    return null;
+  const i = x * index.bands + Math.floor(y / index.stride);
+  const r = new Reader(world.bytes, world.sections[2]);
+  r.pos = index.offsets[i];
+  let start = index.starts[i];
+  while (start <= y) {
+    const rec = decodeRecord(r, world.important, false);
+    start += rec.repeats + 1;
+    if (y < start) return Object.freeze(rec.tile);
+  }
+  return null;
+}
+
+/** Bounded per-region RLE cursors amortize consecutive off-rectangle neighbor reads. */
+export function createIndexedTileAccessor(world, index) {
+  const columns = new Map();
+  return (x, y) => {
+    if (
+      !Number.isSafeInteger(x) ||
+      !Number.isSafeInteger(y) ||
+      x < 0 ||
+      y < 0 ||
+      x >= world.width ||
+      y >= world.height
+    )
+      return null;
+    let state = columns.get(x);
+    if (!state || y < state.start || y >= state.end + index.stride) {
+      const i = x * index.bands + Math.floor(y / index.stride),
+        reader = new Reader(world.bytes, world.sections[2]);
+      reader.pos = index.offsets[i];
+      state = {
+        reader,
+        start: index.starts[i],
+        end: index.starts[i],
+        tile: null,
+      };
+      columns.set(x, state);
+      if (columns.size > 256) columns.delete(columns.keys().next().value);
+    }
+    while (y >= state.end) {
+      const record = decodeRecord(state.reader, world.important, false);
+      state.start = state.end;
+      state.end += record.repeats + 1;
+      state.tile = Object.freeze(record.tile);
+    }
+    return state.tile;
+  };
+}
+
 export function readIndexedRegion(world, index, rect) {
   validateRect(rect, world.width, world.height);
+  const fallbackTile = createIndexedTileAccessor(world, index);
   const cells = new Array(rect.width * rect.height),
     r = new Reader(world.bytes, world.sections[2]);
   for (let dx = 0; dx < rect.width; dx++) {
     const i = (rect.x + dx) * index.bands + Math.floor(rect.y / index.stride);
     r.pos = index.offsets[i];
     for (let y = index.starts[i]; y < rect.y + rect.height; ) {
-      const rec = decodeRecord(r, world.important),
+      const rec = decodeRecord(r, world.important, false),
         end = y + rec.repeats + 1;
       for (
         let yy = Math.max(y, rect.y);
@@ -87,7 +154,18 @@ export function readIndexedRegion(world, index, rect) {
     important: world.important,
     treeContext: world.treeContext,
     herbContext: world.herbContext,
-    getWorldTile: getWorldTileAccessor(world),
+    getWorldTile: (x, y) => {
+      if (
+        Number.isSafeInteger(x) &&
+        Number.isSafeInteger(y) &&
+        x >= rect.x &&
+        x < rect.x + rect.width &&
+        y >= rect.y &&
+        y < rect.y + rect.height
+      )
+        return cells[(x - rect.x) * rect.height + y - rect.y];
+      return fallbackTile(x, y);
+    },
     source: {
       signature: world.signature,
       name: world.name,
@@ -99,7 +177,7 @@ export function readIndexedRegion(world, index, rect) {
   };
 }
 /** Explicit whole-world static registry: cap differs from a game viewport. */
-export function createWorldWaterfallRegistry(world) {
+export function createWorldWaterfallRegistry(world, { compact = false } = {}) {
   const started = performance.now();
   // The source scan excludes the outer world edge; tiny synthetic worlds have
   // no interior origin candidates, and need no fabricated neighbor records.
@@ -141,6 +219,15 @@ export function createWorldWaterfallRegistry(world) {
     },
   );
   registry.buildMilliseconds = performance.now() - started;
+  if (compact) {
+    const packed = compactWaterfallRegistry(registry);
+    return {
+      ...packed,
+      compactStorageBytes: packed.compactStorageBytes,
+      compactTemplateCount: packed.compactTemplateCount,
+      buildMilliseconds: performance.now() - started,
+    };
+  }
   return registry;
 }
 
@@ -149,8 +236,26 @@ export function createWorldRenderer({
   inputEncoding = "tconvert-game-raw",
   waterfallRegistry = null,
   onOmission = () => {},
+  cacheFrames = true,
+  lowMemory = false,
 }) {
+  const frameCache = cacheFrames
+    ? createSceneFrameCache(
+        lowMemory ? { maxFrames: 1024, maxBytes: 2 * 1024 * 1024 } : {},
+      )
+    : null;
   const stats = {
+    frameCache: frameCache?.stats ?? null,
+    stageMilliseconds: {
+      plan: 0,
+      assets: 0,
+      batches: 0,
+      prepareFrames: 0,
+      validate: 0,
+      draw: 0,
+      opaqueOverview: 0,
+    },
+    opaqueOverview: { eligibleTiles: 0, skippedCommands: 0, totalCommands: 0 },
     waterfalls: waterfallRegistry
       ? {
           model: waterfallRegistry.model,
@@ -160,6 +265,7 @@ export function createWorldRenderer({
           stats: waterfallRegistry.stats,
           failures: waterfallRegistry.failures,
           buildMilliseconds: waterfallRegistry.buildMilliseconds,
+          compactStorageBytes: waterfallRegistry.compactStorageBytes ?? null,
         }
       : null,
     assetCacheBytes: 0,
@@ -190,7 +296,7 @@ export function createWorldRenderer({
     unsupportedTiles,
   } = stats;
   const assetCache = new Map(),
-    MAX_ASSET_CACHE = 80 * 1024 * 1024;
+    MAX_ASSET_CACHE = (lowMemory ? 16 : 80) * 1024 * 1024;
   const add = (map, key, n = 1) => {
     map[key] = (map[key] || 0) + n;
   };
@@ -218,11 +324,23 @@ export function createWorldRenderer({
             throw new Error("PNG encoded size outside budget");
           const pngBytes = readFileSync(join(assetDir, name));
           const rawRgba = decodePngRgba(pngBytes);
-          const image = registerTextureSource(await loadImage(pngBytes), {
+          // Raw-channel rendering always uses prepared frames. It never draws
+          // the full atlas directly, so a second native decoded atlas is wasteful.
+          const source =
+            lowMemory && inputEncoding === "tconvert-game-raw"
+              ? { width: rawRgba.width, height: rawRgba.height }
+              : await loadImage(pngBytes);
+          const image = registerTextureSource(source, {
             pngBytes,
             rawRgba,
           });
-          entry = { image, bytes: textureMemoryBytes(image) };
+          entry = {
+            image,
+            bytes:
+              lowMemory && inputEncoding === "tconvert-game-raw"
+                ? rawRgba.data.byteLength + pngBytes.byteLength
+                : textureMemoryBytes(image),
+          };
           assetHashes[name] = createHash("sha256")
             .update(pngBytes)
             .digest("hex");
@@ -265,13 +383,13 @@ export function createWorldRenderer({
   }
   // prepareSceneFrames has a hard 512-frame/8-MiB bound. Partition contiguous
   // command groups to retain draw order without silently dropping rare frames.
-  function commandBatches(plan) {
+  function commandBatches(plan, keyCache) {
     const batches = [];
     let commands = [],
       keys = new Set(),
       reserved = 0;
     for (const c of plan.commands) {
-      const key = sceneFrameKey(c),
+      const key = keyCache.get(c),
         extra = keys.has(key) ? 0 : sceneFrameReservedBytes(c);
       if (
         commands.length &&
@@ -295,11 +413,15 @@ export function createWorldRenderer({
   async function drawRegion(
     region,
     canvas,
-    { core = region.rect, count = false } = {},
+    { core = region.rect, count = false, overview = false } = {},
   ) {
-    const plan = planScene(region, options),
-      assets = await assetsFor(plan),
+    let stageStarted = performance.now();
+    const plan = planScene(region, options);
+    stats.stageMilliseconds.plan += performance.now() - stageStarted;
+    stageStarted = performance.now();
+    const assets = await assetsFor(plan),
       ctx = canvas.getContext("2d");
+    stats.stageMilliseconds.assets += performance.now() - stageStarted;
     canvas.width = plan.width;
     canvas.height = plan.height;
     ctx.fillStyle = "#000000";
@@ -344,12 +466,41 @@ export function createWorldRenderer({
           onOmission(c.x, c.y, 2);
         }
     }
-    for (const commands of commandBatches(plan)) {
+    // A private, immutable plan is used only during this draw. Intern each full
+    // frame key once instead of rebuilding it at batching, validation and draw.
+    const keyCache = new Map(),
+      internedKeys = new Map();
+    for (const c of plan.commands) {
+      const key = sceneFrameKey(c);
+      if (!internedKeys.has(key)) internedKeys.set(key, key);
+      keyCache.set(c, internedKeys.get(key));
+    }
+    stageStarted = performance.now();
+    const opaqueOverview = overview
+      ? prepareOpaqueOverview(plan, assets, createCanvas, {
+          frameCache,
+          inputEncoding,
+          keyCache,
+        })
+      : null;
+    stats.stageMilliseconds.opaqueOverview += performance.now() - stageStarted;
+    if (opaqueOverview)
+      for (const key of Object.keys(stats.opaqueOverview))
+        stats.opaqueOverview[key] += opaqueOverview[key];
+    stageStarted = performance.now();
+    const batches = commandBatches(plan, keyCache);
+    stats.stageMilliseconds.batches += performance.now() - stageStarted;
+    for (const commands of batches) {
+      stageStarted = performance.now();
       const part = { ...plan, commands };
       const frames = prepareSceneFrames(part, assets, createCanvas, {
+        frameCache,
+        keyCache,
         inputEncoding: inputEncoding,
         opaqueScene: true,
       });
+      stats.stageMilliseconds.prepareFrames += performance.now() - stageStarted;
+      stageStarted = performance.now();
       // The single opaque scene was initialized above. Keep it between batches.
       const frameView = { ...frames, opaqueScene: false };
       // renderScene rejects an entire asset if ANY crop is invalid. Filter the
@@ -380,26 +531,30 @@ export function createWorldRenderer({
           }
           continue;
         }
-        valid.push(c);
+        if (!opaqueOverview?.skip.has(c)) valid.push(c);
         if (tracked) stats.renderedCommands++;
       }
+      stats.stageMilliseconds.validate += performance.now() - stageStarted;
+      stageStarted = performance.now();
       renderScene(ctx, { ...part, commands: valid }, assets, {
         strict: true,
         sceneFrames: frameView,
       });
+      stats.stageMilliseconds.draw += performance.now() - stageStarted;
       stats.maxPreparedBytes = Math.max(
         stats.maxPreparedBytes,
         frames.support.bytes,
       );
       frames.dispose();
     }
-    return { plan, coreCommands: coreCommands.length };
+    return { plan, coreCommands: coreCommands.length, opaqueOverview };
   }
 
   return {
     drawRegion,
     stats,
     dispose() {
+      frameCache?.dispose();
       assetCache.clear();
       stats.assetCacheBytes = 0;
     },
