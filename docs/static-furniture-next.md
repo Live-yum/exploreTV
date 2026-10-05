@@ -23,7 +23,7 @@ Each command carries the actual texture name, source crop, pixel offsets, mirror
 
 Types 124, 561 and 574–578 do not save atlas coordinates in this world format. The planner reconstructs all cardinal masks and the ordered full-mask diagonal cutouts from the eight surrounding cells. Only the same beam material connects horizontally. Wooden Beam 124 additionally joins solid, non-platform tiles above and below. Source solidity initialization facts include its three initialization ranges; they are not inferred from the presence of a texture.
 
-Source slope directions, upper/lower half-block rules, actuation and invisible-coating parity are respected for neighbors. A present but actuated neighbor still contributes to framing. Missing halo cells and unknown tile IDs/shapes are rejected. Wooden-beam attachment to runtime-toggled active stone 379 is rejected because the WLD alone does not supply that transient solidity.
+Source slope directions, upper/lower half-block rules, actuation and invisible-coating parity are respected for neighbors. A present but actuated neighbor still contributes to framing. Missing halo cells and unknown tile IDs/shapes are rejected. Wooden-beam attachment to runtime-toggled Bubble 379 is rejected because the WLD alone does not supply that transient solidity.
 
 The unsaved random `frameNumber` is fixed to variation zero and labeled `approximate-static-beam-variation-zero`. This is a valid atlas variant, not a claim of identical random variation to a running game. Types 124 and 574–578 use 16×18 crops. Marble Column 561 uses 16×20, Y −2, and remaps 18-pixel frame rows to a 22-pixel atlas pitch. Nonzero shapes of the beam itself are rejected because the source has additional exposed-edge drawing beyond a generic shape clip.
 

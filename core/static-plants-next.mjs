@@ -149,7 +149,7 @@ function solid(t, rejectTops = false) {
   )
     return false;
   if (t.active && t.type === 379)
-    throw new Error("Active-stone neighbor requires runtime solidity");
+    throw new Error("Bubble neighbor requires runtime solidity");
   return solids.has(t.type);
 }
 

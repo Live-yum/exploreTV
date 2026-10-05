@@ -1,5 +1,6 @@
 /** Original bounded static liquid subsets; see docs/liquid-lighting-scope.md. */
 import { createVisibleLiquidSampler } from "./liquid-visible-level.mjs";
+import { createHalfbrickLiquidSampler } from "./liquid-halfbrick.mjs";
 
 const FRONT_ALPHA = [0.6, 0.95, 0.95];
 const SPECIAL = new Set([379, 518, 546]);
@@ -105,6 +106,8 @@ export function planLiquids(region, options = {}) {
     sourceGeometryDrawn: 0,
     visibleLevelDrawn: 0,
     clampedShapeCells: 0,
+    gradientShapeCells: 0,
+    gradientRows: 0,
     commandCount: 0,
     unsupported: 0,
     unsupportedByReason: {},
@@ -152,7 +155,7 @@ export function planLiquids(region, options = {}) {
     support.unsupportedCoordinates.push({ x, y, reason });
   };
   const assets = new Set();
-  let sampleVisible;
+  let sampleVisible, sampleHalfbrick;
   const visibleAt = (x, y) => {
     sampleVisible ??= createVisibleLiquidSampler(region, {
       ...options,
@@ -351,6 +354,21 @@ export function planLiquids(region, options = {}) {
               reject(wx, wy, visible.reason);
               continue;
             }
+          }
+          if (shape.reason === "halfbrick-overlap-neighborhood" || shape.reason === "halfbrick-waterfall-neighborhood") {
+            sampleHalfbrick ??= createHalfbrickLiquidSampler(region, { ...options, worldSurface });
+            const half = sampleHalfbrick(wx, wy);
+            if (half.supported) {
+              for (const command of half.commands) { result.commands.push(command); assets.add(command.asset); }
+              if (half.commands.length) { support.drawn++; support.shapeDrawn++; support.sourceGeometryDrawn++; }
+              else support.skippedOccluded++;
+              if (half.normalDrawn) support.visibleLevelDrawn++;
+              if (half.clampedRows) support.clampedShapeCells++;
+              if (half.gradientRows) { support.gradientShapeCells++; support.gradientRows += half.gradientRows; }
+              continue;
+            }
+            reject(wx, wy, half.reason);
+            continue;
           }
           reject(wx, wy, shape.reason);
           continue;

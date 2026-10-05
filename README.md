@@ -78,7 +78,7 @@ The actual 8400×2400 example's complete planner audit now accounts for every
 visible active Tile: 11,068,783 planned cells and 15,485 source-defined emitters
 with no static Tile body. Unsupported Tile cells, missing PNGs and invalid
 source crops are all zero for this fixture; all 376 required PNGs are checked.
-This is not full game-equivalence: 16,251 liquid-geometry omission events remain,
+This is not full game-equivalence: 3,528 liquid-geometry omission events remain,
 and terrain/wall merging, frozen variation/time and omitted runtime effects
 retain the documented approximations. Missing liquid/effects stay reported.
 A scene is capped at 131,072 commands; overly complex selections fail clearly

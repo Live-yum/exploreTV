@@ -35,7 +35,7 @@ Options:
   a frozen approximation of runtime UI pulse, not a value inferred from WLD.
 
 Unsupported conditions include incomplete neighbor/root access, unknown tile
-metadata, invalid stored frames, shaped target bodies, active-stone solidity
+metadata, invalid stored frames, shaped target bodies, Bubble solidity
 when relevant, and invalid cactus roots that would require destructive game
 validation. No unsupported target is hidden or reported as an empty success.
 

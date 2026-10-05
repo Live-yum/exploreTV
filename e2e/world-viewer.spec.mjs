@@ -418,6 +418,9 @@ test("real special objects and plants request their actual atlases with no unsup
     [214,799,"Glow_329.png","tulip"],
     [326,1252,"Flame_3.png","chandelier"],
     [6433,466,"Tiles_80.png","cactus"],
+    [32,694,"Liquid_0.png","halfbrick-water"],
+    [42,1697,"Liquid_1.png","halfbrick-lava"],
+    [341,1920,"Liquid_11.png","halfbrick-honey"],
   ];
   for (const [x,y,asset,label] of points) {
     const before = Number((await state(page)).revision);

@@ -150,6 +150,7 @@ for (const n of [
   "static-plants-next",
   "static-special-objects",
   "liquid",
+  "liquid-halfbrick",
   "tile-solidity",
   "liquid-visible-level",
   "paint",

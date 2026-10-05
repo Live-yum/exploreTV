@@ -61,7 +61,7 @@ The baseline had already improved since the earlier 16,736/837 unknown-reason co
 
 Another 428 immediate unknown-solid events are reclassified as existing geometry limitations after the material becomes known: 93 halfbrick-waterfall, 180 halfbrick-overlap, 15 shape-non-solid, 116 special-tile and 24 extended special-tile dependencies. These events remain explicitly unresolved. The full result has **zero new omission coordinates, zero lost previously rendered cells and zero changed commands at previously supported cells**. The fixture therefore did not exercise a previously emitted incorrect 484 liquid command; that correction is established by the source fact and synthetic negative test rather than falsely attributed to these observed map changes.
 
-All 985,613 candidate commands were checked against the actual PNG dimensions. There were **zero missing assets and zero invalid crops**. The same nine water/lava/honey normal and shape PNGs suffice. No runtime active-stone cell was inferred to be air. Its existing special-tile guard remains visible in the report.
+All 985,613 candidate commands were checked against the actual PNG dimensions. There were **zero missing assets and zero invalid crops**. The same nine water/lava/honey normal and shape PNGs suffice. No runtime Bubble cell was inferred to be air. Its existing special-tile guard remains visible in the report.
 
 Remaining omissions are 11,372 halfbrick overlaps, 2,823 waterfall-state halfbricks, 1,116 special-tile neighborhoods, 64 extended special-tile neighborhoods, 97 non-solid shapes, 16 mixed-liquid cases and 763 shimmer cases. Correct material classification does not establish complete liquid rendering.
 
@@ -83,7 +83,7 @@ Both have zero missing textures, zero invalid crops and zero skipped effects. Th
 - [Initialization body 2 and solid-top entries](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria/Main.cs#L6982-L8606)
 - [Initialization body 1 and numeric ranges](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria/Main.cs#L8615-L10790)
 - [Rolling cactus and boulder solid flags](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria/Main.cs#L7644-L7655)
-- [Runtime active-stone toggles](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria/Main.cs#L17969-L18025)
+- [Runtime Bubble toggles](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria/Main.cs#L17969-L18025)
 - [Platform set](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria.ID/TileID.cs#L243) and [tile count](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria.ID/TileID.cs#L1945)
 - [SolidOrSlopedTile predicate](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria/WorldGen.cs#L70525-L70563)
 - [World-generation backup and finally restoration](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria/WorldGen.cs#L11100-L11140), [table restore](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria/WorldGen.cs#L22710-L22716)

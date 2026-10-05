@@ -288,13 +288,13 @@ function beam(region, x, y, tile, options) {
     }
     return n.type === tile.type;
   });
-  // Active stone 379 is toggled by game runtime state, unavailable in the WLD.
+  // Bubble 379 is toggled by game runtime state, unavailable in the WLD.
   if (
     tile.type === 124 &&
     [neighbors[0], neighbors[3]].some((n) => n.active && n.type === 379)
   )
     return fail(
-      "Wooden-beam attachment to active stone requires runtime solidity",
+      "Wooden-beam attachment to Bubble requires runtime solidity",
     );
   let mask = 0;
   for (let i = 0; i < 4; i++) if (connect[i]) mask |= 1 << i;

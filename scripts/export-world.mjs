@@ -214,6 +214,7 @@ export async function exportWorld(
     "core/world-tree-context.mjs",
 
     "core/liquid.mjs",
+  "core/liquid-halfbrick.mjs",
     "core/tile-solidity.mjs",
     "core/liquid-visible-level.mjs",
     "core/paint.mjs",

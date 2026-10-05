@@ -45,7 +45,7 @@ const validType = (type) =>
 /**
  * Material part of WorldGen.SolidOrSlopedTile, excluding per-cell activation.
  * A false result is proved by the complete pinned initialization, not by an
- * absent texture/rendering rule. Unrecognized IDs and runtime active stone
+ * absent texture/rendering rule. Unrecognized IDs and runtime Bubble
  * remain unknown. Platforms are included only when explicitly requested.
  */
 export function classifyTileSolidity(type, { includePlatforms = false } = {}) {

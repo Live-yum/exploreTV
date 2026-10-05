@@ -151,6 +151,7 @@ async function main(argv) {
     "core/world-tree-context.mjs",
 
     "core/liquid.mjs",
+  "core/liquid-halfbrick.mjs",
     "core/tile-solidity.mjs",
     "core/liquid-visible-level.mjs",
     "core/paint.mjs",

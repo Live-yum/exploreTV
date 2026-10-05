@@ -332,7 +332,7 @@ test("a walled halfbrick under full same-kind liquid uses only the normal top ei
   assert.equal(c.fidelity, "static-wet-halfbrick-top");
 });
 
-test("safe halfbrick self-liquid uses real Liquid PNG while unresolved overlap/waterfalls are rejected", () => {
+test("safe halfbrick self-liquid and overlap use real atlas rows while registered waterfalls stay explicit", () => {
   const r = shapeScene(1, 200);
   const c = planLiquids(r, opts).commands[0];
   assert.equal(c.asset, "Liquid_0.png");
@@ -341,18 +341,20 @@ test("safe halfbrick self-liquid uses real Liquid PNG while unresolved overlap/w
   r.context.cells[west] = wet(200);
   assert.equal(
     planLiquids(r, opts).support.unsupportedByReason[
-      "halfbrick-waterfall-neighborhood"
+      "halfbrick-waterfall-state-required"
     ],
     1,
   );
   r.context.cells[west] = empty();
   r.context.cells[north] = wet(200);
-  assert.equal(
-    planLiquids(r, opts).support.unsupportedByReason[
-      "halfbrick-overlap-neighborhood"
-    ],
-    1,
-  );
+  const overlap = planLiquids(r, opts);
+  assert.equal(overlap.support.unsupported, 0);
+  assert.equal(overlap.support.drawn, 1);
+  assert.equal(overlap.support.gradientRows, 12);
+  assert.equal(overlap.commands.length, 12);
+  assert.ok(overlap.commands.every(c => c.asset === "Liquid_0.png" && c.sh === 1 && c.drawBeforeTiles));
+  assert.ok(overlap.commands[0].opacity < overlap.commands[11].opacity);
+  assert.equal(r.cells[0].liquid, 200);
 });
 
 test("shape subsets still reject mixed liquid, shimmer, missing context, malformed shapes and unknown depth", () => {
@@ -513,11 +515,15 @@ test("dry walled halfbricks below partial liquid use one normal pass and retain 
   assert.equal(r.cells[0].liquid, 0);
   r.cells[0].wall = 0;
   const unwalled = planLiquids(r, opts);
-  assert.equal(unwalled.commands.length, 0);
-  assert.equal(
-    unwalled.support.unsupportedByReason["halfbrick-overlap-neighborhood"],
-    1,
-  );
+  assert.equal(unwalled.commands.length, 13);
+  assert.equal(unwalled.support.unsupported, 0);
+  assert.equal(unwalled.support.liquidCells, 0);
+  assert.equal(unwalled.support.shapeCandidateCells, 1);
+  assert.equal(unwalled.support.drawn, 1);
+  assert.equal(unwalled.support.gradientRows, 12);
+  assert.equal(unwalled.commands.filter(c => c.drawBeforeTiles).length, 12);
+  assert.equal(unwalled.commands.filter(c => !c.drawBeforeTiles).length, 1);
+  assert.equal(r.cells[0].liquid, 0);
 });
 
 test("visible-level integration rejects unknown or missing dependencies beyond the local preflight", () => {

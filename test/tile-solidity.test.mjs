@@ -88,7 +88,7 @@ test("halfbricks and slopes remain solid while actuation and absent active tiles
   );
 });
 
-test("runtime active stone and malformed or future IDs are unknown", () => {
+test("runtime Bubble and malformed or future IDs are unknown", () => {
   for (const type of [
     379,
     -1,
