@@ -8,7 +8,11 @@
     "dev:h5": "UNI_INPUT_DIR=. uni",
     "build:h5": "UNI_INPUT_DIR=. uni build",
     "build:mp-weixin": "UNI_INPUT_DIR=. uni build -p mp-weixin",
-    "test:real": "node scripts/verify-world.mjs"
+    "test:real": "node scripts/verify-world.mjs",
+    "dev:viewer": "node scripts/serve-viewer.mjs",
+    "prepare:example": "node scripts/prepare-example.mjs",
+    "render:full": "node scripts/render-full-world.mjs",
+    "export:full": "node scripts/export-world.mjs"
   },
   "dependencies": {
     "vue": "3.5.13"

@@ -6,3 +6,5 @@ artifacts/
 
 playwright-report/
 test-results/
+
+example-assets/

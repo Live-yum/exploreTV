@@ -2,7 +2,27 @@
 
 独立的 Vue3 / uni-app 功能探索：导入 `.wld` → 选择矩形 → 使用真实 PNG Tile/Wall 贴图预览 → 保存并重读验证 Tile 片段。
 
-**当前是部分静态近似渲染，绝非完整 Terraria 游戏窗口等价截图。** 预览不会拿地图色块冒充真实纹理；缺失贴图和未实现对象会明确报告。游戏资源、私有源码和真实地图不随仓库分发。
+**当前是部分静态近似渲染，绝非完整 Terraria 游戏窗口等价截图。** 预览不会拿地图色块冒充真实纹理；缺失贴图和未实现对象会明确报告。示例地图由用户授权公开；仅附带本查看工具实际必要的160张纹理，权利仍属Re-Logic，参见example/assets/NOTICE.md。私有源代码和游戏程序不分发。
+
+## 全地图细节查看与导出
+
+```sh
+npm ci --ignore-scripts
+npm run dev:viewer
+```
+
+打开 `http://127.0.0.1:4174/`，加载项目示例。查看器按视口读取 Tile，默认每格16像素，支持拖动、缩放和坐标跳转；逻辑全图134400×38400像素，Canvas与贴图缓存保持有界。缺失/未实现内容单独标记，不视为空白完成。
+
+- [完整细节查看器](docs/world-viewer.md)
+- [示例资源与集成步骤](docs/example-setup.md)
+- [原分辨率整图导出](docs/full-resolution-export.md)
+- [分块缩小全景工具](docs/full-world.md)
+
+```sh
+npm run export:full -- fixtures/example-world.wld example/assets artifacts/full-resolution.png --tiles artifacts/full-resolution-tiles
+```
+
+原分辨率导出采用流式PNG，不创建整张巨型Canvas。超大PNG不保证普通浏览器可打开，兼容分块输出可按清单重建完整细节。命令选项与实际内存/文件限制以导出文档为准。普通缩小全景只作overview，不等同于原分辨率全图。
 
 ## Run
 
@@ -19,7 +39,7 @@ npm run dev:h5
 
 ## Verification
 
-GitHub Actions runs bounded parser/fragment tests, sprite command tests, a20.16M-cell synthetic performance case, H5 and Weixin builds, platform leakage checks, and a Chromium UI flow. Public CI uses original synthetic fixture/art only. It does not silently skip a requested real-world test or claim its synthetic test world is game-loadable.
+GitHub Actions runs bounded parser/fragment tests, sprite command tests, a20.16M-cell synthetic performance case, H5 and Weixin builds, platform leakage checks, and a Chromium UI flow. Public CI uses original synthetic fixtures plus the explicitly shared example world and necessary asset manifest checks. It does not silently skip a requested real-world test or claim its synthetic test world is game-loadable.
 
 For a user-supplied real map and textures:
 
@@ -28,7 +48,7 @@ npm run test:real -- /path/world.wld expected-sha256
 node scripts/render-world.mjs /path/world.wld /path/Images 4180 631 48 32
 ```
 
-Local reports and screenshots go to ignored `artifacts/`. Never commit private worlds or game textures without explicit publication authorization. Screenshots generated from private input are also not public CI artifacts by default.
+Local reports and export files go to ignored `artifacts/`. Only the designated example world and necessary texture subset are authorized for distribution. Other worlds/resources remain private. The three separately approved overview images are on the `previews/static-world-20261005` branch.
 
 第二轮增加：染色开关、PNG 通道契约、整场景黑底预乘合成、液体前/后景与固定帧控制。TConvert 原始通道使用有界 RGBA8 非交错 PNG 解码；不支持的格式明确跳过，不回退到失真读回。标准透明 PNG 模式保持 Canvas 兼容。液体仍是平面静态近似，坡块/混合液体/Shimmer 等明确跳过；亮度仍为 fullbright 贴图检查，不是存档恢复实时光照。
 

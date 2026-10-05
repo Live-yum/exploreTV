@@ -19,10 +19,17 @@ export default defineConfig({
       ? { executablePath: process.env.CHROMIUM_EXECUTABLE }
       : {},
   },
-  webServer: {
-    command: "node scripts/serve.mjs",
-    port: 4173,
-    reuseExistingServer: !process.env.CI,
-  },
+  webServer: [
+    {
+      command: "node scripts/serve.mjs",
+      port: 4173,
+      reuseExistingServer: !process.env.CI,
+    },
+    {
+      command: "node scripts/serve-viewer.mjs",
+      port: 4174,
+      reuseExistingServer: !process.env.CI,
+    },
+  ],
   reporter: [["list"], ["html", { open: "never" }]],
 });

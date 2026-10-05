@@ -59,6 +59,8 @@ export const ORDINARY_BLOCKS = Object.freeze([
   167, 168, 169, 175, 176, 177, 179, 180, 181, 182, 183, 189, 190, 191, 192,
   193, 194, 195, 196, 197, 198, 199, 200, 202, 203, 204, 206, 208, 211, 221,
   222, 223, 224, 225, 226, 229, 230, 232, 234, 239, 248, 250, 251, 252, 253,
+  // Source-verified full solids with ordinary 18px frames; merges stay approximate.
+  123, 151, 367, 368, 383, 396, 397, 402, 403, 404,
 ]);
 const ordinary = new Set(ORDINARY_BLOCKS);
 export const STORED_FRAME_TILES = Object.freeze([

@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>exploreTV · 世界细节浏览器</title>
+    <link rel="stylesheet" href="/viewer/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">explore<span>TV</span></a
+      ><span class="eyebrow">WORLD EXPLORER · 全亮静态场景</span>
+    </header>
+    <main>
+      <section class="intro">
+        <div>
+          <h1>整张世界，每一块细节。</h1>
+          <p>
+            拖动探索，滚轮缩放。100% 时每个 Tile 使用 16 × 16 像素原始贴图。
+          </p>
+        </div>
+        <button id="example" class="primary">打开示例世界</button>
+      </section>
+      <section class="toolbar" aria-label="世界控制">
+        <label class="file-button" for="world-file"
+          >导入 .wld<input id="world-file" type="file" accept=".wld"
+        /></label>
+        <label class="file-button" for="texture-files"
+          >导入 PNG 贴图<input
+            id="texture-files"
+            type="file"
+            accept=".png"
+            multiple
+        /></label>
+        <label class="encoding-label"
+          >PNG 通道<select id="encoding">
+            <option value="tconvert-game-raw">TConvert 原始</option>
+            <option value="standard-straight">标准 RGBA</option>
+          </select></label
+        >
+        <span class="divider"></span>
+        <button id="zoom-out" title="以中心缩小" aria-label="缩小">−</button
+        ><button id="zoom-reset" title="恢复 16 像素每 Tile">100%</button
+        ><button id="zoom-in" title="以中心放大" aria-label="放大">＋</button>
+        <form id="jump-form">
+          <label
+            >X
+            <input
+              id="tile-x"
+              name="x"
+              type="number"
+              min="0"
+              step="1"
+              value="0"
+              required /></label
+          ><label
+            >Y
+            <input
+              id="tile-y"
+              name="y"
+              type="number"
+              min="0"
+              step="1"
+              value="0"
+              required /></label
+          ><button type="submit">跳转</button>
+        </form>
+      </section>
+      <section class="world-panel">
+        <div class="world-heading">
+          <div>
+            <strong id="world-title">等待打开世界</strong
+            ><span id="world-dimensions">所有坐标均为源世界 Tile 坐标</span>
+          </div>
+          <span id="load-status" role="status"
+            >可载入示例，或选择自己的地图与贴图</span
+          >
+        </div>
+        <div
+          id="viewport"
+          tabindex="0"
+          aria-label="世界视口，可拖动、滚轮缩放，或使用方向键平移"
+          data-busy="false"
+        >
+          <canvas id="world-canvas" aria-label="原始贴图世界场景"></canvas>
+          <div id="empty-state">
+            <span class="crosshair">＋</span>
+            <h2>一个世界，随处可达。</h2>
+            <p>
+              示例地图以建筑区域为起点。<br />也可以导入你自己的 .wld 和 PNG
+              贴图。
+            </p>
+          </div>
+          <span id="cursor-position">X — · Y —</span>
+        </div>
+        <div class="view-footer">
+          <output id="view-metrics">16 px / Tile · 100%</output
+          ><label
+            ><input id="show-coverage" type="checkbox" checked />
+            显示缺项标记</label
+          >
+        </div>
+      </section>
+      <section id="coverage" class="coverage" aria-live="polite">
+        <div>
+          <strong id="coverage-summary">当前视口覆盖情况将在载入后显示</strong>
+          <p id="coverage-detail">
+            紫色：未支持 Tile · 黄色：未支持液体 ·
+            红色：贴图、裁切或通道转换缺项。标记不代表空白地形。
+          </p>
+        </div>
+        <details id="diagnostics">
+          <summary>资源与渲染详情</summary>
+          <pre id="diagnostic-text"></pre>
+        </details>
+      </section>
+      <footer>
+        <p>
+          整张地图可按原始细节导航；仅绘制当前视口。静态全亮模式，无动态光照。
+        </p>
+        <p>
+          建筑使用保存的贴图帧；方块与墙体邻接、液体仍为近似。未覆盖的地形、装饰与效果会标明，不宣称游戏画面完全复现。<a
+            href="https://github.com/Live-yum/exploreTV/blob/main/docs/world-viewer.md"
+            >使用说明与已知限制</a
+          >
+        </p>
+      </footer>
+    </main>
+    <script type="module" src="/viewer/viewer.mjs"></script>
+  </body>
+</html>

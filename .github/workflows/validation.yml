@@ -18,6 +18,8 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm test
+      - run: node scripts/prepare-example.mjs example/assets --check
+      - run: node scripts/verify-world.mjs fixtures/example-world.wld d551a6b360c7af49a07dadbb1e82223ac43ad398e2054c29f500ec5e8b5b1cab
       - run: npm run build:h5
       - run: npm run build:mp-weixin
       - run: node scripts/check-mp.mjs
