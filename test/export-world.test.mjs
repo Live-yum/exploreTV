@@ -21,6 +21,11 @@ import { registerTextureSource } from "../core/assets.mjs";
 import { prepareSceneFrames } from "../core/scene-frames.mjs";
 import { parseExportCli, exportWorld } from "../scripts/export-world.mjs";
 import {
+  verifyExport,
+  verifyExportPng,
+  verifyExportTiles,
+} from "../scripts/verify-export.mjs";
+import {
   buildRowIndex,
   readIndexedRegion,
 } from "../scripts/world-render-engine.mjs";
@@ -166,6 +171,28 @@ test("streamed export matches independent whole-region renderer through odd tile
   }
   assert.ok(coverage.every((value) => value === 1));
   assert.deepEqual(assembled, output.data);
+  const verification = await verifyExport(config.outputPath, {
+    tilesPath: config.tilesPath,
+  });
+  assert.equal(verification.status, "passed");
+  assert.equal(verification.exportReportMatched, true);
+  assert.equal(verification.tiles.tiles, manifest.tiles.length);
+  assert.equal(verification.png.rows, height * 16);
+  const corruptPath = join(dir, "corrupt.png"),
+    corrupt = readFileSync(config.outputPath);
+  corrupt[41] ^= 1;
+  writeFileSync(corruptPath, corrupt);
+  await assert.rejects(verifyExportPng(corruptPath), /CRC/);
+  const originalManifest = readFileSync(
+    join(config.tilesPath, "manifest.json"),
+  );
+  manifest.tiles[0].x += 16;
+  writeFileSync(
+    join(config.tilesPath, "manifest.json"),
+    JSON.stringify(manifest),
+  );
+  await assert.rejects(verifyExportTiles(config.tilesPath));
+  writeFileSync(join(config.tilesPath, "manifest.json"), originalManifest);
 });
 
 test("RLE row index handles records crossing multiple checkpoint boundaries", () => {

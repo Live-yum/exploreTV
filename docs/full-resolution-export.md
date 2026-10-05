@@ -36,6 +36,8 @@ All three positional paths are required. The final PNG and optional tile directo
 
 Omitting `--region` exports the entire world. A region export is explicitly marked as such in its report. There is no scale or downsampling option: output remains 16 pixels per tile.
 
+Compatibility output is limited to 100,000 pieces so the manifest stays bounded. Increase the band or chunk size if your settings exceed that limit; the default large-world export uses 9,900 pieces.
+
 For example, first measure a representative strip from your own world:
 
 ```sh
@@ -77,8 +79,24 @@ The separate overview coverage mask is useful when inspecting omissions spatiall
 
 ## Verification
 
+Verify an actual export without decoding the full image into memory:
+
+```sh
+node scripts/verify-export.mjs artifacts/full-resolution.png --tiles artifacts/full-resolution-tiles
+```
+
+This writes `full-resolution.png.verification.json`. Use `--report <path>` to choose another report path. The verifier checks every PNG chunk CRC, streams all IDAT data through bounded 1-MiB decompression chunks, validates filter values and the exact declared scanline byte/row count, computes the encoded SHA-256, and compares the neighboring export report when present. For pieces, it checks each file's hash, size, header dimensions, and manifest coordinates, then verifies exact one-time coverage with a one-byte-per-world-cell mask. It does not allocate the full-resolution image or decode all piece pixels. PNG chunks, encoded inputs, manifest size, piece count, and piece file sizes have explicit verification budgets.
+
 ```sh
 node --test test/png-stream.test.mjs test/export-world.test.mjs test/full-world-cli.test.mjs
 ```
 
 The tests use synthetic worlds and artwork. They compare streamed pixels against an independently assembled, single-region render; reconstruct the full image from its pieces; verify exact one-time coverage across odd chunk/band edges; test RLE records crossing checkpoint boundaries; exercise small images and real-world PNG width; and verify malformed input, incomplete rows, cancellation, partial cleanup, and output hashes. No giant canvas or game artwork is needed for these tests.
+
+## GitHub Actions download
+
+The `Export full-resolution example` workflow rebuilds the authorized bundled example. An explicit `[export-full]` marker in the PR head commit message starts the expensive export; ordinary commits only run a small request check. `workflow_dispatch` is also supported once this workflow is available on the repository default branch.
+
+The job verifies the pinned world and texture hashes, applies a 45-minute export limit, a 2 GiB sampled RSS limit and a 6 GiB output limit, and requires 8 GiB free disk before starting. The entire job has a 60-minute timeout. It streams a second independent pass over the completed PNG to verify chunk CRC, all inflated scanlines, dimensions and SHA, then verifies every compatibility tile and its exact layout.
+
+Successful runs provide separate `full-resolution-panorama`, `full-resolution-tiles` and `full-resolution-verification` artifacts. Download from the run's Artifacts section; GitHub may require signing in. Artifacts expire after 7 days. They are not a GitHub Release or a hosted viewing site. The panorama can exceed normal image-viewer limits; use the runtime world viewer for navigation and the ordinary-size pieces for compatible image tools.

@@ -174,6 +174,13 @@ export async function exportWorld(
     };
   if (rect.x + rect.width > world.width || rect.y + rect.height > world.height)
     throw new Error("Export region is outside world");
+  const plannedChunks =
+    Math.ceil(rect.width / config.chunkTiles) *
+    Math.ceil(rect.height / config.bandTiles);
+  if (config.tilesPath && plannedChunks > 100000)
+    throw new Error(
+      "Tile export exceeds 100000 pieces; increase chunk-tiles or band-tiles",
+    );
   const pixelWidth = rect.width * 16,
     pixelHeight = rect.height * 16;
   const bandRows = Math.min(config.bandTiles, rect.height) * 16,
