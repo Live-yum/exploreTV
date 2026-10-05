@@ -281,7 +281,8 @@ function paeth(left, above, upperLeft) {
  * other pixel formats, unknown critical chunks, and trailing data are rejected.
  * Input may be an ArrayBuffer or an ArrayBuffer view. Returns straight RGBA.
  */
-export function decodePngRgba(input) {
+export function decodePngRgba(input, { inflate = inflateZlib } = {}) {
+  if (typeof inflate !== "function") fail("invalid inflater");
   const bytes =
     input instanceof ArrayBuffer
       ? new Uint8Array(input)
@@ -378,28 +379,61 @@ export function decodePngRgba(input) {
     position += end - start;
   }
   const stride = width * 4;
-  const filtered = inflateZlib(compressed, (stride + 1) * height);
+  // Trusted platform adapters may accelerate streams already accepted by the
+  // bounded reference inflater. PNG validation and row reconstruction stay here.
+  // The third argument lets adapters retain the exact reference acceptance set.
+  const expectedLength = (stride + 1) * height;
+  const filtered = inflate(compressed, expectedLength, inflateZlib);
+  if (!(filtered instanceof Uint8Array) || filtered.length !== expectedLength)
+    fail("inflated output does not match dimensions");
   const data = new Uint8ClampedArray(stride * height);
   for (let y = 0; y < height; y++) {
-    const source = y * (stride + 1),
+    const source = y * (stride + 1) + 1,
       target = y * stride;
-    const filter = filtered[source];
-    if (filter > 4) fail("unsupported row filter");
-    for (let x = 0; x < stride; x++) {
-      const left = x >= 4 ? data[target + x - 4] : 0;
-      const above = y ? data[target + x - stride] : 0;
-      const upperLeft = y && x >= 4 ? data[target + x - stride - 4] : 0;
-      const predictor =
-        filter === 0
-          ? 0
-          : filter === 1
-            ? left
-            : filter === 2
-              ? above
-              : filter === 3
-                ? Math.floor((left + above) / 2)
-                : paeth(left, above, upperLeft);
-      data[target + x] = (filtered[source + x + 1] + predictor) & 255;
+    const filter = filtered[source - 1];
+    // Select once per scanline. Unfiltered rows need no per-byte arithmetic;
+    // the other filters read only the neighbors their predictor actually uses.
+    if (filter === 0 || (filter === 2 && y === 0)) {
+      data.set(filtered.subarray(source, source + stride), target);
+    } else if (filter === 1 || (filter === 4 && y === 0)) {
+      data.set(filtered.subarray(source, source + 4), target);
+      for (let x = 4; x < stride; x++)
+        data[target + x] = (filtered[source + x] + data[target + x - 4]) & 255;
+    } else if (filter === 2) {
+      for (let x = 0; x < stride; x++)
+        data[target + x] =
+          (filtered[source + x] + data[target + x - stride]) & 255;
+    } else if (filter === 3) {
+      if (y === 0) {
+        data.set(filtered.subarray(source, source + 4), target);
+        for (let x = 4; x < stride; x++)
+          data[target + x] =
+            (filtered[source + x] + (data[target + x - 4] >>> 1)) & 255;
+      } else {
+        for (let x = 0; x < 4; x++)
+          data[target + x] =
+            (filtered[source + x] + (data[target + x - stride] >>> 1)) & 255;
+        for (let x = 4; x < stride; x++)
+          data[target + x] =
+            (filtered[source + x] +
+              ((data[target + x - 4] + data[target + x - stride]) >>> 1)) &
+            255;
+      }
+    } else if (filter === 4) {
+      for (let x = 0; x < 4; x++)
+        data[target + x] =
+          (filtered[source + x] + data[target + x - stride]) & 255;
+      for (let x = 4; x < stride; x++)
+        data[target + x] =
+          (filtered[source + x] +
+            paeth(
+              data[target + x - 4],
+              data[target + x - stride],
+              data[target + x - stride - 4],
+            )) &
+          255;
+    } else {
+      fail("unsupported row filter");
     }
   }
   return { width, height, data };

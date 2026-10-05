@@ -27,12 +27,40 @@ import {
 } from "./static-furniture-next.mjs";
 export { STATIC_FURNITURE_NEXT_TILES } from "./static-furniture-next.mjs";
 import { planStaticFlames } from "./static-flames.mjs";
-import { planStaticPlantsNext } from "./static-plants-next.mjs";
+import {
+  planStaticPlantsNext,
+  STATIC_PLANTS_NEXT_TILES,
+} from "./static-plants-next.mjs";
 import {
   planStaticSpecialObject,
   STATIC_SPECIAL_OBJECT_TILES,
   STATIC_SPECIAL_OBJECT_HALO,
 } from "./static-special-objects.mjs";
+// Match each planner's first type guard once per tile. Keep independent bits:
+// families may overlap, and their existing precedence and failure paths matter.
+const PLAN_SPECIAL = 1,
+  PLAN_PLANTS = 2,
+  PLAN_FURNITURE = 4,
+  PLAN_MISC = 8,
+  PLAN_TREE = 16,
+  PLAN_NATURE = 32,
+  PLAN_OBJECT = 64,
+  PLAN_BLOCK = 128;
+const plannerFamilies = [
+  [PLAN_SPECIAL, STATIC_SPECIAL_OBJECT_TILES],
+  [PLAN_PLANTS, STATIC_PLANTS_NEXT_TILES],
+  [PLAN_FURNITURE, STATIC_FURNITURE_NEXT_TILES],
+  [PLAN_MISC, STATIC_MISC_TILES],
+  [PLAN_TREE, STATIC_TREE_TYPES],
+  [PLAN_NATURE, STATIC_NATURE_TYPES],
+  [PLAN_OBJECT, STATIC_OBJECT_TILES],
+  [PLAN_BLOCK, STATIC_BLOCK_TILES],
+];
+const staticPlannerMasks = new Uint8Array(
+  1 + Math.max(...plannerFamilies.flatMap(([, types]) => types)),
+);
+for (const [bit, types] of plannerFamilies)
+  for (const type of types) staticPlannerMasks[type] |= bit;
 const BLOCK_FRAME = [
   [162, 54],
   [108, 54],
@@ -335,23 +363,30 @@ export function planScene(region, options = {}) {
         reject(t, x, y);
         continue;
       }
-      const special = planStaticSpecialObject(region, x, y, t, {
-        revealInvisible,
-        mouseTextColor: options.mouseTextColor,
-      });
-      const plant = special
-        ? null
-        : planStaticPlantsNext(region, x, y, t, {
-            revealInvisible,
-            mouseTextColor: options.mouseTextColor,
-          });
+      // The numeric check preserves Set.has semantics for malformed/string IDs.
+      const planners =
+        typeof t.type === "number" ? staticPlannerMasks[t.type] || 0 : 0;
+      const special =
+        planners & PLAN_SPECIAL
+          ? planStaticSpecialObject(region, x, y, t, {
+              revealInvisible,
+              mouseTextColor: options.mouseTextColor,
+            })
+          : null;
+      const plant =
+        !special && planners & PLAN_PLANTS
+          ? planStaticPlantsNext(region, x, y, t, {
+              revealInvisible,
+              mouseTextColor: options.mouseTextColor,
+            })
+          : null;
       let furniture =
-        special || plant
-          ? null
-          : planStaticFurnitureNext(region, x, y, t, {
+        !special && !plant && planners & PLAN_FURNITURE
+          ? planStaticFurnitureNext(region, x, y, t, {
               revealInvisible,
               paintEnabled,
-            });
+            })
+          : null;
       if (furniture?.pendingFlames) {
         const flame = planStaticFlames(region, x, y, t, {
           revealInvisible,
@@ -372,10 +407,12 @@ export function planScene(region, options = {}) {
         special ||
         plant ||
         furniture ||
-        planStaticMisc(region, x, y, t, {
-          revealInvisible,
-          paintEnabled,
-        });
+        (planners & PLAN_MISC
+          ? planStaticMisc(region, x, y, t, {
+              revealInvisible,
+              paintEnabled,
+            })
+          : null);
       if (misc) {
         if (misc.unsupported) {
           reject(t, x, y, misc.unsupported);
@@ -401,7 +438,7 @@ export function planScene(region, options = {}) {
         } else support.staticMisc++;
         continue;
       }
-      if (STATIC_TREE_TYPES.includes(t.type)) {
+      if (planners & PLAN_TREE) {
         const tree = planStaticTree(region, x, y, t, {
           revealInvisible,
           paintEnabled,
@@ -437,9 +474,18 @@ export function planScene(region, options = {}) {
         Number.isInteger(t.frameY) &&
         t.frameX >= 0 &&
         t.frameY >= 0;
-      const nature = planStaticNature(region, x, y, t, { revealInvisible });
-      const object = planStaticObject(region, x, y, t, { revealInvisible });
-      const block = planStaticBlock(region, x, y, t, { revealInvisible });
+      const nature =
+        planners & PLAN_NATURE
+          ? planStaticNature(region, x, y, t, { revealInvisible })
+          : null;
+      const object =
+        planners & PLAN_OBJECT
+          ? planStaticObject(region, x, y, t, { revealInvisible })
+          : null;
+      const block =
+        planners & PLAN_BLOCK
+          ? planStaticBlock(region, x, y, t, { revealInvisible })
+          : null;
       if (nature) {
         if (!nature.supported) {
           reject(t, x, y, nature.reason);

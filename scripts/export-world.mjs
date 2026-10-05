@@ -247,6 +247,7 @@ export async function exportWorld(
     "scripts/overview-fast-path.mjs",
     "scripts/compact-waterfall-registry.mjs",
     "scripts/png-stream.mjs",
+    "scripts/png-rgba-node.mjs",
     "scripts/world-render-engine.mjs",
     "core/world.mjs",
     "core/utf8.mjs",
@@ -543,6 +544,7 @@ export async function exportWorld(
       storedFrameTileIds: [...STORED_FRAME_TILES],
       ...stats,
       frameCache: stats.frameCache ? { ...stats.frameCache } : null,
+      pngDecodeCache: stats.pngDecodeCache ? { ...stats.pngDecodeCache } : null,
       limitations: [
         `Static fullbright composition at 16 pixels per tile, exported at ${pixelsPerTile} pixels per tile, without dynamic lighting.`,
         "Uses the same supported sprite, wall, paint and static-liquid paths as the overview renderer; it does not add unsupported game objects.",

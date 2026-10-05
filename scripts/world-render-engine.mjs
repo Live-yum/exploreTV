@@ -1,3 +1,4 @@
+import { createNodePngRgbaDecoder } from "./png-rgba-node.mjs";
 import { compactWaterfallRegistry } from "./compact-waterfall-registry.mjs";
 import { prepareOpaqueOverview } from "./overview-fast-path.mjs";
 import { createStaticWaterfallRegistry } from "../core/static-waterfalls.mjs";
@@ -244,7 +245,9 @@ export function createWorldRenderer({
         lowMemory ? { maxFrames: 1024, maxBytes: 2 * 1024 * 1024 } : {},
       )
     : null;
+  const pngDecoder = lowMemory ? createNodePngRgbaDecoder() : null;
   const stats = {
+    pngDecodeCache: pngDecoder?.stats ?? null,
     frameCache: frameCache?.stats ?? null,
     stageMilliseconds: {
       plan: 0,
@@ -274,6 +277,7 @@ export function createWorldRenderer({
     maxPlanCommands: 0,
     maxPreparedBytes: 0,
     renderedCommands: 0,
+    culledOutsideCoreCommands: 0,
     plannedCommands: 0,
     assetHashes: {},
     assetFailures: {},
@@ -323,7 +327,9 @@ export function createWorldRenderer({
           if (statSync(join(assetDir, name)).size > 8 * 1024 * 1024)
             throw new Error("PNG encoded size outside budget");
           const pngBytes = readFileSync(join(assetDir, name));
-          const rawRgba = decodePngRgba(pngBytes);
+          const rawRgba = pngDecoder
+            ? pngDecoder.decode(pngBytes)
+            : decodePngRgba(pngBytes);
           // Raw-channel rendering always uses prepared frames. It never draws
           // the full atlas directly, so a second native decoded atlas is wasteful.
           const source =
@@ -416,6 +422,10 @@ export function createWorldRenderer({
     { core = region.rect, count = false, overview = false } = {},
   ) {
     let stageStarted = performance.now();
+    const left = (core.x - region.rect.x) * 16,
+      top = (core.y - region.rect.y) * 16,
+      right = left + core.width * 16,
+      bottom = top + core.height * 16;
     const plan = planScene(region, options);
     stats.stageMilliseconds.plan += performance.now() - stageStarted;
     stageStarted = performance.now();
@@ -531,7 +541,22 @@ export function createWorldRenderer({
           }
           continue;
         }
-        if (!opaqueOverview?.skip.has(c)) valid.push(c);
+        if (!opaqueOverview?.skip.has(c)) {
+          // Neighbor tiles still participate in planning and validation. Only
+          // native draws whose destination cannot touch the exported core are
+          // omitted; overhanging sprites and boundary antialiasing stay intact.
+          const outside =
+            lowMemory &&
+            [c.dx, c.dy, c.dw, c.dh].every(Number.isFinite) &&
+            c.dw > 0 &&
+            c.dh > 0 &&
+            (c.dx + c.dw + 1 <= left ||
+              c.dy + c.dh + 1 <= top ||
+              c.dx - 1 >= right ||
+              c.dy - 1 >= bottom);
+          if (outside) stats.culledOutsideCoreCommands++;
+          else valid.push(c);
+        }
         if (tracked) stats.renderedCommands++;
       }
       stats.stageMilliseconds.validate += performance.now() - stageStarted;
@@ -555,6 +580,7 @@ export function createWorldRenderer({
     stats,
     dispose() {
       frameCache?.dispose();
+      pngDecoder?.clear();
       assetCache.clear();
       stats.assetCacheBytes = 0;
     },

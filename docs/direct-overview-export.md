@@ -69,9 +69,26 @@ frozen liquids, complete waterfall registry and ten-tile halo remain in use.
   frames until done. Private per-plan frame keys are interned once.
 - Raw paint 0/31 is already an identity in the premultiplied shader contract.
   Redundant shader work and unused raw-mode scratch canvases are skipped.
-- Raw PNG atlases are decoded once into raw RGBA when needed, without a duplicate
-  native atlas image. A 16 MiB LRU bounds retained raw texture data. Standard
-  straight-alpha input retains its ordinary native-image path.
+- Static planner families use one exact numeric type-bitmask lookup per active
+  tile to avoid calling unrelated handlers and allocating their option objects.
+  Family membership comes from the existing exported type lists; precedence,
+  overlapping families, malformed IDs and failure paths are unchanged.
+- Raw PNG atlases are decoded into original RGBA channels when needed, without
+  a duplicate native atlas image. A 16 MiB LRU bounds retained raw texture data.
+  A separate 512-entry SHA-256 metadata cache lets repeated identical IDAT
+  streams use Node's bounded native inflater. Every distinct stream and expected
+  length first passes the original strict DEFLATE validator, including the
+  4,096-block limit; PNG CRC, dimensions, chunk ordering and row filters are
+  checked on every load. If native zlib rejects a reference-accepted stream,
+  that hash permanently uses the reference path until eviction. Exact row
+  reconstruction selects the predictor once
+  per scanline. No raw-pixel cache is retained by this metadata cache. Browser
+  and WeChat imports still use the portable inflater without Node dependencies.
+- Halo tiles continue to participate in planning, validation and logical command
+  accounting. Only native draws whose entire positive-size destination lies
+  outside the exported core, with a conservative one-pixel boundary margin,
+  are omitted. Overhanging, clipped, translucent and additive sprites that can
+  touch the core retain the ordinary compositor.
 - Sparse RLE checkpoints and bounded per-region cursors avoid repeatedly decoding
   whole columns for neighboring tiles. Read-only parsing can omit unused raw
   record copies. The fragment path still keeps its original raw records.
@@ -113,6 +130,34 @@ Dependency installation and separate correctness verification are excluded.
 Application caches start empty; OS file-cache state is uncontrolled. No persistent
 texture cache or separately claimed warm whole-world result is required.
 
+### Same-machine comparison for this revision
+
+A sequential fresh-process comparison on Linux x64 / Node 24.19.0 / Xeon
+Platinum 8573C (9 available logical CPUs, one renderer) measured:
+
+| Metric | Unchanged `4b28af7` | This revision |
+| --- | ---: | ---: |
+| Startup through process exit | 384.267 s | 300.762 s |
+| Conservative complete-process peak | 443,600,896 B | 457,863,168 B |
+| Raw texture loading/decoding | 76.85 s | 13.02 s |
+| Native draw stage | 90.59 s | 62.94 s |
+
+That run saved **83.505 s / 21.7%**. Its application caches started empty; OS file
+cache state was not controlled. Brief diagnostic tests also ran during the
+baseline, but no other full render benchmark ran concurrently. These results
+are not a universal latency promise or a cross-machine comparison. The measured
+memory increase was 14.26 MB; the 500 MB hard limit passed, while the preferred
+200 MB target and a strict five-minute goal were not met by this local run.
+
+The candidate preserved all **20,160,000 pixels**, 17,624,141 logical commands,
+384 source textures and thirteen independent real-region comparisons. The
+validated-stream cache saw 380 first-use strict inflations and 9,715 native
+repeats, with no evictions or fallbacks on this corpus. It culled 5,608,464 native
+halo draws while keeping their necessary planning/validation context. Detailed
+[measurement summary](benchmarks/overview-optimization-20261005.json) records the
+source hashes and full-lifetime memory accounting. Same-head CI independently
+rebuilds and verifies the full output.
+
 Exploratory runs, **not current acceptance results**:
 
 - Four render workers generated the complete image in 157.28 s on a Linux x64
@@ -140,6 +185,24 @@ Exploratory runs, **not current acceptance results**:
   compiler was no longer installed. Existing WASM copy timings alone are not a
   reducer benchmark. The existing decoder, committed module and CI Rust build
   remain unchanged; no unmeasured speedup is claimed.
+
+Additional measured experiments for this optimization batch:
+
+- Repeated decoding of the same 384-texture corpus took 0.223 s after strict
+  first-use validation, versus 1.389 s with the original decoder. First-use
+  optimized decoding took 0.704 s. Every raw byte, including hidden RGB and low
+  alpha, matched the original. This is a decoder microbenchmark, not an export
+  speedup; application caches still start empty in full acceptance runs.
+- On the same 8400×128 region, conservative core-only native drawing reduced
+  the draw stage from 7.08 s to 5.22 s. Whole ROI time was 34.63 s versus 32.58 s,
+  including the unchanged world-wide setup. Encoded PNGs were identical.
+- Skipping per-command canvas save/restore was rechecked: draw time was 7.08 s
+  versus 7.05 s, with no useful repeatable benefit. That change was removed.
+- Re-encoding the same verified 8400×2400 pixels: PNG levels 1/3/6/9 took
+  1.145/1.322/1.969/12.634 s and produced 19,265,785/18,235,416/16,984,482/
+  16,860,515 bytes. Level 1 saved less than one second but added 2.28 MB; level 9
+  saved only 124 KB at a large time cost. Default level 6 is retained. PNG
+  compression is not the principal export bottleneck.
 
 Do not divide timings from different machines/settings into a controlled speedup
 claim. The 200 MB preference must be reported separately even when the 500 MB
