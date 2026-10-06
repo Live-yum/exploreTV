@@ -1,0 +1,153 @@
+{
+  "baseline": {
+    "seconds": 384.267,
+    "aggregateRssBytes": 443600896,
+    "exporterPeakBytes": 391405568,
+    "source": "4b28af74f2840ffb73e50a262d51fdd74350711c"
+  },
+  "candidate": {
+    "seconds": 300.762,
+    "aggregateRssBytes": 457863168,
+    "exporterPeakBytes": 405827584,
+    "sourceHashes": {
+      "scripts/export-world.mjs": "965c910e14364eb583e20eed0e018b4f4aea967d1ff2c1114a35f81580294e4e",
+      "scripts/export-overview.mjs": "3951343cb929403275af40e0bcb93f2f6ae0d48c15df4d2323eeb9c2a7722e65",
+      "scripts/downsample-rgba.mjs": "0f84c15c01ee3f1287b4a72112dcb35084a1434b212c98a59d84e51918d05c2e",
+      "scripts/overview-fast-path.mjs": "7de124677e18bd15a276a44d4230a9cb100708e9e32a7f46cb3d6751c4335e26",
+      "scripts/compact-waterfall-registry.mjs": "34c70ae14b32605a8c1b5b76cd637f9c0b5f2ea56ecb62056de80bfd6acfb660",
+      "scripts/png-stream.mjs": "c0b167f58e70a09a7b83df70c0ca1b8949d2d76c4e0108f4f756d5fc2c91f004",
+      "scripts/png-rgba-node.mjs": "ebdedb4fe6da637a6344343a98a021b9e4f62dd5593c9f7f8991bfab2b86a849",
+      "scripts/world-render-engine.mjs": "ad3433c33b90a478d4f088326f00aae1597fa8e5cc9886e8effd0a1d5bbfb38b",
+      "core/world.mjs": "6ddbae67bb202becf88d978cd938dce93d6ec3f45f2d8fc37c613bafaeb8f167",
+      "core/utf8.mjs": "9a7fe11da9b8681590062dbd6162c883a2bd7bebb22a6947c9ef112dfea97837",
+      "core/renderer.mjs": "e558efce5796be0e05a6fb777e435be2e2db2b6a4eb4fc2b43115c50adceec58",
+      "core/static-nature.mjs": "eddce7e9fb7e25548743e83060556d0160aeb565ea32ad5b520bff63f9c01dc2",
+      "core/cobweb-shapes.mjs": "12ec8468a9144e5fd111478a75bf4f3152ffe2bb3b1e29d16822588dc1af7e62",
+      "core/static-objects.mjs": "52851bf7b1bd52bccc2d251ba7d4912a160aa7683593d6188b921f8ea976fcdd",
+      "core/static-blocks.mjs": "4ef4a16253108ed5a792e0b8d48314e635dd37e33408741d3478e26886e8b029",
+      "core/static-trees.mjs": "bbf7d2e4165766a33dd1ac19c2d77b06ce0201af5914cf2d4ba21d84e28dfa8c",
+      "core/static-misc.mjs": "53c5b77c5295e71228854562cbeed1f04d01f5858e8704022898cdd708508da1",
+      "core/static-furniture-next.mjs": "5c5304c37427f1d839f77749a5e40a4a14e057ecda7ec90a7c146fd9fb67b0d3",
+      "core/static-flames.mjs": "164fb546f6c1b9ba0c7b22c3393b3bfff030d9c80b736466686330302ebcc1e8",
+      "core/static-plants-next.mjs": "1772753424daa98112dea8db589789b0a0cb74f7280f3a2ec462e661366b96b7",
+      "core/static-special-objects.mjs": "f9982786b9278510fc3fa37f0346354c0123f71c637b59ee3812ee56387d112a",
+      "core/world-tree-context.mjs": "1f5e69144b8a8ba4a429854b92b859985858b08d47fd37f0d7711c7cc80f5404",
+      "core/liquid.mjs": "fb5177a188a451e03851d2090d7656b8cf9a872d009095b6626138e49eb124e5",
+      "core/liquid-halfbrick.mjs": "27dd9fb325fbcd7204c097463cf6eb62099faae4b3e7b5544589ac121daef268",
+      "core/liquid-mixed-halfbrick.mjs": "ecb59d409d45b2dcdf8157d9c8556d95cc509e59b87cc6ad9b1ede5402704d06",
+      "core/static-waterfalls.mjs": "ca5e79e5db92c28c92bec2b88201c23f1fdcafef9f5e94e345ba3d92ffd8704b",
+      "core/scene-batches.mjs": "8e809754f8e712d150b4950105cac8f97a800ca88b90be0c462bca750a99913a",
+      "core/liquid-composite.mjs": "d3ca4c7ee3b780da9bd1baf256b35c771a3a77305b63e2a690fd0f1a20c51cb3",
+      "core/liquid-shimmer.mjs": "abf6a37bf486bc71629ea82d8bb6e06a2a53ec37716a30e0b6c408b283a165d8",
+      "core/liquid-special-context.mjs": "ef272a3f4a4cbf772938b6b743379ad470a76bd2517b56031b941a75bf623258",
+      "core/tile-solidity.mjs": "6e8b9e54a8e1f85e8160a0ee54457b4c8db8bd79258174735cbf71723f2cb9ea",
+      "core/liquid-visible-level.mjs": "3001311bf6773e23ec0ce0aaf2ba768f1149891cf35450c37b11fdf4c9af7927",
+      "core/paint.mjs": "93256f0b4c847b1499809c0169bf6825d9a37413430d69fb8c90c6c9bf2abc9e",
+      "core/scene-frames.mjs": "0546f5480942714e88e8f411a767e372b8ccc21fa2f0ccf8725625dba4f5c5fd",
+      "core/assets.mjs": "3952a98070e8f51e2d3282648229835224b9742d4dcac321e8df380c584c0460",
+      "core/png-rgba.mjs": "8a30d8d5b3228c4a524a5c611d73d1b3db89b16ae10555fea21c58b7bc81d041"
+    }
+  },
+  "secondsSaved": 83.505,
+  "timeReductionPercent": 21.730983925239478,
+  "speedup": 1.2776447822530772,
+  "stages": {
+    "plan": {
+      "baselineSeconds": 66.89692370799833,
+      "candidateSeconds": 64.54407284000058
+    },
+    "assets": {
+      "baselineSeconds": 76.8471720570007,
+      "candidateSeconds": 13.021519058000411
+    },
+    "batches": {
+      "baselineSeconds": 2.576481909000522,
+      "candidateSeconds": 2.823989227000449
+    },
+    "prepareFrames": {
+      "baselineSeconds": 21.947468824999152,
+      "candidateSeconds": 23.053689615999552
+    },
+    "validate": {
+      "baselineSeconds": 5.6717083709987985,
+      "candidateSeconds": 7.412882381999805
+    },
+    "draw": {
+      "baselineSeconds": 90.59364824600085,
+      "candidateSeconds": 62.940679777000334
+    },
+    "opaqueOverview": {
+      "baselineSeconds": 16.35432609500005,
+      "candidateSeconds": 16.91674960500017
+    }
+  },
+  "pngDecodeCache": {
+    "strictInflations": 380,
+    "nativeInflations": 9715,
+    "nativeFallbacks": 0,
+    "cachedStreams": 380,
+    "evictions": 0
+  },
+  "culledOutsideCoreCommands": 5608464,
+  "logicalCountsIdentical": true,
+  "environment": {
+    "node": "v24.19.0",
+    "platform": "linux",
+    "arch": "x64",
+    "release": "6.18.44",
+    "cpuModel": "INTEL(R) XEON(R) PLATINUM 8573C",
+    "logicalCpus": 9,
+    "availableParallelism": 9,
+    "rendererWorkers": 1,
+    "processCpuSeconds": 553.483509
+  },
+  "measurement": "Sequential fresh-process/application-cache full exports on the same local environment; OS file cache uncontrolled. Complete lifetime exporter + monitor + harness peaks +1MiB reporting-tail reserve. Brief unit/micro checks also ran during baseline; no other full render benchmark ran concurrently. Independent fidelity verification excluded.",
+  "validation": {
+    "status": "passed",
+    "wholeImagePixelSha256": "7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e",
+    "pinnedWholeImageComparedPixels": 20160000,
+    "verifiedTextures": 384,
+    "verifiedSourceFiles": 36,
+    "alphaRange": [
+      255,
+      255
+    ],
+    "independentPatchCount": 13,
+    "tests": {
+      "total": 549,
+      "passed": 548,
+      "skipped": 1,
+      "failed": 0
+    },
+    "builds": [
+      "H5",
+      "WeChat"
+    ]
+  },
+  "compressionExperiment": [
+    {
+      "level": 1,
+      "seconds": 1.1447142799999999,
+      "bytes": 19265785,
+      "inputPixelSha256": "7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e"
+    },
+    {
+      "level": 3,
+      "seconds": 1.3219330189999996,
+      "bytes": 18235416,
+      "inputPixelSha256": "7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e"
+    },
+    {
+      "level": 6,
+      "seconds": 1.9686395209999996,
+      "bytes": 16984482,
+      "inputPixelSha256": "7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e"
+    },
+    {
+      "level": 9,
+      "seconds": 12.634069335,
+      "bytes": 16860515,
+      "inputPixelSha256": "7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e"
+    }
+  ]
+}

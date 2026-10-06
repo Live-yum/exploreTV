@@ -1,0 +1,22 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { encodeUtf8, decodeUtf8 } from "../core/utf8.mjs";
+test("portable UTF8 matches platform codec including Chinese, emoji and surrogate replacement", () => {
+  for (const s of ["Hello", "无序的谜团传说", "🏠建筑\u0000", "\ud800"]) {
+    const bytes = encodeUtf8(s);
+    assert.deepEqual(bytes, new TextEncoder().encode(s));
+    assert.equal(decodeUtf8(bytes), new TextDecoder().decode(bytes));
+  }
+});
+test("reject invalid UTF8", () => {
+  for (const b of [
+    [255],
+    [192, 128],
+    [224, 128, 128],
+    [237, 160, 128],
+    [244, 144, 128, 128],
+    [240, 128],
+    [194, 0],
+  ])
+    assert.throws(() => decodeUtf8(Uint8Array.from(b)));
+});

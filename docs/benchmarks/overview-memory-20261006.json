@@ -1,0 +1,718 @@
+{
+  "schema": "exploretv-overview-memory-optimization-v1",
+  "dateUtc": "2026-10-06",
+  "baselineCommit": "18f8a8d65cd2af5f3b823ebaf1fcd41a718559a8",
+  "measurement": "Fresh-process whole-world generation. Conservative complete-lifetime sum includes exporter, native monitor, Node harness and 1 MiB tail reserve. OS file cache uncontrolled. Local CPU contention prevents a controlled runtime-speedup claim; the same-head CI sequential-comparison.json is authoritative for that comparison.",
+  "baseline": {
+    "schema": "exploretv-overview-cold-benchmark-v2",
+    "targetPassed": true,
+    "endToEndSeconds": 316.887,
+    "exporterSeconds": 316.31,
+    "targetSeconds": 600,
+    "targetRssBytes": 500000000,
+    "preferredRssBytes": 200000000,
+    "preferredMemoryPassed": false,
+    "conservativeAggregatePeakRssBytes": 447864832,
+    "processTreeSamplingAvailable": false,
+    "completeTreeSamples": 0,
+    "partialTreeSamples": 316,
+    "sampledAggregatePeakRssBytes": null,
+    "partialTreeObservedPeakBytes": 44957696,
+    "harnessOsPeakRssBytes": 45088768,
+    "monitoringTailReserveBytes": 1048576,
+    "lifetime": {
+      "method": "Linux wait4 child lifetime plus monitor getrusage",
+      "exitCode": 0,
+      "elapsedSeconds": 316.880962,
+      "exporterOsPeakRssBytes": 396050432,
+      "monitorOsPeakRssBytes": 5677056
+    },
+    "measurementError": null,
+    "exitCode": 0,
+    "signal": null,
+    "includes": [
+      "process startup",
+      "world read/parse/index",
+      "complete waterfall registry",
+      "PNG decode",
+      "cold frame caches",
+      "all composition/reduction",
+      "PNG compression/hash/write",
+      "exporter shutdown"
+    ],
+    "excludes": [
+      "dependencies and benchmark-helper compilation",
+      "separate correctness verification"
+    ],
+    "cacheState": "Fresh process/application caches; OS file cache uncontrolled; no persistent reduced-texture cache.",
+    "memoryMeasurement": "Linux wait4 measures the entire exporter lifetime. getrusage measures the small native monitor and Node harness. Acceptance uses their conservative peak sum plus 1 MiB tail reserve, and samples their contemporaneous process-tree RSS every second. Native threads are included. If /proc sampling is unavailable or namespace-inconsistent, the exact lifetime conservative peak sum remains the acceptance measurement.",
+    "environment": {
+      "node": "v24.19.0",
+      "platform": "linux",
+      "arch": "x64",
+      "release": "6.18.44",
+      "cpuModel": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "logicalCpus": 9,
+      "availableParallelism": 9,
+      "rendererWorkers": 1,
+      "processCpuSeconds": 570.859676
+    }
+  },
+  "candidate": {
+    "schema": "exploretv-overview-cold-benchmark-v2",
+    "targetPassed": true,
+    "endToEndSeconds": 300.589,
+    "exporterSeconds": 300.39,
+    "targetSeconds": 600,
+    "targetRssBytes": 500000000,
+    "preferredRssBytes": 300000000,
+    "preferredMemoryPassed": true,
+    "conservativeAggregatePeakRssBytes": 282091520,
+    "processTreeSamplingAvailable": false,
+    "completeTreeSamples": 0,
+    "partialTreeSamples": 300,
+    "sampledAggregatePeakRssBytes": null,
+    "partialTreeObservedPeakBytes": 44781568,
+    "harnessOsPeakRssBytes": 44912640,
+    "monitoringTailReserveBytes": 1048576,
+    "lifetime": {
+      "method": "Linux wait4 child lifetime plus monitor getrusage",
+      "exitCode": 0,
+      "elapsedSeconds": 300.583645,
+      "exporterOsPeakRssBytes": 230273024,
+      "monitorOsPeakRssBytes": 5857280
+    },
+    "measurementError": null,
+    "exitCode": 0,
+    "signal": null,
+    "includes": [
+      "process startup",
+      "world read/parse/index",
+      "complete waterfall registry",
+      "PNG decode",
+      "cold frame caches",
+      "all composition/reduction",
+      "PNG compression/hash/write",
+      "exporter shutdown"
+    ],
+    "excludes": [
+      "dependencies and benchmark-helper compilation",
+      "separate correctness verification"
+    ],
+    "cacheState": "Fresh process/application caches; OS file cache uncontrolled; no persistent reduced-texture cache.",
+    "memoryMeasurement": "Linux wait4 measures the entire exporter lifetime. getrusage measures the small native monitor and Node harness. Acceptance uses their conservative peak sum plus 1 MiB tail reserve, and samples their contemporaneous process-tree RSS every second. Native threads are included. If /proc sampling is unavailable or namespace-inconsistent, the exact lifetime conservative peak sum remains the acceptance measurement.",
+    "environment": {
+      "node": "v24.19.0",
+      "platform": "linux",
+      "arch": "x64",
+      "release": "6.18.44",
+      "cpuModel": "INTEL(R) XEON(R) PLATINUM 8573C",
+      "logicalCpus": 9,
+      "availableParallelism": 9,
+      "rendererWorkers": 1,
+      "processCpuSeconds": 548.607018
+    }
+  },
+  "fidelity": {
+    "status": "passed",
+    "pixels": 20160000,
+    "rgbaSha256": "7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e",
+    "independentRegions": 13,
+    "sourceTextures": 384,
+    "logicalCommands": 17624141,
+    "png": {
+      "path": "artifacts/perf-overview-v3/final-candidate/world-1px.png",
+      "width": 8400,
+      "height": 2400,
+      "rows": 2400,
+      "bytes": 16984482,
+      "sha256": "6e0dc1fc0b85c3acd7b537e66d3d191cbebd5f0c000b5a230ec09d1f13fd7e5c"
+    }
+  },
+  "configuration": {
+    "bandTiles": 48,
+    "chunkTiles": 120,
+    "nodeOldSpaceMiB": 48,
+    "nodeSemiSpaceMiB": 4,
+    "rawCacheMiB": 8,
+    "encodedCacheMiB": 8,
+    "activePngCapMiB": 32,
+    "frameCountCap": 2048,
+    "framePixelCapMiB": 2,
+    "gc": "Alternating minor/major per chunk plus macrotask; major at band boundaries"
+  },
+  "setupExperiment": {
+    "referencePeakRssBytes": 199553024,
+    "streamingPeakRssBytes": 144490496,
+    "referenceSeconds": 8.42,
+    "streamingSeconds": 7.22,
+    "referenceSourceSha256": "ca5e79e5db92c28c92bec2b88201c23f1fdcafef9f5e94e345ba3d92ffd8704b",
+    "equalCommands": 82467,
+    "equalOriginMemberships": 1969,
+    "equalRectangleQueries": 39
+  },
+  "phaseSeconds": {
+    "regionDecode": 9.138,
+    "garbageCollection": 18.437,
+    "nativeFinalization": 2.184,
+    "downsample": 19.94,
+    "compression": 2.64,
+    "preparation": {
+      "worldReadHash": 0.018281204000000002,
+      "worldParse": 0.19649651699999998,
+      "rowIndex": 0.19485243400000002,
+      "waterfalls": 6.818452476
+    },
+    "rendererMilliseconds": {
+      "plan": 53711.38102299985,
+      "assets": 3919.2801939999063,
+      "batches": 3102.5290660007277,
+      "prepareFrames": 30510.564343998798,
+      "validate": 9547.578136999779,
+      "draw": 71870.5148369988,
+      "opaqueOverview": 28941.653246999158
+    }
+  },
+  "sourceHashes": {
+    "scripts/export-world.mjs": "4dfa9e183aba069f4bd98a31f56da6b8424527e4c6ea97e88eeb7868b4635670",
+    "scripts/export-overview.mjs": "483c685b2de6f626a1e59171c71a77f60d78ba381b35c5501d240de8111a3ec8",
+    "scripts/downsample-rgba.mjs": "0f84c15c01ee3f1287b4a72112dcb35084a1434b212c98a59d84e51918d05c2e",
+    "scripts/overview-fast-path.mjs": "7de124677e18bd15a276a44d4230a9cb100708e9e32a7f46cb3d6751c4335e26",
+    "scripts/compact-waterfall-registry.mjs": "ef7c5a45dd8e13c436e205ae7a04a69262af2452349f9e2b39ef033d53c9093a",
+    "scripts/png-stream.mjs": "c0b167f58e70a09a7b83df70c0ca1b8949d2d76c4e0108f4f756d5fc2c91f004",
+    "scripts/png-rgba-node.mjs": "225474c23837a770505f0d3b75fa7289d8a2281bfd2ffe509a3d699d7d70046e",
+    "scripts/raw-texture-cache.mjs": "20a3c2657a56479aef996ba9b6fb78353f9e855314f89cfc56eb96b277e8b607",
+    "scripts/world-render-engine.mjs": "100d1da00d336e1abcb57095e315b8ba7ca66050e978309de3d7bc0855782f14",
+    "core/world.mjs": "6ddbae67bb202becf88d978cd938dce93d6ec3f45f2d8fc37c613bafaeb8f167",
+    "core/utf8.mjs": "9a7fe11da9b8681590062dbd6162c883a2bd7bebb22a6947c9ef112dfea97837",
+    "core/renderer.mjs": "e558efce5796be0e05a6fb777e435be2e2db2b6a4eb4fc2b43115c50adceec58",
+    "core/static-nature.mjs": "eddce7e9fb7e25548743e83060556d0160aeb565ea32ad5b520bff63f9c01dc2",
+    "core/cobweb-shapes.mjs": "12ec8468a9144e5fd111478a75bf4f3152ffe2bb3b1e29d16822588dc1af7e62",
+    "core/static-objects.mjs": "52851bf7b1bd52bccc2d251ba7d4912a160aa7683593d6188b921f8ea976fcdd",
+    "core/static-blocks.mjs": "4ef4a16253108ed5a792e0b8d48314e635dd37e33408741d3478e26886e8b029",
+    "core/static-trees.mjs": "bbf7d2e4165766a33dd1ac19c2d77b06ce0201af5914cf2d4ba21d84e28dfa8c",
+    "core/static-misc.mjs": "53c5b77c5295e71228854562cbeed1f04d01f5858e8704022898cdd708508da1",
+    "core/static-furniture-next.mjs": "5c5304c37427f1d839f77749a5e40a4a14e057ecda7ec90a7c146fd9fb67b0d3",
+    "core/static-flames.mjs": "164fb546f6c1b9ba0c7b22c3393b3bfff030d9c80b736466686330302ebcc1e8",
+    "core/static-plants-next.mjs": "1772753424daa98112dea8db589789b0a0cb74f7280f3a2ec462e661366b96b7",
+    "core/static-special-objects.mjs": "f9982786b9278510fc3fa37f0346354c0123f71c637b59ee3812ee56387d112a",
+    "core/world-tree-context.mjs": "1f5e69144b8a8ba4a429854b92b859985858b08d47fd37f0d7711c7cc80f5404",
+    "core/liquid.mjs": "fb5177a188a451e03851d2090d7656b8cf9a872d009095b6626138e49eb124e5",
+    "core/liquid-halfbrick.mjs": "27dd9fb325fbcd7204c097463cf6eb62099faae4b3e7b5544589ac121daef268",
+    "core/liquid-mixed-halfbrick.mjs": "ecb59d409d45b2dcdf8157d9c8556d95cc509e59b87cc6ad9b1ede5402704d06",
+    "core/static-waterfalls.mjs": "24285f62b6062c5b56319fe90a384eaed4cc262b029ec84a0c2c03c04634bd8f",
+    "core/scene-batches.mjs": "8e809754f8e712d150b4950105cac8f97a800ca88b90be0c462bca750a99913a",
+    "core/liquid-composite.mjs": "d3ca4c7ee3b780da9bd1baf256b35c771a3a77305b63e2a690fd0f1a20c51cb3",
+    "core/liquid-shimmer.mjs": "abf6a37bf486bc71629ea82d8bb6e06a2a53ec37716a30e0b6c408b283a165d8",
+    "core/liquid-special-context.mjs": "ef272a3f4a4cbf772938b6b743379ad470a76bd2517b56031b941a75bf623258",
+    "core/tile-solidity.mjs": "6e8b9e54a8e1f85e8160a0ee54457b4c8db8bd79258174735cbf71723f2cb9ea",
+    "core/liquid-visible-level.mjs": "3001311bf6773e23ec0ce0aaf2ba768f1149891cf35450c37b11fdf4c9af7927",
+    "core/paint.mjs": "93256f0b4c847b1499809c0169bf6825d9a37413430d69fb8c90c6c9bf2abc9e",
+    "core/scene-frames.mjs": "cd637a767ac46e9aba82eab09c3b148a50e5fc479a84d33caf4d0c967f25fd8a",
+    "core/assets.mjs": "53a03c313c18595073691c1fb8c659c23d004370692c55459e7521d841ffb967",
+    "core/png-rgba.mjs": "864d56cfcb4a425a33cd0463f387e935757dac73b43c1c3317ba4f9bcd2bce7c"
+  },
+  "frameCache": {
+    "frames": 1458,
+    "bytes": 2096704,
+    "peakBytes": 2097152,
+    "hits": 1103735,
+    "misses": 109992,
+    "evictions": 108534,
+    "bypasses": 0
+  },
+  "pngDecodeCache": {
+    "strictInflations": 380,
+    "nativeInflations": 14605,
+    "nativeFallbacks": 0,
+    "cachedStreams": 380,
+    "evictions": 0
+  },
+  "rawTextureCache": {
+    "retainedEncodedBytes": 4235067,
+    "peakRetainedEncodedBytes": 4235067,
+    "encodedEntries": 384,
+    "encodedHits": 76771,
+    "encodedMisses": 384,
+    "encodedEvictions": 0,
+    "encodedBypasses": 0,
+    "activeEncodedBytes": 0,
+    "peakActiveEncodedBytes": 1004489,
+    "activeSnapshots": 0,
+    "peakActiveSnapshots": 55,
+    "activeEncodedByteLimit": 33554432,
+    "activeSnapshotLimit": 512,
+    "liveEncodedBytes": 4235067,
+    "peakLiveEncodedBytes": 4235067,
+    "rawBytes": 7044383,
+    "peakRawBytes": 8388592,
+    "rawEntries": 11,
+    "rawHits": 95391,
+    "rawDecodes": 14985,
+    "rawEvictions": 14974,
+    "rawBypasses": 0,
+    "retainedBytes": 11279450,
+    "peakRetainedBytes": 12615021,
+    "liveBytes": 11279450,
+    "peakLiveBytes": 12615021,
+    "pngDecodeCache": {
+      "strictInflations": 380,
+      "nativeInflations": 14605,
+      "nativeFallbacks": 0,
+      "cachedStreams": 380,
+      "evictions": 0
+    }
+  },
+  "memorySamples": [
+    {
+      "writtenRows": 48,
+      "rss": 128425984,
+      "heapTotal": 20967424,
+      "heapUsed": 10431688,
+      "external": 28972298,
+      "arrayBuffers": 25241717,
+      "osPeakRssBytes": 132214784
+    },
+    {
+      "writtenRows": 96,
+      "rss": 147763200,
+      "heapTotal": 21753856,
+      "heapUsed": 11154992,
+      "external": 29840440,
+      "arrayBuffers": 26007219,
+      "osPeakRssBytes": 147894272
+    },
+    {
+      "writtenRows": 144,
+      "rss": 144371712,
+      "heapTotal": 22540288,
+      "heapUsed": 11573760,
+      "external": 30291018,
+      "arrayBuffers": 26560397,
+      "osPeakRssBytes": 152096768
+    },
+    {
+      "writtenRows": 192,
+      "rss": 138428416,
+      "heapTotal": 22540288,
+      "heapUsed": 12207016,
+      "external": 33410175,
+      "arrayBuffers": 29679554,
+      "osPeakRssBytes": 155881472
+    },
+    {
+      "writtenRows": 240,
+      "rss": 162344960,
+      "heapTotal": 23851008,
+      "heapUsed": 12781400,
+      "external": 38300961,
+      "arrayBuffers": 34570340,
+      "osPeakRssBytes": 171065344
+    },
+    {
+      "writtenRows": 288,
+      "rss": 164483072,
+      "heapTotal": 23588864,
+      "heapUsed": 13523464,
+      "external": 38759460,
+      "arrayBuffers": 35028839,
+      "osPeakRssBytes": 180125696
+    },
+    {
+      "writtenRows": 336,
+      "rss": 161779712,
+      "heapTotal": 23326720,
+      "heapUsed": 12185496,
+      "external": 37729582,
+      "arrayBuffers": 33896361,
+      "osPeakRssBytes": 181919744
+    },
+    {
+      "writtenRows": 384,
+      "rss": 171417600,
+      "heapTotal": 23851008,
+      "heapUsed": 13224144,
+      "external": 38540006,
+      "arrayBuffers": 34809385,
+      "osPeakRssBytes": 181919744
+    },
+    {
+      "writtenRows": 432,
+      "rss": 190984192,
+      "heapTotal": 24375296,
+      "heapUsed": 14753464,
+      "external": 40925260,
+      "arrayBuffers": 37194639,
+      "osPeakRssBytes": 197545984
+    },
+    {
+      "writtenRows": 480,
+      "rss": 195448832,
+      "heapTotal": 25161728,
+      "heapUsed": 13684168,
+      "external": 41069893,
+      "arrayBuffers": 37339272,
+      "osPeakRssBytes": 198348800
+    },
+    {
+      "writtenRows": 528,
+      "rss": 187416576,
+      "heapTotal": 24899584,
+      "heapUsed": 13746720,
+      "external": 41541524,
+      "arrayBuffers": 37810903,
+      "osPeakRssBytes": 207441920
+    },
+    {
+      "writtenRows": 576,
+      "rss": 175923200,
+      "heapTotal": 29093888,
+      "heapUsed": 13752616,
+      "external": 42607543,
+      "arrayBuffers": 38876922,
+      "osPeakRssBytes": 207441920
+    },
+    {
+      "writtenRows": 624,
+      "rss": 191229952,
+      "heapTotal": 29093888,
+      "heapUsed": 13997840,
+      "external": 42965454,
+      "arrayBuffers": 39234833,
+      "osPeakRssBytes": 207441920
+    },
+    {
+      "writtenRows": 672,
+      "rss": 202194944,
+      "heapTotal": 29880320,
+      "heapUsed": 14180512,
+      "external": 44699803,
+      "arrayBuffers": 40969182,
+      "osPeakRssBytes": 207441920
+    },
+    {
+      "writtenRows": 720,
+      "rss": 190038016,
+      "heapTotal": 29618176,
+      "heapUsed": 14248680,
+      "external": 45125071,
+      "arrayBuffers": 41394450,
+      "osPeakRssBytes": 207441920
+    },
+    {
+      "writtenRows": 768,
+      "rss": 199061504,
+      "heapTotal": 29618176,
+      "heapUsed": 14425656,
+      "external": 46111981,
+      "arrayBuffers": 42381360,
+      "osPeakRssBytes": 211980288
+    },
+    {
+      "writtenRows": 816,
+      "rss": 185864192,
+      "heapTotal": 29618176,
+      "heapUsed": 14425896,
+      "external": 46993118,
+      "arrayBuffers": 43262497,
+      "osPeakRssBytes": 219258880
+    },
+    {
+      "writtenRows": 864,
+      "rss": 195387392,
+      "heapTotal": 30928896,
+      "heapUsed": 14775816,
+      "external": 46395440,
+      "arrayBuffers": 42664819,
+      "osPeakRssBytes": 219258880
+    },
+    {
+      "writtenRows": 912,
+      "rss": 199704576,
+      "heapTotal": 29618176,
+      "heapUsed": 14774224,
+      "external": 48016038,
+      "arrayBuffers": 44285417,
+      "osPeakRssBytes": 220672000
+    },
+    {
+      "writtenRows": 960,
+      "rss": 186880000,
+      "heapTotal": 30928896,
+      "heapUsed": 14812192,
+      "external": 48502803,
+      "arrayBuffers": 44772182,
+      "osPeakRssBytes": 221859840
+    },
+    {
+      "writtenRows": 1008,
+      "rss": 196747264,
+      "heapTotal": 30928896,
+      "heapUsed": 14914112,
+      "external": 48936954,
+      "arrayBuffers": 45206333,
+      "osPeakRssBytes": 221859840
+    },
+    {
+      "writtenRows": 1056,
+      "rss": 202125312,
+      "heapTotal": 31191040,
+      "heapUsed": 14940320,
+      "external": 49142415,
+      "arrayBuffers": 45411794,
+      "osPeakRssBytes": 221859840
+    },
+    {
+      "writtenRows": 1104,
+      "rss": 206606336,
+      "heapTotal": 30928896,
+      "heapUsed": 14868024,
+      "external": 49742329,
+      "arrayBuffers": 46011708,
+      "osPeakRssBytes": 222834688
+    },
+    {
+      "writtenRows": 1152,
+      "rss": 207081472,
+      "heapTotal": 31453184,
+      "heapUsed": 14962304,
+      "external": 48719103,
+      "arrayBuffers": 44988482,
+      "osPeakRssBytes": 226611200
+    },
+    {
+      "writtenRows": 1200,
+      "rss": 204771328,
+      "heapTotal": 31191040,
+      "heapUsed": 15004536,
+      "external": 50306870,
+      "arrayBuffers": 46576249,
+      "osPeakRssBytes": 226611200
+    },
+    {
+      "writtenRows": 1248,
+      "rss": 199094272,
+      "heapTotal": 31191040,
+      "heapUsed": 15087480,
+      "external": 50398384,
+      "arrayBuffers": 46667763,
+      "osPeakRssBytes": 226611200
+    },
+    {
+      "writtenRows": 1296,
+      "rss": 202137600,
+      "heapTotal": 30928896,
+      "heapUsed": 14787744,
+      "external": 50318855,
+      "arrayBuffers": 46588234,
+      "osPeakRssBytes": 226611200
+    },
+    {
+      "writtenRows": 1344,
+      "rss": 194490368,
+      "heapTotal": 30928896,
+      "heapUsed": 15050320,
+      "external": 50660136,
+      "arrayBuffers": 46929515,
+      "osPeakRssBytes": 226611200
+    },
+    {
+      "writtenRows": 1392,
+      "rss": 205377536,
+      "heapTotal": 31191040,
+      "heapUsed": 15027384,
+      "external": 50761680,
+      "arrayBuffers": 47031059,
+      "osPeakRssBytes": 228462592
+    },
+    {
+      "writtenRows": 1440,
+      "rss": 193929216,
+      "heapTotal": 31191040,
+      "heapUsed": 15043424,
+      "external": 50410694,
+      "arrayBuffers": 46680073,
+      "osPeakRssBytes": 228462592
+    },
+    {
+      "writtenRows": 1488,
+      "rss": 193073152,
+      "heapTotal": 29093888,
+      "heapUsed": 15033240,
+      "external": 50870095,
+      "arrayBuffers": 47139474,
+      "osPeakRssBytes": 228462592
+    },
+    {
+      "writtenRows": 1536,
+      "rss": 201101312,
+      "heapTotal": 30666752,
+      "heapUsed": 15292384,
+      "external": 50741103,
+      "arrayBuffers": 47010482,
+      "osPeakRssBytes": 228462592
+    },
+    {
+      "writtenRows": 1584,
+      "rss": 207589376,
+      "heapTotal": 31453184,
+      "heapUsed": 15217608,
+      "external": 51338697,
+      "arrayBuffers": 47608076,
+      "osPeakRssBytes": 228462592
+    },
+    {
+      "writtenRows": 1632,
+      "rss": 204791808,
+      "heapTotal": 29356032,
+      "heapUsed": 14946552,
+      "external": 50658985,
+      "arrayBuffers": 46928364,
+      "osPeakRssBytes": 228462592
+    },
+    {
+      "writtenRows": 1680,
+      "rss": 201535488,
+      "heapTotal": 30142464,
+      "heapUsed": 14903720,
+      "external": 51875151,
+      "arrayBuffers": 48144530,
+      "osPeakRssBytes": 228462592
+    },
+    {
+      "writtenRows": 1728,
+      "rss": 204673024,
+      "heapTotal": 30928896,
+      "heapUsed": 14960880,
+      "external": 51734503,
+      "arrayBuffers": 48003882,
+      "osPeakRssBytes": 228462592
+    },
+    {
+      "writtenRows": 1776,
+      "rss": 202874880,
+      "heapTotal": 30142464,
+      "heapUsed": 15085872,
+      "external": 51464005,
+      "arrayBuffers": 47733384,
+      "osPeakRssBytes": 228462592
+    },
+    {
+      "writtenRows": 1824,
+      "rss": 203071488,
+      "heapTotal": 30928896,
+      "heapUsed": 15083096,
+      "external": 51763093,
+      "arrayBuffers": 48032472,
+      "osPeakRssBytes": 228462592
+    },
+    {
+      "writtenRows": 1872,
+      "rss": 211931136,
+      "heapTotal": 31191040,
+      "heapUsed": 15117952,
+      "external": 50770160,
+      "arrayBuffers": 47039539,
+      "osPeakRssBytes": 228462592
+    },
+    {
+      "writtenRows": 1920,
+      "rss": 202592256,
+      "heapTotal": 30666752,
+      "heapUsed": 14891408,
+      "external": 51984870,
+      "arrayBuffers": 48254249,
+      "osPeakRssBytes": 230273024
+    },
+    {
+      "writtenRows": 1968,
+      "rss": 204750848,
+      "heapTotal": 29880320,
+      "heapUsed": 15043320,
+      "external": 52013962,
+      "arrayBuffers": 48283341,
+      "osPeakRssBytes": 230273024
+    },
+    {
+      "writtenRows": 2016,
+      "rss": 202760192,
+      "heapTotal": 30666752,
+      "heapUsed": 15053216,
+      "external": 51881668,
+      "arrayBuffers": 48151047,
+      "osPeakRssBytes": 230273024
+    },
+    {
+      "writtenRows": 2064,
+      "rss": 192757760,
+      "heapTotal": 29880320,
+      "heapUsed": 15043016,
+      "external": 51982555,
+      "arrayBuffers": 48251934,
+      "osPeakRssBytes": 230273024
+    },
+    {
+      "writtenRows": 2112,
+      "rss": 191733760,
+      "heapTotal": 30142464,
+      "heapUsed": 14812248,
+      "external": 51957484,
+      "arrayBuffers": 48226863,
+      "osPeakRssBytes": 230273024
+    },
+    {
+      "writtenRows": 2160,
+      "rss": 192192512,
+      "heapTotal": 29880320,
+      "heapUsed": 15075768,
+      "external": 51887970,
+      "arrayBuffers": 48157349,
+      "osPeakRssBytes": 230273024
+    },
+    {
+      "writtenRows": 2208,
+      "rss": 196616192,
+      "heapTotal": 28831744,
+      "heapUsed": 15083064,
+      "external": 52107871,
+      "arrayBuffers": 48377250,
+      "osPeakRssBytes": 230273024
+    },
+    {
+      "writtenRows": 2256,
+      "rss": 203403264,
+      "heapTotal": 29093888,
+      "heapUsed": 15035496,
+      "external": 52169730,
+      "arrayBuffers": 48439109,
+      "osPeakRssBytes": 230273024
+    },
+    {
+      "writtenRows": 2304,
+      "rss": 205955072,
+      "heapTotal": 31453184,
+      "heapUsed": 15053320,
+      "external": 50423482,
+      "arrayBuffers": 46692861,
+      "osPeakRssBytes": 230273024
+    },
+    {
+      "writtenRows": 2352,
+      "rss": 206835712,
+      "heapTotal": 30666752,
+      "heapUsed": 15005048,
+      "external": 51021930,
+      "arrayBuffers": 47291309,
+      "osPeakRssBytes": 230273024
+    },
+    {
+      "writtenRows": 2400,
+      "rss": 206139392,
+      "heapTotal": 29618176,
+      "heapUsed": 14969752,
+      "external": 50955122,
+      "arrayBuffers": 47224501,
+      "osPeakRssBytes": 230273024
+    }
+  ]
+}

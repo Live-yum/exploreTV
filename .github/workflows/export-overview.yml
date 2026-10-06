@@ -1,0 +1,72 @@
+name: Export direct small panorama
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  requested:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.request.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - id: request
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          message=$(git log -1 --format=%B)
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          else
+            case "$message" in
+              *'[export-overview]'*) echo 'run=true' >> "$GITHUB_OUTPUT" ;;
+              *) echo 'run=false' >> "$GITHUB_OUTPUT" ;;
+            esac
+          fi
+  export:
+    needs: requested
+    if: needs.requested.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node scripts/prepare-example.mjs example/assets --check
+      - run: node --test test/png-stream.test.mjs test/export-world.test.mjs test/overview-export.test.mjs test/overview-fast-path.test.mjs test/scene-frame-cache.test.mjs test/compact-waterfall-registry.test.mjs test/overview-budget.test.mjs test/png-rgba.test.mjs test/png-rgba-node.test.mjs test/overview-core-cull.test.mjs test/static-planner-dispatch.test.mjs test/raw-texture-cache.test.mjs test/overview-comparison.test.mjs
+      - name: Measure pinned baseline on this runner
+        env:
+          BASELINE_COMMIT: 18f8a8d65cd2af5f3b823ebaf1fcd41a718559a8
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASELINE_COMMIT"
+          git diff --exit-code "$BASELINE_COMMIT" HEAD -- package-lock.json
+          baseline="$RUNNER_TEMP/exploretv-overview-baseline"
+          git worktree add --detach "$baseline" "$BASELINE_COMMIT"
+          test "$(git -C "$baseline" rev-parse HEAD)" = "$BASELINE_COMMIT"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$baseline/node_modules"
+          cd "$baseline"
+          node scripts/run-overview-ci.mjs "$GITHUB_WORKSPACE/artifacts/direct-overview-baseline"
+          node scripts/verify-overview.mjs fixtures/example-world.wld example/assets "$GITHUB_WORKSPACE/artifacts/direct-overview-baseline/world-1px.png" --example
+      - run: node scripts/run-overview-ci.mjs
+      - run: node scripts/verify-overview.mjs fixtures/example-world.wld example/assets artifacts/direct-overview/world-1px.png --example
+      - name: Compare complete sequential runs
+        run: node scripts/compare-overview-benchmarks.mjs artifacts/direct-overview-baseline artifacts/direct-overview "$(git rev-parse HEAD)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: direct-small-panorama-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            artifacts/direct-overview/world-1px.png
+            artifacts/direct-overview/*.json
+            artifacts/direct-overview-baseline/*.json
+          compression-level: 0
+          retention-days: 7

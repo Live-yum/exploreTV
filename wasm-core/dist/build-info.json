@@ -1,0 +1,13 @@
+{
+  "artifact": "exploretv_wld_core.wasm",
+  "sha256": "85f99786bac65c0d539f923a01305c02fb14dbc710666974d91321834a3949f5",
+  "bytes": 28904,
+  "abiVersion": 1,
+  "cellBytes": 32,
+  "maxLinearMemoryBytes": 134217728,
+  "target": "wasm32-unknown-unknown",
+  "rustc": "rustc 1.85.1 (4eb161250 2025-03-15)",
+  "sourceSha256": "8ae36b733d60040bac1a9dae02fd4a900afd4896b6f2993ffb13d28ade35b96e",
+  "imports": [],
+  "profile": "release, opt-level=3, LTO, codegen-units=1, panic=abort, strip=true"
+}

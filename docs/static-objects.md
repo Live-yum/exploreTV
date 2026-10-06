@@ -1,0 +1,34 @@
+# Static decoration and furniture sprites
+
+`core/static-objects.mjs` is an original sprite-geometry planner for twelve explicitly verified types. It returns one sprite for one stored tile cell. Multi-cell objects retain their individual saved segments, so cropping a region does not require finding an object's anchor outside that region. It never changes tile records or synthesizes missing saved frames.
+
+`planStaticObject(region, x, y, tile, options)` returns `{asset, sx, sy, sw, sh, offsetX, offsetY, flipX, opacity, fidelity}`, `null` for a type owned by another planner, or `{unsupported: reason}` when required saved-frame data is absent or invalid. The caller owns visibility, paint, shape clipping and validation against actual atlas dimensions. `options` is reserved. Coordinates are local to `region.rect`; plant mirroring uses the absolute world X coordinate. Offsets and crop dimensions are in pixels. No arrays or extra draw passes are returned.
+
+| IDs          | Meaning                    | Static behavior                                                                   |
+| ------------ | -------------------------- | --------------------------------------------------------------------------------- |
+| 165          | Stalactite                 | Saved 16×16 segment with zero offset                                              |
+| 28, 105, 506 | Pots, statues, Bast statue | Saved 16×16 segment, Y +2                                                         |
+| 73, 74, 113  | Tall plants                | Saved 16×32 sprite, Y −12, horizontal mirror at even world X                      |
+| 178          | Exposed gems               | Saved 16×16 sprite, Y +2 only when frameY ≤36                                     |
+| 184          | Long moss                  | Saved 20×16 sprite with four attachment origins, at zero wind                     |
+| 185          | Small piles                | Y +2; frameY=18 strips wrap source X every 1908 pixels and advance source Y by 18 |
+| 186          | Large piles                | Saved 16×16 segments, Y +2                                                        |
+| 187          | Second large-pile atlas    | Y +2; source X wraps every 1890 pixels and advances source Y by 36                |
+
+Long-moss orientation is `floor(frameY / 54)`. At zero wind the left edge is −2 pixels for floor, ceiling and left attachments, and +2 pixels for right attachments. Floor rows have Y +2; ceiling rows have Y −2. The first left-facing row at frameY=108 has Y −1; subsequent side rows have Y 0. These are draw origins, not rotations of an arbitrary tile crop. All four orientations use the same `Tiles_184.png` atlas.
+
+Animation frame is fixed to zero. Wind, contact sway, particles, shimmer shine, emitted light, vision effects, and glowing overlays are outside this unlit base-texture pass. Opacity remains 1; actuated tile darkness is a color adjustment, not an opacity change. An optional long-moss glow mask exists in the reference renderer, but is not required for this static base-texture contract. The supported stalactite rendering method does not apply horizontal mirroring; the separate `DrawFlipMode` metadata does not override that method here.
+
+Required filenames are `Tiles_28.png`, `Tiles_73.png`, `Tiles_74.png`, `Tiles_105.png`, `Tiles_113.png`, `Tiles_165.png`, `Tiles_178.png`, `Tiles_184.png`, `Tiles_185.png`, `Tiles_186.png`, `Tiles_187.png`, and `Tiles_506.png`. Only filenames needed by a scene need to be loaded. No game textures or reference implementation are embedded in this module or its tests.
+
+## Source observations
+
+All observations use repository commit `8255d34616c780af12079425ac92a0a7aed87d71`:
+
+- [Tile names](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria.ID/TileID.cs#L493) identify the families; names were not inferred from numeric IDs.
+- [Default draw geometry](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria.GameContent.Drawing/TileDrawing.cs#L4567) establishes the stored 16×16 base case and the animation-frame offset. [Plant geometry](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria.GameContent.Drawing/TileDrawing.cs#L5101), [pile wrapping, gems and moss geometry](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria.GameContent.Drawing/TileDrawing.cs#L5217), and [pot/statue offsets](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria.GameContent.Drawing/TileDrawing.cs#L5338) provide the explicit overrides.
+- [Directional grass drawing](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria.GameContent.Drawing/TileDrawing.cs#L8546) determines all four long-moss origins. [Normal grass drawing](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria.GameContent.Drawing/TileDrawing.cs#L8489) reduces to the reported plant origin when wind and interaction displacement are zero.
+- [Texture selection](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria.GameContent.Drawing/TileDrawing.cs#L1454) uses each supported tile's own base atlas. None of these families redirects to a tree-style texture. [Moss glow](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria.GameContent.Drawing/TileDrawing.cs#L6214) is a separate optional pass.
+- [Tile-object definitions](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria.ObjectData/TileObjectData.cs#L4976) verify small-pile and stalactite subtypes. [Moss attachments](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria.ObjectData/TileObjectData.cs#L4684), [large-pile definitions](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria.ObjectData/TileObjectData.cs#L3284), [pots](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria.ObjectData/TileObjectData.cs#L3549), and [statues](https://github.com/Live-yum/TerrariaDecompiledSource/blob/8255d34616c780af12079425ac92a0a7aed87d71/Terraria.ObjectData/TileObjectData.cs#L3008) corroborate segment geometry and style organization.
+
+The tests use only synthetic records. They cover saved-frame preservation, real atlas wrap boundaries, all four moss attachment orientations, world-coordinate plant mirroring across chunk boundaries, family fallthrough and invalid saved frames. These verify the stated static contract, not parity with a running game's lighting and dynamic effects.

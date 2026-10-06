@@ -1,0 +1,37 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { createCanvas, loadImage } from "@napi-rs/canvas";
+import { PNG } from "pngjs";
+import { planScene, renderScene } from "../core/renderer.mjs";
+test("Canvas pixel output equals exact stored-frame crop of original procedural test atlas", async () => {
+  const atlas = new PNG({ width: 128, height: 80 });
+  for (let y = 0; y < 80; y++)
+    for (let x = 0; x < 128; x++) {
+      const i = (y * 128 + x) * 4;
+      atlas.data.set([x, y, (x + y) % 256, 255], i);
+    }
+  const image = await loadImage(PNG.sync.write(atlas));
+  const region = {
+    rect: { x: 0, y: 0, width: 1, height: 1 },
+    cells: [
+      { active: true, type: 21, frameX: 36, frameY: 18, shape: 0, wall: 0 },
+    ],
+  };
+  const plan = planScene(region),
+    canvas = createCanvas(16, 16);
+  renderScene(
+    canvas.getContext("2d"),
+    plan,
+    new Map([["Tiles_21.png", image]]),
+    { strict: true },
+  );
+  const result = canvas.getContext("2d").getImageData(0, 0, 16, 16).data;
+  for (let y = 0; y < 16; y++)
+    for (let x = 0; x < 16; x++) {
+      const expected = (y + 18) * 128 * 4 + (x + 36) * 4;
+      assert.deepEqual(
+        Array.from(result.subarray((y * 16 + x) * 4, (y * 16 + x) * 4 + 4)),
+        Array.from(atlas.data.subarray(expected, expected + 4)),
+      );
+    }
+});
