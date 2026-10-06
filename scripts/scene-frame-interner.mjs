@@ -6,9 +6,13 @@ export const SCENE_FRAME_INTERN_LIMITS = Object.freeze({
 });
 
 /**
- * Intern the exact public frame key for common terrain/wall crops. A small
+ * By default, intern the exact public frame key for common terrain/wall crops. A small
  * integer identifies their complete key fields; no array or string is built on
  * a hit. Other command families retain the original key formatter unchanged.
+ *
+ * Opt-in numericIds returns the collision-free slot itself for common frames,
+ * with fallback strings kept in a disjoint key domain. Its hit counters describe
+ * asset-namespace reuse, not cached strings. Source identity stays downstream.
  *
  * Both asset namespaces and frame strings count toward the limits. A full
  * dictionary is cleared as a unit, avoiding LRU mutation on every tile. Keys
@@ -18,6 +22,7 @@ export const SCENE_FRAME_INTERN_LIMITS = Object.freeze({
 export function createSceneFrameInterner({
   maxEntries = SCENE_FRAME_INTERN_LIMITS.maxEntries,
   maxBytes = SCENE_FRAME_INTERN_LIMITS.maxBytes,
+  numericIds = false,
 } = {}) {
   if (
     !Number.isSafeInteger(maxEntries) ||
@@ -32,6 +37,9 @@ export function createSceneFrameInterner({
     frames = new Map();
   let disposed = false;
   const stats = {
+    numericIds: numericIds === true,
+    lookupDomain:
+      numericIds === true ? "canonical-asset-namespace" : "exact-frame-key",
     calls: 0,
     hits: 0,
     misses: 0,
@@ -157,6 +165,35 @@ export function createSceneFrameInterner({
         frameX * 128 +
         paint * 4 +
         (c.sh === 8 ? 2 : 0);
+      // Canonical ordinary fields have a collision-free, stable 25-bit ID.
+      // Keep it numeric through validation/preparation/composition; unlike the
+      // public string-key mode, no per-frame dictionary or formatting is needed.
+      // Other families retain a string key, a disjoint Map key domain.
+      if (numericIds === true) {
+        if (assets.has(c.asset)) stats.hits++;
+        else {
+          stats.misses++;
+          const bytes = c.asset.length * 2 + 64;
+          if (
+            stats.assetEntries + 1 > maxEntries ||
+            stats.estimatedBytes + bytes > maxBytes
+          ) {
+            clear();
+            stats.clears++;
+          }
+          if (bytes <= maxBytes) {
+            assets.set(c.asset, namespace);
+            stats.assetEntries++;
+            stats.estimatedBytes += bytes;
+            stats.peakEntries = Math.max(stats.peakEntries, stats.assetEntries);
+            stats.peakEstimatedBytes = Math.max(
+              stats.peakEstimatedBytes,
+              stats.estimatedBytes,
+            );
+          } else stats.bypasses++;
+        }
+        return slot + 1;
+      }
       const cached = frames.get(slot);
       if (cached !== undefined) {
         stats.hits++;

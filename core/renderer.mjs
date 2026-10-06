@@ -136,6 +136,7 @@ export const STORED_FRAME_TILES = Object.freeze([
   4, 10, 11, 14, 15, 18, 19, 21, 27, 172,
 ]);
 const stored = new Set(STORED_FRAME_TILES);
+const ropeTypes = new Set([213, 353, 365, 366, 504]);
 const modulo3 = (n) => ((n % 3) + 3) % 3;
 function maskAt(region, x, y, predicate) {
   let mask = 0;
@@ -192,6 +193,141 @@ export function planScene(region, options = {}) {
     region.cells?.length !== w * h
   )
     throw new Error("Invalid or oversized scene region");
+  // Optional destination crop for bounded exporters. Neighbor reads and all
+  // source diagnostics still use the complete scene; coordinates remain local
+  // to it. Keep a one-pixel guard for Canvas edge antialiasing.
+  const outputBounds = options.outputBounds;
+  if (
+    outputBounds !== undefined &&
+    (!outputBounds ||
+      ![
+        outputBounds.x,
+        outputBounds.y,
+        outputBounds.width,
+        outputBounds.height,
+      ].every(Number.isSafeInteger) ||
+      outputBounds.x < 0 ||
+      outputBounds.y < 0 ||
+      outputBounds.width < 1 ||
+      outputBounds.height < 1 ||
+      outputBounds.x + outputBounds.width > w * 16 ||
+      outputBounds.y + outputBounds.height > h * 16)
+  )
+    throw new RangeError(
+      "Output bounds must be a positive integer pixel rectangle contained by the scene",
+    );
+  // The full region remains available for neighbor reads and diagnostics. An
+  // explicit emission core only avoids allocating ordinary exterior owners.
+  // Reject ambiguous world coordinates before proving any owner invisible.
+  const emissionCore = options.emissionCore;
+  let emissionLeft = 0,
+    emissionTop = 0,
+    emissionRight = w,
+    emissionBottom = h;
+  if (emissionCore !== undefined) {
+    const r = region.rect;
+    if (
+      !emissionCore ||
+      ![
+        r.x,
+        r.y,
+        r.x + w,
+        r.y + h,
+        emissionCore.x,
+        emissionCore.y,
+        emissionCore.width,
+        emissionCore.height,
+        emissionCore.x + emissionCore.width,
+        emissionCore.y + emissionCore.height,
+      ].every(Number.isSafeInteger) ||
+      emissionCore.width < 1 ||
+      emissionCore.height < 1 ||
+      emissionCore.x < r.x ||
+      emissionCore.y < r.y ||
+      emissionCore.x + emissionCore.width > r.x + w ||
+      emissionCore.y + emissionCore.height > r.y + h
+    )
+      throw new RangeError(
+        "Emission core must be a positive integer rectangle contained by a safe integer scene",
+      );
+    // Retain one owner cell on every side. This encloses the 32px wall span
+    // (-8..24), all ordinary 16px shapes, and the existing 1px drawing guard.
+    emissionLeft = emissionCore.x - r.x - 1;
+    emissionTop = emissionCore.y - r.y - 1;
+    emissionRight = emissionCore.x - r.x + emissionCore.width + 1;
+    emissionBottom = emissionCore.y - r.y + emissionCore.height + 1;
+  }
+  // Pixel output bounds are authoritative when both APIs are supplied. The
+  // world-tile core is an ordinary-owner-only optimization for other callers;
+  // intersecting independent crops could remove owners visible in the output.
+  const outsideEmission = (x, y) =>
+    outputBounds === undefined &&
+    emissionCore !== undefined &&
+    (x < emissionLeft ||
+      x >= emissionRight ||
+      y < emissionTop ||
+      y >= emissionBottom);
+  const outputLeft = outputBounds?.x,
+    outputTop = outputBounds?.y,
+    outputRight = outputBounds && outputBounds.x + outputBounds.width,
+    outputBottom = outputBounds && outputBounds.y + outputBounds.height;
+  // Common terrain geometry is known and its owner coordinates are integers.
+  // Convert the guarded pixel crop to owner intervals once, avoiding numeric
+  // validation and destination arithmetic for every wall and ordinary tile.
+  // A full tile also conservatively contains all half-brick and slope shapes.
+  const ordinaryMinX = outputBounds && Math.floor((outputLeft - 17) / 16) + 1,
+    ordinaryMaxX = outputBounds && Math.ceil((outputRight + 1) / 16),
+    ordinaryMinY = outputBounds && Math.floor((outputTop - 17) / 16) + 1,
+    ordinaryMaxY = outputBounds && Math.ceil((outputBottom + 1) / 16),
+    wallMinX = outputBounds && Math.floor((outputLeft - 25) / 16) + 1,
+    wallMaxX = outputBounds && Math.ceil((outputRight + 9) / 16),
+    wallMinY = outputBounds && Math.floor((outputTop - 25) / 16) + 1,
+    wallMaxY = outputBounds && Math.ceil((outputBottom + 9) / 16);
+  let culledCommands = 0;
+  const outsideOutput = (x, y, dx, dy, dw, dh) => {
+    // Retain unknown owners, and every owner tile intersecting the crop even
+    // when a displaced sprite does not. Exporters count/diagnose by owner.
+    if (
+      !Number.isSafeInteger(x) ||
+      !Number.isSafeInteger(y) ||
+      (x * 16 < outputRight &&
+        y * 16 < outputBottom &&
+        x * 16 + 16 > outputLeft &&
+        y * 16 + 16 > outputTop)
+    )
+      return false;
+    return (
+      Number.isFinite(dx) &&
+      Number.isFinite(dy) &&
+      Number.isFinite(dw) &&
+      Number.isFinite(dh) &&
+      dw > 0 &&
+      dh > 0 &&
+      (dx + dw + 1 <= outputLeft ||
+        dy + dh + 1 <= outputTop ||
+        dx - 1 >= outputRight ||
+        dy - 1 >= outputBottom)
+    );
+  };
+  const hasWaterfallRegistry =
+    options.liquids?.enabled && options.liquids?.waterfallRegistry;
+  const cullCommand = (c) => {
+    if (
+      !outputBounds ||
+      !outsideOutput(c.x, c.y, c.dx, c.dy, c.dw, c.dh) ||
+      // The later tile-layer pass also emits diagnostics for unknown layers.
+      // Keep such commands so cropping cannot suppress those omissions.
+      (hasWaterfallRegistry &&
+        c.kind === "tile" &&
+        classifyTileDrawLayer(c.ownerType ?? c.type) === undefined)
+    )
+      return false;
+    culledCommands++;
+    // Cropping only removes command work. Preserve the full source dependency
+    // inventory so asset validation/provenance remains identical to the plan.
+    assets.add(c.asset);
+    return true;
+  };
   const cells = region.cells,
     commands = [],
     assets = new Set(),
@@ -233,6 +369,21 @@ export function planScene(region, options = {}) {
     sourceHiddenTiles: 0,
   };
   const visible = (t) => t?.active && (revealInvisible || !t.invisibleBlock);
+  // Planners read these options without retaining or mutating them. Reuse the
+  // per-scene values instead of allocating argument objects for every tile.
+  const visibilityOptions = { revealInvisible },
+    paintedOptions = { revealInvisible, paintEnabled },
+    pulsingOptions = {
+      revealInvisible,
+      mouseTextColor: options.mouseTextColor,
+    },
+    flameOptions = { revealInvisible, state: options.flameState },
+    treeOptions = {
+      revealInvisible,
+      paintEnabled,
+      treeContext: options.treeContext || region.treeContext,
+      getWorldTile: options.getWorldTile || region.getWorldTile,
+    };
   const reserve = () => {
     if (++commandCount > maxCommands)
       throw new Error(
@@ -245,11 +396,11 @@ export function planScene(region, options = {}) {
   };
   const add = (c) => {
     reserve();
-    emit(c);
+    if (!outputBounds || !cullCommand(c)) emit(c);
   };
   const queueCommand = (list, c) => {
     reserve();
-    list.push(c);
+    if (!outputBounds || !cullCommand(c)) list.push(c);
   };
   const reject = (t, x, y, reason) => {
     unsupportedCells.push({
@@ -302,6 +453,27 @@ export function planScene(region, options = {}) {
           support.hiddenWalls++;
           continue;
         }
+        if (
+          (outputBounds &&
+            (x < wallMinX || x >= wallMaxX || y < wallMinY || y >= wallMaxY)) ||
+          (outsideEmission(x, y) &&
+            Number.isInteger(t.wall) &&
+            t.wall > 0 &&
+            t.wall < wallAssets.length)
+        ) {
+          // The ordinary wall geometry is fixed; no frame or command object
+          // is needed outside the output. Preserve the logical budget/counts.
+          reserve();
+          culledCommands++;
+          assets.add(
+            typeof t.wall === "number" && wallAssets[t.wall] !== undefined
+              ? wallAssets[t.wall]
+              : "Wall_" + t.wall + ".png",
+          );
+          support.walls++;
+          support.approximateWalls++;
+          continue;
+        }
         // Match cellAt's region-edge contract without allocating a predicate
         // and four iterator tuples for every wall.
         const north = y > 0 ? cells[i - 1] : null,
@@ -331,7 +503,9 @@ export function planScene(region, options = {}) {
               modulo3(y + (region.rect.y || 0))
             ];
         const [gx, gy] = WALL_GRID[mask];
-        add({
+        // The owner interval already checked this fixed geometry.
+        reserve();
+        emit({
           kind: "wall",
           asset:
             typeof t.wall === "number" && wallAssets[t.wall] !== undefined
@@ -359,10 +533,10 @@ export function planScene(region, options = {}) {
     isSolid: isSolidOrSlopedTile,
   });
   if (liquidPlan.support.layer === "background")
-    for (const command of liquidPlan.commands.filter((c) => !c.drawBeforeTiles))
-      add(command);
-  for (const command of liquidPlan.commands.filter((c) => c.drawBeforeTiles))
-    add(command);
+    for (const command of liquidPlan.commands)
+      if (!command.drawBeforeTiles) add(command);
+  for (const command of liquidPlan.commands)
+    if (command.drawBeforeTiles) add(command);
   const tilePassStart = commands.length;
   for (let x = 0; x < w; x++)
     for (let y = 0; y < h; y++) {
@@ -403,6 +577,24 @@ export function planScene(region, options = {}) {
           t.frameY >= 0
         )
       ) {
+        if (
+          ((outputBounds &&
+            (x < ordinaryMinX ||
+              x >= ordinaryMaxX ||
+              y < ordinaryMinY ||
+              y >= ordinaryMaxY)) ||
+            outsideEmission(x, y)) &&
+          Number.isInteger(shape) &&
+          (!hasWaterfallRegistry || classifyTileDrawLayer(t.type) !== undefined)
+        ) {
+          reserve();
+          culledCommands++;
+          assets.add(ordinaryAsset);
+          support.tiles++;
+          support.approximateTiles++;
+          if (shape === 1 || shape >= 2) support.shapes++;
+          continue;
+        }
         const north = y > 0 ? cells[i - 1] : null,
           west = x > 0 ? cells[i - h] : null,
           east = x + 1 < w ? cells[i + h] : null,
@@ -457,37 +649,27 @@ export function planScene(region, options = {}) {
           command.clip = slopePolygon(shape);
           support.shapes++;
         }
-        add(command);
+        // Retain the conservative full-tile decision, including half bricks.
+        reserve();
+        emit(command);
         support.tiles++;
         support.approximateTiles++;
         continue;
       }
       const special =
         planners & PLAN_SPECIAL
-          ? planStaticSpecialObject(region, x, y, t, {
-              revealInvisible,
-              mouseTextColor: options.mouseTextColor,
-            })
+          ? planStaticSpecialObject(region, x, y, t, pulsingOptions)
           : null;
       const plant =
         !special && planners & PLAN_PLANTS
-          ? planStaticPlantsNext(region, x, y, t, {
-              revealInvisible,
-              mouseTextColor: options.mouseTextColor,
-            })
+          ? planStaticPlantsNext(region, x, y, t, pulsingOptions)
           : null;
       let furniture =
         !special && !plant && planners & PLAN_FURNITURE
-          ? planStaticFurnitureNext(region, x, y, t, {
-              revealInvisible,
-              paintEnabled,
-            })
+          ? planStaticFurnitureNext(region, x, y, t, paintedOptions)
           : null;
       if (furniture?.pendingFlames) {
-        const flame = planStaticFlames(region, x, y, t, {
-          revealInvisible,
-          state: options.flameState,
-        });
+        const flame = planStaticFlames(region, x, y, t, flameOptions);
         furniture =
           flame && !flame.unsupported
             ? {
@@ -504,10 +686,7 @@ export function planScene(region, options = {}) {
         plant ||
         furniture ||
         (planners & PLAN_MISC
-          ? planStaticMisc(region, x, y, t, {
-              revealInvisible,
-              paintEnabled,
-            })
+          ? planStaticMisc(region, x, y, t, paintedOptions)
           : null);
       if (misc) {
         if (misc.unsupported) {
@@ -535,12 +714,7 @@ export function planScene(region, options = {}) {
         continue;
       }
       if (planners & PLAN_TREE) {
-        const tree = planStaticTree(region, x, y, t, {
-          revealInvisible,
-          paintEnabled,
-          treeContext: options.treeContext || region.treeContext,
-          getWorldTile: options.getWorldTile || region.getWorldTile,
-        });
+        const tree = planStaticTree(region, x, y, t, treeOptions);
         if (!tree.supported) {
           reject(t, x, y, tree.reason);
           continue;
@@ -564,7 +738,7 @@ export function planScene(region, options = {}) {
         flipX = false,
         opacity = 1,
         spriteAsset = `Tiles_${t.type}.png`,
-        extraLayers = [];
+        extraLayers;
       const hasFrame =
         Number.isInteger(t.frameX) &&
         Number.isInteger(t.frameY) &&
@@ -572,15 +746,15 @@ export function planScene(region, options = {}) {
         t.frameY >= 0;
       const nature =
         planners & PLAN_NATURE
-          ? planStaticNature(region, x, y, t, { revealInvisible })
+          ? planStaticNature(region, x, y, t, visibilityOptions)
           : null;
       const object =
         planners & PLAN_OBJECT
-          ? planStaticObject(region, x, y, t, { revealInvisible })
+          ? planStaticObject(region, x, y, t, visibilityOptions)
           : null;
       const block =
         planners & PLAN_BLOCK
-          ? planStaticBlock(region, x, y, t, { revealInvisible })
+          ? planStaticBlock(region, x, y, t, visibilityOptions)
           : null;
       if (nature) {
         if (!nature.supported) {
@@ -603,9 +777,8 @@ export function planScene(region, options = {}) {
           reject(t, x, y, block.unsupported);
           continue;
         }
-        const layers = Array.isArray(block) ? block : [block];
-        const base = layers[0];
-        extraLayers = layers.slice(1);
+        const base = Array.isArray(block) ? block[0] : block;
+        if (Array.isArray(block)) extraLayers = block;
         ({ sx, sy, sw, sh, offsetX, offsetY, flipX, opacity, fidelity } = base);
         spriteAsset = base.asset;
         support.staticBlocks++;
@@ -634,7 +807,6 @@ export function planScene(region, options = {}) {
         fidelity = "stored-frame";
         support.storedFrames++;
       } else if (!hasFrame && t.type === 353) {
-        const ropeTypes = new Set([213, 353, 365, 366, 504]);
         const connects = (n) =>
           visible(n) &&
           !n.inactive &&
@@ -683,9 +855,9 @@ export function planScene(region, options = {}) {
         ownerType: t.type,
         paintId: paintEnabled ? t.paint || 0 : 0,
         fidelity,
-        ...(flipX ? { flipX: true } : {}),
-        ...(opacity !== 1 ? { opacity } : {}),
       };
+      if (flipX) command.flipX = true;
+      if (opacity !== 1) command.opacity = opacity;
       if (shape === 1) {
         command.sh = 8;
         command.dh = 8;
@@ -696,7 +868,8 @@ export function planScene(region, options = {}) {
         support.shapes++;
       }
       add(command);
-      for (const layer of extraLayers) {
+      for (let i = 1; extraLayers && i < extraLayers.length; i++) {
+        const layer = extraLayers[i];
         const overlay = {
           ...command,
           asset: layer.asset,
@@ -722,10 +895,7 @@ export function planScene(region, options = {}) {
         const t = cellAt(ctx, wx - ctx.rect.x, wy - ctx.rect.y);
         if (!visible(t) || !STATIC_SPECIAL_OBJECT_TILES.includes(t.type))
           continue;
-        const extra = planStaticSpecialObject(region, x, y, t, {
-          revealInvisible,
-          mouseTextColor: options.mouseTextColor,
-        });
+        const extra = planStaticSpecialObject(region, x, y, t, pulsingOptions);
         if (extra?.unsupported) {
           contextOmissions.push({
             x: wx,
@@ -755,8 +925,7 @@ export function planScene(region, options = {}) {
     foliageCommands,
     specialAbove,
   ];
-  const registry =
-    options.liquids?.enabled && options.liquids?.waterfallRegistry;
+  const registry = hasWaterfallRegistry;
   if (registry) {
     if (
       typeof registry.commandsFor !== "function" ||
@@ -797,8 +966,8 @@ export function planScene(region, options = {}) {
     for (const group of tileGroups) for (const c of group) emit(c);
   }
   if (liquidPlan.support.layer === "foreground")
-    for (const command of liquidPlan.commands.filter((c) => !c.drawBeforeTiles))
-      add(command);
+    for (const command of liquidPlan.commands)
+      if (!command.drawBeforeTiles) add(command);
   const warnings = [
     "Static unlit texture preview; not a pixel-exact Terraria screenshot. Region-edge framing has no outside-neighbor context.",
   ];
@@ -915,6 +1084,10 @@ export function planScene(region, options = {}) {
     requiredAssets: [...assets].sort(),
     width: w * 16,
     height: h * 16,
+    ...(outputBounds ? { culledCommands } : {}),
+    ...(emissionCore !== undefined
+      ? { generationCulling: { culledCommands, logicalCommands: commandCount } }
+      : {}),
   };
 }
 /** Preflight all textures before strict drawing. Never substitutes colors or invented sprites. */

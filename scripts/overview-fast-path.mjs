@@ -1,3 +1,4 @@
+import { writeOverviewBounds } from "./overview-geometry.mjs";
 import { prepareSceneFrames, sceneFrameKey } from "../core/scene-frames.mjs";
 import { textureSource } from "../core/assets.mjs";
 import { prepareRawOverviewFrame } from "./raw-overview-frame.mjs";
@@ -234,6 +235,7 @@ export function prepareOpaqueOverview(
     inputEncoding = "tconvert-game-raw",
     keyCache = null,
     metadata = null,
+    analysis = null,
   } = {},
 ) {
   const widthTiles = plan.width / 16,
@@ -261,46 +263,46 @@ export function prepareOpaqueOverview(
       skippedCommands: 0,
       totalCommands: plan.commands.length,
     };
+  const geometry =
+    analysis?.commands === plan.commands &&
+    analysis.widthTiles === widthTiles &&
+    analysis.heightTiles === heightTiles
+      ? analysis
+      : null;
   // Invalid geometry cannot establish absence of overlap. Conservatively leave
   // all work to the ordinary compositor rather than infer a usable rectangle.
   if (
-    plan.commands.some(
-      (c) =>
-        !Number.isFinite(c.dx) ||
-        !Number.isFinite(c.dy) ||
-        !Number.isFinite(c.dw) ||
-        !Number.isFinite(c.dh) ||
-        c.dw <= 0 ||
-        c.dh <= 0,
-    )
+    geometry
+      ? !geometry.validGeometry
+      : plan.commands.some(
+          (c) =>
+            !Number.isFinite(c.dx) ||
+            !Number.isFinite(c.dy) ||
+            !Number.isFinite(c.dw) ||
+            !Number.isFinite(c.dh) ||
+            c.dw <= 0 ||
+            c.dh <= 0,
+        )
   )
     return result;
-  const last = new Int32Array(safe.length).fill(-1),
-    bounds = new Int32Array(plan.commands.length * 4);
-  for (let i = 0; i < plan.commands.length; i++) {
-    const c = plan.commands[i],
-      offset = i * 4;
-    // Fractional and clipped draws are expanded conservatively by a pixel to
-    // avoid making any assumption about rasterizer edge coverage.
-    const pad =
-      c.clip ||
-      !Number.isInteger(c.dx) ||
-      !Number.isInteger(c.dy) ||
-      !Number.isInteger(c.dw) ||
-      !Number.isInteger(c.dh)
-        ? 1
-        : 0;
-    const x0 = Math.max(0, Math.floor((c.dx - pad) / 16)),
-      y0 = Math.max(0, Math.floor((c.dy - pad) / 16)),
-      x1 = Math.min(widthTiles, Math.ceil((c.dx + c.dw + pad) / 16)),
-      y1 = Math.min(heightTiles, Math.ceil((c.dy + c.dh + pad) / 16));
-    bounds[offset] = x0;
-    bounds[offset + 1] = y0;
-    bounds[offset + 2] = x1;
-    bounds[offset + 3] = y1;
-    for (let y = y0; y < y1; y++)
-      for (let x = x0; x < x1; x++) last[y * widthTiles + x] = i;
-  }
+  const last = geometry?.last ?? new Int32Array(safe.length).fill(-1),
+    bounds = geometry?.bounds ?? new Int32Array(plan.commands.length * 4);
+  if (!geometry)
+    for (let i = 0; i < plan.commands.length; i++) {
+      const offset = i * 4;
+      writeOverviewBounds(
+        plan.commands[i],
+        widthTiles,
+        heightTiles,
+        0,
+        0,
+        bounds,
+        offset,
+      );
+      for (let y = bounds[offset + 1]; y < bounds[offset + 3]; y++)
+        for (let x = bounds[offset]; x < bounds[offset + 2]; x++)
+          last[y * widthTiles + x] = i;
+    }
   const groups = new Map();
   for (let i = 0; i < last.length; i++) {
     if (last[i] < 0) continue;

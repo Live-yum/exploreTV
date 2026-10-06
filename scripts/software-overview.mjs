@@ -1,3 +1,8 @@
+import {
+  isIntegerOverviewDraw,
+  writeOverviewBounds,
+} from "./overview-geometry.mjs";
+export { isIntegerOverviewDraw } from "./overview-geometry.mjs";
 import { textureSource } from "../core/assets.mjs";
 import { createCanvas as defaultCreateCanvas } from "@napi-rs/canvas";
 import { prepareRawOverviewFrame } from "./raw-overview-frame.mjs";
@@ -22,102 +27,45 @@ export const SOFTWARE_OVERVIEW_SAFE = 4;
 export const SOFTWARE_OVERVIEW_NATIVE =
   SOFTWARE_OVERVIEW_INTEGER | SOFTWARE_OVERVIEW_SAFE;
 
-export function isIntegerOverviewDraw(c) {
-  const opacity = c.opacity;
-  return (
-    (!c.clip || canonicalSlopeClip(c) !== null) &&
-    (opacity === undefined ||
-      (Number.isFinite(opacity) && opacity >= 0 && opacity <= 1)) &&
-    Number.isSafeInteger(c.dx) &&
-    Number.isSafeInteger(c.dy) &&
-    Math.abs(c.dx) <= 0x3fffffff &&
-    Math.abs(c.dy) <= 0x3fffffff &&
-    Number.isSafeInteger(c.dw) &&
-    Number.isSafeInteger(c.dh) &&
-    c.dw > 0 &&
-    c.dh > 0 &&
-    c.dw <= 64 &&
-    c.dh <= 64 &&
-    c.dw === c.sw &&
-    c.dh === c.sh
-  );
-}
-
-export function partitionSoftwareOverview(plan, core, region) {
+export function partitionSoftwareOverview(plan, core, region, analysis = null) {
   const width = core.width,
     height = core.height,
     left = (core.x - region.rect.x) * 16,
     top = (core.y - region.rect.y) * 16,
-    unsafe = new Uint8Array(width * height),
+    geometry =
+      analysis?.commands === plan.commands &&
+      analysis.width === width &&
+      analysis.height === height &&
+      analysis.left === left &&
+      analysis.top === top
+        ? analysis
+        : null,
+    unsafe = geometry?.unsafe ?? new Uint8Array(width * height),
     rectangle = new Int32Array(4);
-  let unsafeCells = 0;
-  // One reusable rectangle replaces temporary geometry arrays and callback
-  // closures for each command. Clamp both ends before writing the Int32 view;
-  // even finite but extreme off-scene coordinates remain an empty rectangle.
-  const bounds = (c) => {
-    const dx = c.dx,
-      dy = c.dy,
-      dw = c.dw,
-      dh = c.dh;
-    if (
-      !Number.isFinite(dx) ||
-      !Number.isFinite(dy) ||
-      !Number.isFinite(dw) ||
-      !Number.isFinite(dh) ||
-      dw <= 0 ||
-      dh <= 0
-    ) {
-      rectangle[0] = rectangle[1] = 0;
-      rectangle[2] = width;
-      rectangle[3] = height;
-      return false;
+  let unsafeCells = geometry?.unsafeCells ?? 0;
+  const bounds = (c) =>
+    writeOverviewBounds(c, width, height, left, top, rectangle);
+  if (!geometry)
+    for (const command of plan.commands) {
+      if (isIntegerOverviewDraw(command)) continue;
+      if (!bounds(command)) {
+        unsafe.fill(1);
+        unsafeCells = unsafe.length;
+        break;
+      }
+      const x0 = rectangle[0],
+        y0 = rectangle[1],
+        x1 = rectangle[2],
+        y1 = rectangle[3];
+      for (let y = y0; y < y1; y++) {
+        const end = y * width + x1;
+        for (let i = y * width + x0; i < end; i++)
+          if (!unsafe[i]) {
+            unsafe[i] = 1;
+            unsafeCells++;
+          }
+      }
     }
-    const pad =
-      c.clip ||
-      !Number.isInteger(dx) ||
-      !Number.isInteger(dy) ||
-      !Number.isInteger(dw) ||
-      !Number.isInteger(dh)
-        ? 1
-        : 0;
-    rectangle[0] = Math.min(
-      width,
-      Math.max(0, Math.floor((dx - left - pad) / 16)),
-    );
-    rectangle[1] = Math.min(
-      height,
-      Math.max(0, Math.floor((dy - top - pad) / 16)),
-    );
-    rectangle[2] = Math.max(
-      0,
-      Math.min(width, Math.ceil((dx + dw - left + pad) / 16)),
-    );
-    rectangle[3] = Math.max(
-      0,
-      Math.min(height, Math.ceil((dy + dh - top + pad) / 16)),
-    );
-    return true;
-  };
-  for (const command of plan.commands) {
-    if (isIntegerOverviewDraw(command)) continue;
-    if (!bounds(command)) {
-      unsafe.fill(1);
-      unsafeCells = unsafe.length;
-      break;
-    }
-    const x0 = rectangle[0],
-      y0 = rectangle[1],
-      x1 = rectangle[2],
-      y1 = rectangle[3];
-    for (let y = y0; y < y1; y++) {
-      const end = y * width + x1;
-      for (let i = y * width + x0; i < end; i++)
-        if (!unsafe[i]) {
-          unsafe[i] = 1;
-          unsafeCells++;
-        }
-    }
-  }
   // A summed-area table makes overlap queries constant-time, including large
   // sprites. It is bounded by the same core as the unsafe bitmap; uniform cores
   // need no table. Only commands actually queried acquire a cached class.
@@ -137,17 +85,18 @@ export function partitionSoftwareOverview(plan, core, region) {
       }
     }
   }
-  const classes = new Map(),
+  // The opt-in indexed path stores one byte per command. Diagnostic commands
+  // outside this plan use the original geometry calculation without retention.
+  const classes = geometry
+      ? new Uint8Array(plan.commands.length).fill(255)
+      : null,
+    fallbackClasses = geometry ? null : new Map(),
     classLimit = plan.commands.length;
-  const classify = (c) => {
-    const cached = classes.get(c);
-    if (cached !== undefined) return cached;
-    let flags = isIntegerOverviewDraw(c) ? SOFTWARE_OVERVIEW_INTEGER : 0;
-    bounds(c);
-    const x0 = rectangle[0],
-      y0 = rectangle[1],
-      x1 = rectangle[2],
-      y1 = rectangle[3];
+  const classifyBounds = (flags, values, offset) => {
+    const x0 = values[offset],
+      y0 = values[offset + 1],
+      x1 = values[offset + 2],
+      y1 = values[offset + 3];
     if (x0 < x1 && y0 < y1) {
       const cells = (x1 - x0) * (y1 - y0),
         count = prefix
@@ -161,10 +110,34 @@ export function partitionSoftwareOverview(plan, core, region) {
       if (count) flags |= SOFTWARE_OVERVIEW_UNSAFE;
       if (count < cells) flags |= SOFTWARE_OVERVIEW_SAFE;
     }
-    // A private plan owns every normal caller's command. Bound retention even
-    // if a diagnostic caller also queries objects which are absent from it.
-    if (classes.size < classLimit) classes.set(c, flags);
     return flags;
+  };
+  const classifyAt = (index) => {
+    if (!Number.isInteger(index) || index < 0 || index >= classLimit)
+      throw new RangeError("Invalid overview command index");
+    if (!geometry) return classify(plan.commands[index]);
+    if (classes[index] !== 255) return classes[index];
+    geometry.coreBoundsAt(index, rectangle);
+    return (classes[index] = classifyBounds(
+      geometry.integer[index],
+      rectangle,
+      0,
+    ));
+  };
+  const classify = (c) => {
+    if (geometry) {
+      const index = geometry.indexOf(c);
+      if (index >= 0) return classifyAt(index);
+    } else {
+      const cached = fallbackClasses.get(c);
+      if (cached !== undefined) return cached;
+    }
+    const flags = isIntegerOverviewDraw(c) ? SOFTWARE_OVERVIEW_INTEGER : 0;
+    bounds(c);
+    const result = classifyBounds(flags, rectangle, 0);
+    if (fallbackClasses && fallbackClasses.size < classLimit)
+      fallbackClasses.set(c, result);
+    return result;
   };
   return {
     unsafe,
@@ -174,6 +147,7 @@ export function partitionSoftwareOverview(plan, core, region) {
     left,
     top,
     classify,
+    classifyAt,
     touchesUnsafe(c) {
       return !!(classify(c) & SOFTWARE_OVERVIEW_UNSAFE);
     },
@@ -199,7 +173,18 @@ export function createSoftwareOverview({
   maxFrames = 4096,
   maxLiveFrameBytes = Math.max(maxFrameBytes, MAX_FRAME_PIXEL_BYTES),
   createCanvas = defaultCreateCanvas,
+  onNativeBatch = null,
+  detailedRgbaArena = null,
 } = {}) {
+  if (onNativeBatch !== null && typeof onNativeBatch !== "function")
+    throw new TypeError("Invalid native overview recording callback");
+  if (
+    detailedRgbaArena !== null &&
+    (typeof detailedRgbaArena.acquire !== "function" ||
+      !Number.isSafeInteger(detailedRgbaArena.maxBytes) ||
+      detailedRgbaArena.maxBytes < 4)
+  )
+    throw new TypeError("Invalid shared overview RGBA arena");
   if (
     !Number.isSafeInteger(maxFrameBytes) ||
     maxFrameBytes < 1 ||
@@ -218,7 +203,8 @@ export function createSoftwareOverview({
   let nextIdentity = 1,
     backing = null,
     disposed = false;
-  let releaseCurrentView = NO_CURRENT_VIEW;
+  let releaseCurrentView = NO_CURRENT_VIEW,
+    currentPixelLease = null;
   const stats = {
     available: nativeBlitterStatus.available,
     backend: nativeBlitterStatus.available
@@ -249,10 +235,23 @@ export function createSoftwareOverview({
     evictions: 0,
     bufferBytes: 0,
     peakBufferBytes: 0,
+    sharedBufferBytes: 0,
+    peakSharedBufferBytes: 0,
     nativeCommands: 0,
     canvasCommands: 0,
     unsafeCells: 0,
     totalCells: 0,
+  };
+  // Keep only the arena-created lease after finish(), never a callback created
+  // inside begin(): such a callback could retain a completed plan and its maps.
+  const releasePixelLease = (lease = currentPixelLease) => {
+    if (lease === null) return;
+    lease.release();
+    if (currentPixelLease === lease) currentPixelLease = null;
+  };
+  const releasePixels = () => {
+    releaseCurrentView();
+    releasePixelLease();
   };
   const identity = (object) => {
     if (!object) return 0;
@@ -402,25 +401,46 @@ export function createSoftwareOverview({
   };
   return {
     stats,
-    begin(plan, core, region, assets, keyCache) {
+    // The next draw invalidates the prior view before direct borrows its arena.
+    releasePixels,
+    begin(plan, core, region, assets, keyCache, analysis = null) {
       if (disposed) throw new Error("Software overview is disposed");
-      releaseCurrentView();
+      releasePixels();
       if (!nativeBlitterStatus.available) return null;
-      const partition = partitionSoftwareOverview(plan, core, region);
+      const partition = partitionSoftwareOverview(plan, core, region, analysis);
       stats.unsafeCells += partition.unsafeCells;
       stats.totalCells += partition.unsafe.length;
       if (partition.unsafeCells === partition.unsafe.length) return null;
       const width = core.width * 16,
         height = core.height * 16;
       const bytes = width * height * 4;
-      if (!backing || backing.length < bytes)
-        backing = Buffer.allocUnsafe(bytes);
-      stats.bufferBytes = backing.length;
-      stats.peakBufferBytes = Math.max(stats.peakBufferBytes, backing.length);
-      const pixels = backing.subarray(0, bytes);
-      const clearStarted = performance.now();
-      clearOpaque(pixels);
-      stats.clearMilliseconds += performance.now() - clearStarted;
+      let pixelLease = null,
+        pixels;
+      if (detailedRgbaArena) {
+        if (bytes > detailedRgbaArena.maxBytes) return null;
+        pixelLease = detailedRgbaArena.acquire(bytes);
+        currentPixelLease = pixelLease;
+        pixels = pixelLease.pixels;
+        stats.sharedBufferBytes = detailedRgbaArena.maxBytes;
+        stats.peakSharedBufferBytes = Math.max(
+          stats.peakSharedBufferBytes,
+          stats.sharedBufferBytes,
+        );
+      } else {
+        if (!backing || backing.length < bytes)
+          backing = Buffer.allocUnsafe(bytes);
+        stats.bufferBytes = backing.length;
+        stats.peakBufferBytes = Math.max(stats.peakBufferBytes, backing.length);
+        pixels = backing.subarray(0, bytes);
+      }
+      try {
+        const clearStarted = performance.now();
+        clearOpaque(pixels);
+        stats.clearMilliseconds += performance.now() - clearStarted;
+      } catch (error) {
+        releasePixelLease(pixelLease);
+        throw error;
+      }
       const namespaces = new Map(),
         local = new Map(),
         borrowed = new Set(),
@@ -496,6 +516,13 @@ export function createSoftwareOverview({
         nativeCommands: 0,
         // Drawing is over, but pixels/unsafe remain readable for reduction.
         finish,
+        // An enclosing engine can abort after begin(), outside this view's own
+        // preparation/draw catches. Return only this output's lease, so an old
+        // failing engine invocation cannot invalidate a reentrant newer view.
+        releasePixels() {
+          finish();
+          releasePixelLease(pixelLease);
+        },
         preparationCommands(commands) {
           assertOpen();
           releaseBorrowed();
@@ -560,6 +587,7 @@ export function createSoftwareOverview({
             return prepared;
           } catch (error) {
             finish();
+            releasePixelLease(pixelLease);
             throw error;
           }
         },
@@ -605,6 +633,15 @@ export function createSoftwareOverview({
               );
               stats.nativeComposeMilliseconds +=
                 performance.now() - composeStarted;
+              // Recording is opt-in and synchronous: the batch's borrowed
+              // frame buffers remain pinned until this callback returns.
+              if (onNativeBatch)
+                onNativeBatch({
+                  descriptors: descriptors.subarray(0, n),
+                  sources,
+                  width,
+                  height,
+                });
               result.nativeCommands += n / 8;
               stats.nativeCommands += n / 8;
               stats.nativeBatches++;
@@ -690,7 +727,10 @@ export function createSoftwareOverview({
           } finally {
             clearStaged();
             releaseBorrowed();
-            if (!completed) finish();
+            if (!completed) {
+              finish();
+              releasePixelLease(pixelLease);
+            }
           }
         },
       };
@@ -698,12 +738,13 @@ export function createSoftwareOverview({
     },
     dispose() {
       disposed = true;
-      releaseCurrentView();
+      releasePixels();
       for (const [key, entry] of entries) retire(key, entry);
       backing = null;
       stats.frameBytes = 0;
       stats.frameEntries = 0;
       stats.bufferBytes = 0;
+      stats.sharedBufferBytes = 0;
     },
   };
 }

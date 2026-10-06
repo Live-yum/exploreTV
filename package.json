@@ -12,9 +12,12 @@
     "dev:viewer": "node scripts/serve-viewer.mjs",
     "prepare:example": "node scripts/prepare-example.mjs",
     "prepare:overview": "node scripts/prepare-overview.mjs",
+    "prepare:world": "node --expose-gc --max-old-space-size=48 --max-semi-space-size=1 scripts/prepared-world.mjs prepare",
+    "export:prepared": "node --expose-gc --max-old-space-size=48 --max-semi-space-size=1 scripts/prepared-world.mjs replay",
+    "encode:overview": "node --expose-gc scripts/encode-overview.mjs",
     "render:full": "node scripts/render-full-world.mjs",
     "export:full": "node scripts/export-world.mjs",
-    "export:overview": "node --expose-gc --max-old-space-size=48 --max-semi-space-size=4 scripts/export-overview.mjs"
+    "export:overview": "node --expose-gc --max-old-space-size=48 --max-semi-space-size=1 scripts/export-overview.mjs"
   },
   "dependencies": {
     "vue": "3.5.13"

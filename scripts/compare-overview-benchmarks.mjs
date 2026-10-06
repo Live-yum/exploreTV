@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const OVERVIEW_BASELINE_COMMIT =
-  "7fa7da3daf37e01d0bd3569edbdf46cdeb54529e";
+  "12389011ce9be374328e331837f1f16645ddb5fb";
 const WORLD_SHA =
   "d551a6b360c7af49a07dadbb1e82223ac43ad398e2054c29f500ec5e8b5b1cab";
 const PIXEL_SHA =
@@ -14,8 +14,10 @@ export function compareOverviewBenchmarks(
   baseline,
   candidate,
   candidateCommit,
+  baselineCommit = OVERVIEW_BASELINE_COMMIT,
 ) {
   assert.match(candidateCommit, /^[0-9a-f]{40}$/);
+  assert.match(baselineCommit, /^[0-9a-f]{40}$/);
   for (const [name, run] of [
     ["baseline", baseline],
     ["candidate", candidate],
@@ -87,10 +89,10 @@ export function compareOverviewBenchmarks(
   const candidateBytes = candidate.timing.conservativeAggregatePeakRssBytes;
   return {
     schema: "exploretv-overview-sequential-comparison-v1",
-    baselineCommit: OVERVIEW_BASELINE_COMMIT,
+    baselineCommit,
     candidateCommit,
     method:
-      "CI runs the pinned baseline then candidate sequentially on the same runner with identical installed rendering dependencies. The candidate adds build-time Node-API headers, explicitly prepares its native kernels before timing, and defaults exporter startup MALLOC_ARENA_MAX to 2 and MALLOC_MMAP_THRESHOLD_ to 131072. Explicit caller values are preserved; corresponding glibc tunables take precedence. Its report records requested allocator and Node settings, not an assumed effective arena count. The baseline retains its original launch configuration. Both use fresh processes and complete-lifetime RSS monitors. No world is pre-rendered. OS file-cache state is uncontrolled.",
+      "CI runs the pinned baseline then candidate sequentially on the same runner with identical installed rendering dependencies. Both prepare the existing native kernels before timing and use exporter startup MALLOC_ARENA_MAX=2 and MALLOC_MMAP_THRESHOLD_=131072. Explicit caller values are preserved; corresponding glibc tunables take precedence. Its report records requested allocator and Node settings, not an assumed effective arena count. The baseline retains its original launch configuration. Both use fresh processes and complete-lifetime RSS monitors. No world is pre-rendered. OS file-cache state is uncontrolled.",
     worldSha256: WORLD_SHA,
     wholeImagePixelSha256: PIXEL_SHA,
     pixels: 20160000,

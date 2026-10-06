@@ -168,20 +168,25 @@ async function draw(
 
 function assertEquivalent(actual, baseline) {
   assert.deepEqual(actual.pixels, baseline.pixels);
+  const { commands, culledCommands, ...diagnostics } = actual.plan,
+    { commands: fullCommands, ...fullDiagnostics } = baseline.plan;
   assert.deepEqual(
-    actual.plan,
-    baseline.plan,
-    "the complete diagnostic plan is returned unchanged",
+    diagnostics,
+    fullDiagnostics,
+    "the complete diagnostic and dependency inventory is returned unchanged",
   );
+  assert.equal(commands.length + (culledCommands ?? 0), fullCommands.length);
   assert.equal(actual.coreCommands, baseline.coreCommands);
   assert.deepEqual(actual.omissions, baseline.omissions);
   for (const counter of logicalCounters)
     assert.deepEqual(actual.stats[counter], baseline.stats[counter], counter);
-  assert.ok(actual.stats.earlyCulledHaloCommands > 0);
+  assert.ok(actual.stats.plannerCulledCommands > 0);
+  assert.equal(actual.stats.plannerCulledCommands, culledCommands);
   assert.equal(actual.stats.maxPlanCommands, baseline.plan.commands.length);
   assert.equal(
     actual.stats.frameKeyInterner.calls,
-    baseline.plan.commands.length - actual.stats.earlyCulledHaloCommands,
+    baseline.plan.commands.length - actual.stats.plannerCulledCommands -
+      actual.stats.earlyCulledHaloCommands,
     "culled halo commands never reach frame-key generation",
   );
   assert.equal(
