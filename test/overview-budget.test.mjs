@@ -132,6 +132,7 @@ test("an in-budget overview retains normal success, verification and read-only s
   assert.equal(report.png.width, 2);
   assert.equal(report.png.height, 2);
   assert.equal(report.resourceLimits.rssBytes, 500000000);
+  assert.equal(report.resourceLimits.preferredRssBytes, 300000000);
   assert.equal(report.resourceLimits.runtimeSeconds, 600);
   assert.equal(report.resourceLimits.renderingProcesses, 1);
   assert.equal(report.resourceLimits.childProcesses, 0);

@@ -1,3 +1,5 @@
+import { createStaticWaterfallRegistry } from "../core/static-waterfalls.mjs";
+
 /** Exact, read-only, low-heap storage for a complete static waterfall scene. */
 const BUCKET_SIZE = 64;
 const bucketKey = (x, y) => `${x},${y}`;
@@ -22,15 +24,15 @@ function freezeTree(value) {
   return value;
 }
 
-function finishColumn(column) {
+function finishColumn(column, count, order) {
   if (column.constant) {
     column.data = null;
     return;
   }
-  if (!column.integer) return;
   const { min, max } = column;
-  const Type =
-    min >= 0 && max <= 255
+  const Type = !column.integer
+    ? Float64Array
+    : min >= 0 && max <= 255
       ? Uint8Array
       : min >= -128 && max <= 127
         ? Int8Array
@@ -43,7 +45,11 @@ function finishColumn(column) {
               : min >= 0 && max <= 4294967295
                 ? Uint32Array
                 : Float64Array;
-  if (Type !== Float64Array) column.data = new Type(column.data);
+  const data = new Type(count);
+  if (order) {
+    for (let i = 0; i < count; i++) data[i] = column.data[order[i]];
+  } else data.set(column.data.subarray(0, count));
+  column.data = data;
 }
 
 function columnValue(column, index) {
@@ -158,9 +164,21 @@ function makeRegistry(
  * vertexDomain, retain exactly the values supplied by the source query.
  */
 export function compactWaterfallRegistry(registry) {
+  validateViewport(registry);
+  if (typeof registry.commandsFor !== "function")
+    throw new TypeError("Waterfall registry must provide commandsFor");
+  const store = createCompactCommandStore();
+  const commands = registry.commandsFor(registry.viewport);
+  for (let index = 0; index < commands.length; index++) {
+    store.append(commands[index]);
+    commands[index] = null;
+  }
+  return store.finish(registry);
+}
+
+function validateViewport(registry) {
   if (
     !registry ||
-    typeof registry.commandsFor !== "function" ||
     !registry.viewport ||
     registry.viewport.x !== 0 ||
     registry.viewport.y !== 0
@@ -168,17 +186,39 @@ export function compactWaterfallRegistry(registry) {
     throw new TypeError(
       "Compaction requires a complete whole-world waterfall registry",
     );
-  const metadata = {};
-  for (const [key, value] of Object.entries(registry))
-    if (typeof value !== "function") metadata[key] = structuredClone(value);
-  freezeTree(metadata);
-  const commands = registry.commandsFor(metadata.viewport);
-  const count = commands.length;
+}
+
+/**
+ * Plan directly into bounded numeric columns. Only one origin's provisional
+ * commands exist at a time; no complete object registry or full-world query is
+ * created. Stable batch ordering is applied to numeric rows at finalization.
+ */
+export function createCompactStaticWaterfallRegistry(world, options = {}) {
+  const viewport = options.viewport ?? {
+    x: 0,
+    y: 0,
+    width: world?.width,
+    height: world?.height,
+  };
+  validateViewport({ viewport });
+  if (viewport.width !== world?.width || viewport.height !== world?.height)
+    throw new TypeError("Compaction requires the complete world dimensions");
+  return createStaticWaterfallRegistry(world, {
+    ...options,
+    commandStore: createCompactCommandStore({ sortBatches: true }),
+  });
+}
+
+function createCompactCommandStore({ sortBatches = false } = {}) {
+  let capacity = 1024,
+    count = 0,
+    finished = false,
+    rowTemplates = new Uint32Array(capacity);
   const columns = [],
     fieldColumns = new Map(),
     templates = [],
-    templateIds = new Map();
-  let rowTemplates = new Uint32Array(count);
+    templateIds = new Map(),
+    templateLeaves = [];
   const compile = (value, path, leaves) => {
     if (typeof value === "number") {
       const key = JSON.stringify(path);
@@ -187,7 +227,7 @@ export function compactWaterfallRegistry(registry) {
         column = columns.length;
         fieldColumns.set(key, column);
         columns.push({
-          data: new Float64Array(count),
+          data: null,
           first: undefined,
           seen: false,
           constant: true,
@@ -216,12 +256,29 @@ export function compactWaterfallRegistry(registry) {
       };
     return { type: "constant", value };
   };
-  const templateLeaves = [];
-  for (let index = 0; index < count; index++) {
-    const command = commands[index];
-    // Source queries append these two derived fields; calculate them on demand.
-    delete command.x;
-    delete command.y;
+  const append = (source) => {
+    if (finished)
+      throw new Error("Waterfall command store is already finished");
+    if (count === capacity) {
+      capacity *= 2;
+      const rows = new Uint32Array(capacity);
+      rows.set(rowTemplates);
+      rowTemplates = rows;
+      for (const column of columns) {
+        if (!column.data) continue;
+        const data = new Float64Array(capacity);
+        data.set(column.data);
+        column.data = data;
+      }
+    }
+    // Public queries append these two derived fields. Never mutate their result
+    // or the underlying source command while dropping them from stored rows.
+    let command = source;
+    if (Object.hasOwn(source, "x") || Object.hasOwn(source, "y")) {
+      command = { ...source };
+      delete command.x;
+      delete command.y;
+    }
     const key = signature(command);
     let template = templateIds.get(key);
     if (template === undefined) {
@@ -231,63 +288,100 @@ export function compactWaterfallRegistry(registry) {
       templates.push(compile(command, [], leaves));
       templateLeaves.push(leaves);
     }
-    rowTemplates[index] = template;
+    rowTemplates[count] = template;
     for (const leaf of templateLeaves[template]) {
       let value = command;
       for (const part of leaf.path) value = value[part];
       const column = columns[leaf.column];
-      column.data[index] = value;
       if (!column.seen) {
         column.first = value;
         column.seen = true;
-      } else if (!Object.is(value, column.first)) column.constant = false;
+      } else if (column.constant && !Object.is(value, column.first)) {
+        column.constant = false;
+        column.data = new Float64Array(capacity);
+        column.data.fill(column.first, 0, count);
+      }
+      if (column.data) column.data[count] = value;
       if (!Number.isInteger(value) || Object.is(value, -0))
         column.integer = false;
       column.min = Math.min(column.min, value);
       column.max = Math.max(column.max, value);
     }
-    commands[index] = null;
-  }
-  for (const column of columns) finishColumn(column);
-  if (templates.length <= 256) rowTemplates = new Uint8Array(rowTemplates);
-  else if (templates.length <= 65536)
-    rowTemplates = new Uint16Array(rowTemplates);
-  const buckets = new Map();
-  if (count) {
-    for (const key of ["dx", "dy", "dw", "dh"])
-      if (!fieldColumns.has(JSON.stringify([key])))
-        throw new TypeError(`Waterfall command has no numeric ${key}`);
-    const get = (key, index) =>
-      columnValue(columns[fieldColumns.get(JSON.stringify([key]))], index);
-    for (let index = 0; index < count; index++) {
-      const dx = get("dx", index),
-        dy = get("dy", index),
-        dw = get("dw", index),
-        dh = get("dh", index);
-      for (
-        let bx = Math.floor(dx / 16 / BUCKET_SIZE);
-        bx <= Math.floor((dx + dw - 1) / 16 / BUCKET_SIZE);
-        bx++
-      )
-        for (
-          let by = Math.floor(dy / 16 / BUCKET_SIZE);
-          by <= Math.floor((dy + dh - 1) / 16 / BUCKET_SIZE);
-          by++
-        ) {
-          const key = bucketKey(bx, by);
-          if (!buckets.has(key)) buckets.set(key, []);
-          buckets.get(key).push(index);
-        }
+    count++;
+  };
+  const finish = (registry) => {
+    if (finished)
+      throw new Error("Waterfall command store is already finished");
+    finished = true;
+    validateViewport(registry);
+    const metadata = {};
+    for (const [key, value] of Object.entries(registry))
+      if (typeof value !== "function") metadata[key] = structuredClone(value);
+    freezeTree(metadata);
+    let order = null;
+    if (sortBatches && count) {
+      const layer = columns[fieldColumns.get('["batchLayerStack"]')],
+        texture = columns[fieldColumns.get('["batchTextureOrder"]')];
+      order = Uint32Array.from({ length: count }, (_, i) => i);
+      order.sort(
+        (a, b) =>
+          columnValue(layer, a) - columnValue(layer, b) ||
+          columnValue(texture, a) - columnValue(texture, b) ||
+          a - b,
+      );
     }
-  }
-  for (const [key, bucket] of buckets)
-    buckets.set(key, Uint32Array.from(bucket));
-  return makeRegistry(
-    metadata,
-    columns,
-    templates,
-    rowTemplates,
-    buckets,
-    fieldColumns,
-  );
+    for (const column of columns) finishColumn(column, count, order);
+    const RowType =
+      templates.length <= 256
+        ? Uint8Array
+        : templates.length <= 65536
+          ? Uint16Array
+          : Uint32Array;
+    const rows = new RowType(count);
+    if (order) {
+      for (let i = 0; i < count; i++) rows[i] = rowTemplates[order[i]];
+    } else rows.set(rowTemplates.subarray(0, count));
+    rowTemplates = rows;
+    const buckets = new Map();
+    if (count) {
+      for (const key of ["dx", "dy", "dw", "dh"])
+        if (!fieldColumns.has(JSON.stringify([key])))
+          throw new TypeError(`Waterfall command has no numeric ${key}`);
+      const dxColumn = columns[fieldColumns.get('["dx"]')],
+        dyColumn = columns[fieldColumns.get('["dy"]')],
+        dwColumn = columns[fieldColumns.get('["dw"]')],
+        dhColumn = columns[fieldColumns.get('["dh"]')];
+      for (let index = 0; index < count; index++) {
+        const dx = columnValue(dxColumn, index),
+          dy = columnValue(dyColumn, index),
+          dw = columnValue(dwColumn, index),
+          dh = columnValue(dhColumn, index);
+        for (
+          let bx = Math.floor(dx / 16 / BUCKET_SIZE);
+          bx <= Math.floor((dx + dw - 1) / 16 / BUCKET_SIZE);
+          bx++
+        )
+          for (
+            let by = Math.floor(dy / 16 / BUCKET_SIZE);
+            by <= Math.floor((dy + dh - 1) / 16 / BUCKET_SIZE);
+            by++
+          ) {
+            const key = bucketKey(bx, by);
+            if (!buckets.has(key)) buckets.set(key, []);
+            buckets.get(key).push(index);
+          }
+      }
+    }
+    for (const [key, bucket] of buckets)
+      buckets.set(key, Uint32Array.from(bucket));
+    return makeRegistry(
+      metadata,
+      columns,
+      templates,
+      rowTemplates,
+      buckets,
+      fieldColumns,
+    );
+  };
+  return { append, finish };
 }

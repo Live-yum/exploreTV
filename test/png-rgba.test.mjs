@@ -513,3 +513,39 @@ test("deterministic synthetic fixtures cross-check pngjs over dimensions, filter
     );
   }
 });
+
+test("inflated-buffer reuse is explicit and refuses oversized or offset backing buffers", () => {
+  const png = makePng(),
+    expected = decodePngRgba(png),
+    before = Buffer.from(png);
+  for (const reuseInflatedBuffer of [false, true])
+    for (const [extra, offset] of [
+      [0, 0],
+      [1, 0],
+      [2, 0],
+      [16, 3],
+    ]) {
+      let inflated;
+      const actual = decodePngRgba(png, {
+        reuseInflatedBuffer,
+        inflate(bytes, length, strict) {
+          const backing = new Uint8Array(length + extra + offset);
+          inflated = backing.subarray(offset, offset + length);
+          inflated.set(strict(bytes, length));
+          return inflated;
+        },
+      });
+      const shouldReuse = reuseInflatedBuffer && !offset && extra <= 1;
+      assert.equal(actual.data.buffer === inflated.buffer, shouldReuse);
+      assert.equal(
+        actual.data.buffer.byteLength,
+        shouldReuse ? inflated.buffer.byteLength : 4,
+      );
+      assert.deepEqual(actual, expected);
+      assert.deepEqual(png, before);
+    }
+  assert.throws(
+    () => decodePngRgba(png, { reuseInflatedBuffer: 1 }),
+    /reuse option/,
+  );
+});

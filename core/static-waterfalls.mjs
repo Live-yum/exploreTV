@@ -108,6 +108,15 @@ function failure(reason, x, y) {
  */
 export function createStaticWaterfallRegistry(world, options = {}) {
   const { width, height, worldSurface, getTile } = world ?? {};
+  // Optional bounded storage consumes only complete, supported origin plans.
+  // Its finalizer receives the same public metadata as the object registry.
+  const commandStore = options.commandStore ?? null;
+  if (
+    commandStore &&
+    (typeof commandStore.append !== "function" ||
+      typeof commandStore.finish !== "function")
+  )
+    throw new TypeError("Invalid waterfall command store");
   if (typeof getTile !== "function" || !Number.isFinite(worldSurface))
     throw new TypeError("Waterfall world accessor and surface are required");
   const quality = options.quality ?? 1,
@@ -237,9 +246,32 @@ export function createStaticWaterfallRegistry(world, options = {}) {
     scanComplete = false;
     failures.push({ phase: "scan", reason: e.reason, x: e.x, y: e.y });
   }
-  const allCommands = [],
+  const allCommands = commandStore ? null : [],
     assets = new Set(),
-    originPlans = [];
+    originPlans = [],
+    textureOrder = new Map();
+  let commandCount = 0,
+    previous = null,
+    stack = 0;
+  const appendCommand = (command) => {
+    const newStep =
+      !previous ||
+      previous.originIndex !== command.originIndex ||
+      previous.step !== command.step;
+    if (newStep)
+      stack = [11, 22, 26].includes(origins[command.originIndex].type)
+        ? 0
+        : 256;
+    else if (previous.asset !== command.asset) stack++;
+    if (!textureOrder.has(command.asset))
+      textureOrder.set(command.asset, textureOrder.size);
+    command.batchLayerStack = stack;
+    command.batchTextureOrder = textureOrder.get(command.asset);
+    previous = command;
+    if (commandStore) commandStore.append(command);
+    else allCommands.push(command);
+    commandCount++;
+  };
   const extendedDistance = Math.trunc(
     f(f(f(40) * f(f(width) / f(4200))) * f(quality)),
   );
@@ -250,10 +282,7 @@ export function createStaticWaterfallRegistry(world, options = {}) {
     (origin, output) =>
     (type, x, y, sx, sy, sw, sh, dx, dy, flipX, color, step, rawAlpha = 1) => {
       if (sh <= 0 || sw <= 0) return;
-      if (
-        allCommands.length + output.length + (type === 25 ? 2 : 1) >
-        maxCommands
-      )
+      if (commandCount + output.length + (type === 25 ? 2 : 1) > maxCommands)
         throw failure("waterfall-command-budget", x, y);
       const asset = `Waterfall_${type}.png`;
       const c = {
@@ -654,7 +683,7 @@ export function createStaticWaterfallRegistry(world, options = {}) {
         });
         for (const c of output) {
           assets.add(c.asset);
-          allCommands.push(c);
+          appendCommand(c);
         }
       } catch (e) {
         if (!e.waterfallFailure) throw e;
@@ -671,51 +700,9 @@ export function createStaticWaterfallRegistry(world, options = {}) {
         failures.push(issue);
       }
     }
-  // Each source step explicitly sets its layer. Further texture switches in
-  // that step increment the stack. TileBatch batches by stack and first-seen
-  // texture identity, preserving insertion order inside each resulting batch.
-  const textureOrder = new Map();
-  let previous = null,
-    stack = 0;
-  for (const c of allCommands) {
-    const newStep =
-      !previous ||
-      previous.originIndex !== c.originIndex ||
-      previous.step !== c.step;
-    if (newStep)
-      stack = [11, 22, 26].includes(origins[c.originIndex].type) ? 0 : 256;
-    else if (previous.asset !== c.asset) stack++;
-    if (!textureOrder.has(c.asset))
-      textureOrder.set(c.asset, textureOrder.size);
-    c.batchLayerStack = stack;
-    c.batchTextureOrder = textureOrder.get(c.asset);
-    previous = c;
-  }
-  allCommands.sort(
-    (a, b) =>
-      a.batchLayerStack - b.batchLayerStack ||
-      a.batchTextureOrder - b.batchTextureOrder,
-  );
-  const buckets = new Map(),
-    bucketSize = 64;
-  for (let i = 0; i < allCommands.length; i++) {
-    const c = allCommands[i];
-    for (
-      let bx = Math.floor(c.dx / 16 / bucketSize);
-      bx <= Math.floor((c.dx + c.dw - 1) / 16 / bucketSize);
-      bx++
-    )
-      for (
-        let by = Math.floor(c.dy / 16 / bucketSize);
-        by <= Math.floor((c.dy + c.dh - 1) / 16 / bucketSize);
-        by++
-      ) {
-        const k = key(bx, by);
-        if (!buckets.has(k)) buckets.set(k, []);
-        buckets.get(k).push(i);
-      }
-  }
-  return {
+  // Each source step sets its layer; texture switches increment its stack.
+  // A streaming store preserves this same stable batch ordering at finalization.
+  const metadata = {
     model: "fresh-static",
     scanComplete,
     scan,
@@ -741,9 +728,37 @@ export function createStaticWaterfallRegistry(world, options = {}) {
       eligible,
       registered: origins.length,
       capped: eligible - origins.length,
-      commands: allCommands.length,
+      commands: commandCount,
       unsupportedOrigins: originPlans.filter((p) => !p.supported).length,
     },
+  };
+  if (commandStore) return commandStore.finish(metadata);
+  allCommands.sort(
+    (a, b) =>
+      a.batchLayerStack - b.batchLayerStack ||
+      a.batchTextureOrder - b.batchTextureOrder,
+  );
+  const buckets = new Map(),
+    bucketSize = 64;
+  for (let i = 0; i < allCommands.length; i++) {
+    const c = allCommands[i];
+    for (
+      let bx = Math.floor(c.dx / 16 / bucketSize);
+      bx <= Math.floor((c.dx + c.dw - 1) / 16 / bucketSize);
+      bx++
+    )
+      for (
+        let by = Math.floor(c.dy / 16 / bucketSize);
+        by <= Math.floor((c.dy + c.dh - 1) / 16 / bucketSize);
+        by++
+      ) {
+        const k = key(bx, by);
+        if (!buckets.has(k)) buckets.set(k, []);
+        buckets.get(k).push(i);
+      }
+  }
+  return {
+    ...metadata,
     hasOrigin(x, y) {
       return scanComplete ? members.has(key(x, y)) : undefined;
     },

@@ -374,8 +374,8 @@ test("overview CLI accepts bounded defaults and supported flags but refuses inva
   assert.deepEqual(parseOverviewCli(["--help"]), { help: true });
   const defaults = parseOverviewCli(["w", "a", "out"]);
   assert.equal(defaults.pixelsPerTile, 1);
-  assert.equal(defaults.bandTiles, 64);
-  assert.equal(defaults.chunkTiles, 128);
+  assert.equal(defaults.bandTiles, 48);
+  assert.equal(defaults.chunkTiles, 120);
   assert.equal(defaults.compressionLevel, 6);
   assert.equal(defaults.inputEncoding, "tconvert-game-raw");
   for (const scale of [1, 2, 4, 8])
@@ -677,4 +677,32 @@ test("overview verifier rejects forged world scope and every recorded source or 
     }
   }
   verifyGenuine();
+});
+
+test("blank overview cores skip native readback at every supported scale", async (t) => {
+  const fixture = setup(t, {
+    width: 29,
+    height: 23,
+    cell: () => ({ type: null }),
+  });
+  for (const pixelsPerTile of [1, 2, 4, 8]) {
+    const config = overviewConfig(fixture, `blank-${pixelsPerTile}.png`, [
+      "--pixels-per-tile",
+      String(pixelsPerTile),
+      "--chunk-tiles",
+      "11",
+      "--band-tiles",
+      "7",
+    ]);
+    const report = await exportOverview(config);
+    assert.equal(report.skippedReadbackChunks, report.chunks);
+    const image = PNG.sync.read(readFileSync(config.outputPath));
+    assert.equal(image.width, fixture.width * pixelsPerTile);
+    assert.equal(image.height, fixture.height * pixelsPerTile);
+    for (let i = 0; i < image.data.length; i += 4)
+      assert.deepEqual(
+        Array.from(image.data.subarray(i, i + 4)),
+        [0, 0, 0, 255],
+      );
+  }
 });

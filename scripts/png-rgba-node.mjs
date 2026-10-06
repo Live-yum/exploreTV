@@ -56,6 +56,10 @@ export function createNodePngRgbaDecoder({
       const { buffer, engine } = inflateSync(bytes, {
         info: true,
         maxOutputLength: expectedLength,
+        // IHDR validation already bounds the exact filtered length. One output
+        // slab avoids the default chunk list; one spare byte also prevents an
+        // exact-fill EOF check from allocating a second full-size slab.
+        chunkSize: Math.max(64, expectedLength + 1),
       });
       if (buffer.length !== expectedLength)
         throw new Error("PNG: inflated output does not match dimensions");
@@ -80,7 +84,7 @@ export function createNodePngRgbaDecoder({
   };
   return {
     decode(input) {
-      return decodePngRgba(input, { inflate });
+      return decodePngRgba(input, { inflate, reuseInflatedBuffer: true });
     },
     clear() {
       validated.clear();

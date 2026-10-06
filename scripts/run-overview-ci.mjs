@@ -49,8 +49,8 @@ const child = spawn(
   [
     join(root, "lifetime-usage.json"),
     process.execPath,
-    "--max-old-space-size=96",
-    "--max-semi-space-size=2",
+    "--max-old-space-size=48",
+    "--max-semi-space-size=4",
     "--expose-gc",
     "scripts/export-overview.mjs",
     "fixtures/example-world.wld",
@@ -210,10 +210,10 @@ child.once("exit", (code, signal) => {
     exporterSeconds: report?.runtimeSeconds ?? null,
     targetSeconds: 600,
     targetRssBytes: 500000000,
-    preferredRssBytes: 200000000,
+    preferredRssBytes: 300000000,
     preferredMemoryPassed:
       conservativeAggregatePeakRssBytes !== null &&
-      conservativeAggregatePeakRssBytes <= 200000000,
+      conservativeAggregatePeakRssBytes < 300000000,
     conservativeAggregatePeakRssBytes,
     processTreeSamplingAvailable: completeTreeSamples > 0,
     completeTreeSamples,

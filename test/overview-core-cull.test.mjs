@@ -64,18 +64,40 @@ test("core-only native draws retain translucent walls, slopes, liquids and overh
     { x: 100, y: 200, width: 3, height: 5 },
     { x: 131, y: 224, width: 4, height: 5 },
   ]) {
-    const render = async (lowMemory) => {
+    const render = async (lowMemory, coreSurface = false) => {
       const renderer = createWorldRenderer({ assetDir, lowMemory }),
         canvas = createCanvas(1, 1);
       try {
-        await renderer.drawRegion(region, canvas, { core, count: true });
+        if (lowMemory) {
+          // Reuse one backing store through occupied → empty → occupied
+          // scenes, so stale pixels/state cannot hide behind a fresh canvas.
+          await renderer.drawRegion(region, canvas, { core, coreSurface });
+          const empty = {
+            ...region,
+            cells: region.cells.map(() => ({ active: false })),
+          };
+          await renderer.drawRegion(empty, canvas, { core, coreSurface });
+          const black = canvas
+            .getContext("2d")
+            .getImageData(0, 0, canvas.width, canvas.height).data;
+          for (let i = 0; i < black.length; i += 4)
+            assert.deepEqual(
+              Array.from(black.subarray(i, i + 4)),
+              [0, 0, 0, 255],
+            );
+        }
+        const drawn = await renderer.drawRegion(region, canvas, {
+          core,
+          count: true,
+          coreSurface,
+        });
         return {
           pixels: Buffer.from(
             canvas
               .getContext("2d")
               .getImageData(
-                (core.x - region.rect.x) * 16,
-                (core.y - region.rect.y) * 16,
+                drawn.readbackX,
+                drawn.readbackY,
                 core.width * 16,
                 core.height * 16,
               ).data,
@@ -90,6 +112,8 @@ test("core-only native draws retain translucent walls, slopes, liquids and overh
     const baseline = await render(false),
       optimized = await render(true);
     assert.deepEqual(optimized.pixels, baseline.pixels);
+    const coreOnly = await render(true, true);
+    assert.deepEqual(coreOnly.pixels, baseline.pixels);
     assert.ok(optimized.stats.culledOutsideCoreCommands > 0);
     assert.equal(baseline.stats.culledOutsideCoreCommands, 0);
     for (const name of [
@@ -107,5 +131,36 @@ test("core-only native draws retain translucent walls, slopes, liquids and overh
       optimized.stats.plannedCommands,
       optimized.stats.renderedCommands,
     );
+  }
+});
+
+test("core surfaces reject oversized or invalid rectangles before canvas allocation", async () => {
+  const renderer = createWorldRenderer({
+    assetDir: "/unused",
+    lowMemory: true,
+  });
+  const canvas = createCanvas(1, 1);
+  const region = {
+    rect: { x: 10, y: 20, width: 1, height: 1 },
+    cells: [{ active: false }],
+    version: 269,
+  };
+  try {
+    for (const core of [
+      { x: 10, y: 20, width: 100000000, height: 100000000 },
+      { x: 9, y: 20, width: 1, height: 1 },
+      { x: 10, y: 20, width: 0, height: 1 },
+      { x: 10.1, y: 20, width: 1, height: 1 },
+      { x: 10, y: NaN, width: 1, height: 1 },
+    ]) {
+      await assert.rejects(
+        renderer.drawRegion(region, canvas, { core, coreSurface: true }),
+        /Core surface/,
+      );
+      assert.equal(canvas.width, 1);
+      assert.equal(canvas.height, 1);
+    }
+  } finally {
+    renderer.dispose();
   }
 });

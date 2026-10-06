@@ -197,7 +197,7 @@ export async function exportWorld(
       getHeapStatistics().heap_size_limit > 120000000)
   )
     throw new Error(
-      "Large overview requires bounded Node memory: use npm run export:overview, or --expose-gc --max-old-space-size=96 --max-semi-space-size=2",
+      "Large overview requires bounded Node memory: use npm run export:overview, or --expose-gc --max-old-space-size=48 --max-semi-space-size=4",
     );
   const plannedChunks =
     Math.ceil(rect.width / config.chunkTiles) *
@@ -248,6 +248,7 @@ export async function exportWorld(
     "scripts/compact-waterfall-registry.mjs",
     "scripts/png-stream.mjs",
     "scripts/png-rgba-node.mjs",
+    "scripts/raw-texture-cache.mjs",
     "scripts/world-render-engine.mjs",
     "core/world.mjs",
     "core/utf8.mjs",
@@ -293,7 +294,12 @@ export async function exportWorld(
     peakRssBytes = 0,
     renderSeconds = 0,
     compressionSeconds = 0,
-    downsampleSeconds = 0;
+    downsampleSeconds = 0,
+    skippedReadbackChunks = 0,
+    regionDecodeSeconds = 0,
+    garbageCollectionSeconds = 0,
+    nativeFinalizationSeconds = 0;
+  const memorySamples = [];
   const tiles = [];
   try {
     if (tilesTemporary) mkdirSync(tilesTemporary, { recursive: true });
@@ -304,31 +310,40 @@ export async function exportWorld(
       compressionLevel: config.compressionLevel,
       signal,
     });
-    for (let y = rect.y; y < rect.y + rect.height; y += config.bandTiles) {
-      throwIfAborted(signal);
-      const height = Math.min(config.bandTiles, rect.y + rect.height - y),
-        currentRows = height * pixelsPerTile;
-      let bandCells = 0;
-      for (let x = rect.x; x < rect.x + rect.width; x += config.chunkTiles) {
-        throwIfAborted(signal);
-        const width = Math.min(config.chunkTiles, rect.x + rect.width - x),
-          core = { x, y, width, height };
-        const region = readIndexedRegion(
-          world,
-          index,
-          paddedWorldRect(world, core),
-        );
-        const renderStarted = performance.now();
-        const drawn = await renderer.drawRegion(region, canvas, {
-          core,
-          count: true,
-          overview: pixelsPerTile === 1,
-        });
-        const rgba = canvas
+    // Keep chunk-local plans, tile objects and N-API readbacks out of the
+    // suspended outer loop before collection and its required macrotask yield.
+    const renderChunk = async (x, y, width, height, currentRows) => {
+      const core = { x, y, width, height };
+      const regionStarted = performance.now();
+      const region = readIndexedRegion(
+        world,
+        index,
+        paddedWorldRect(world, core),
+      );
+      regionDecodeSeconds += (performance.now() - regionStarted) / 1000;
+      const renderStarted = performance.now();
+      const drawn = await renderer.drawRegion(region, canvas, {
+        core,
+        count: true,
+        overview: pixelsPerTile === 1,
+        coreSurface: overview,
+      });
+      let rgba;
+      let reduceStarted = performance.now();
+      let data;
+      if (overview && drawn.rasterizedCommands === 0) {
+        // No ordinary draw reached the core. Its compositor background is
+        // opaque black; exact opaque-frame means are applied below as usual.
+        // Avoid allocating and reading a full-detail native ImageData for it.
+        data = Buffer.alloc(width * height * pixelsPerTile * pixelsPerTile * 4);
+        for (let i = 3; i < data.length; i += 4) data[i] = 255;
+        skippedReadbackChunks++;
+      } else {
+        rgba = canvas
           .getContext("2d")
           .getImageData(
-            (x - region.rect.x) * 16,
-            (y - region.rect.y) * 16,
+            drawn.readbackX,
+            drawn.readbackY,
             width * 16,
             height * 16,
           );
@@ -337,8 +352,8 @@ export async function exportWorld(
           rgba.data.byteOffset,
           rgba.data.byteLength,
         );
-        const reduceStarted = performance.now();
-        const data = overview
+        reduceStarted = performance.now();
+        data = overview
           ? boxDownsampleRgba(
               fullData,
               width * 16,
@@ -346,41 +361,59 @@ export async function exportWorld(
               16 / pixelsPerTile,
             )
           : fullData;
-        if (drawn.opaqueOverview)
-          applyOpaqueOverview(data, core, region, drawn.opaqueOverview);
-        downsampleSeconds += (performance.now() - reduceStarted) / 1000;
-        const chunkRowBytes = width * pixelsPerTile * 4;
-        for (let py = 0; py < currentRows; py++)
-          data.copy(
-            band,
-            py * rowBytes + (x - rect.x) * pixelsPerTile * 4,
-            py * chunkRowBytes,
-            (py + 1) * chunkRowBytes,
-          );
-        if (tileCanvas) {
-          tileCanvas.width = width * 16;
-          tileCanvas.height = currentRows;
-          tileCanvas.getContext("2d").putImageData(rgba, 0, 0);
-          const file = `tile-${String(y - rect.y).padStart(5, "0")}-${String(x - rect.x).padStart(5, "0")}.png`;
-          const png = tileCanvas.toBuffer("image/png");
-          writeFileSync(join(tilesTemporary, file), png);
-          tiles.push({
-            file,
-            x: (x - rect.x) * 16,
-            y: (y - rect.y) * 16,
-            width: width * 16,
-            height: currentRows,
-            worldRect: core,
-            bytes: png.length,
-            sha256: createHash("sha256").update(png).digest("hex"),
-          });
-        }
-        renderSeconds += (performance.now() - renderStarted) / 1000;
+      }
+      if (drawn.opaqueOverview)
+        applyOpaqueOverview(data, core, region, drawn.opaqueOverview);
+      downsampleSeconds += (performance.now() - reduceStarted) / 1000;
+      const chunkRowBytes = width * pixelsPerTile * 4;
+      for (let py = 0; py < currentRows; py++)
+        data.copy(
+          band,
+          py * rowBytes + (x - rect.x) * pixelsPerTile * 4,
+          py * chunkRowBytes,
+          (py + 1) * chunkRowBytes,
+        );
+      if (tileCanvas) {
+        tileCanvas.width = width * 16;
+        tileCanvas.height = currentRows;
+        tileCanvas.getContext("2d").putImageData(rgba, 0, 0);
+        const file = `tile-${String(y - rect.y).padStart(5, "0")}-${String(x - rect.x).padStart(5, "0")}.png`;
+        const png = tileCanvas.toBuffer("image/png");
+        writeFileSync(join(tilesTemporary, file), png);
+        tiles.push({
+          file,
+          x: (x - rect.x) * 16,
+          y: (y - rect.y) * 16,
+          width: width * 16,
+          height: currentRows,
+          worldRect: core,
+          bytes: png.length,
+          sha256: createHash("sha256").update(png).digest("hex"),
+        });
+      }
+      return (performance.now() - renderStarted) / 1000;
+    };
+    for (let y = rect.y; y < rect.y + rect.height; y += config.bandTiles) {
+      throwIfAborted(signal);
+      const height = Math.min(config.bandTiles, rect.y + rect.height - y),
+        currentRows = height * pixelsPerTile;
+      let bandCells = 0;
+      for (let x = rect.x; x < rect.x + rect.width; x += config.chunkTiles) {
+        throwIfAborted(signal);
+        const width = Math.min(config.chunkTiles, rect.x + rect.width - x);
+        renderSeconds += await renderChunk(x, y, width, height, currentRows);
         bandCells += width * height;
         chunks++;
         if (overview) {
-          if (global.gc) global.gc();
+          // New chunk-local ImageData wrappers can be collected in the nursery.
+          // Alternate with a full collection for retired persistent frames.
+          const gcStarted = performance.now();
+          if (global.gc) global.gc({ type: chunks % 2 ? "minor" : "major" });
+          garbageCollectionSeconds += (performance.now() - gcStarted) / 1000;
+          const finalizeStarted = performance.now();
           await new Promise(setImmediate);
+          nativeFinalizationSeconds +=
+            (performance.now() - finalizeStarted) / 1000;
           checkOverviewBudget();
         }
       }
@@ -399,7 +432,13 @@ export async function exportWorld(
       checkOverviewBudget();
       processedCells += bandCells;
       writtenRows += currentRows;
-      peakRssBytes = Math.max(peakRssBytes, process.memoryUsage().rss);
+      const memory = process.memoryUsage();
+      memorySamples.push({
+        writtenRows,
+        ...memory,
+        osPeakRssBytes: process.resourceUsage().maxRSS * 1024,
+      });
+      peakRssBytes = Math.max(peakRssBytes, memory.rss);
       const progress = {
         phase: "export",
         processedCells,
@@ -416,7 +455,9 @@ export async function exportWorld(
       );
       await onProgress(progress);
       checkOverviewBudget();
+      const gcStarted = performance.now();
       if (global.gc) global.gc();
+      garbageCollectionSeconds += (performance.now() - gcStarted) / 1000;
     }
     throwIfAborted(signal);
     assert.equal(processedCells, rect.width * rect.height);
@@ -508,13 +549,18 @@ export async function exportWorld(
         "Runtime is exporter wall time; render includes prepare/draw/reduction. Phase times exclude pauses for native finalization.",
       compressionSeconds: +compressionSeconds.toFixed(2),
       downsampleSeconds: +downsampleSeconds.toFixed(2),
+      skippedReadbackChunks,
+      regionDecodeSeconds: +regionDecodeSeconds.toFixed(3),
+      garbageCollectionSeconds: +garbageCollectionSeconds.toFixed(3),
+      nativeFinalizationSeconds: +nativeFinalizationSeconds.toFixed(3),
+      memorySamples,
       runtimeSeconds: +((performance.now() - started) / 1000).toFixed(2),
       inputEncoding: config.inputEncoding,
       resourceLimits: overview
         ? {
             rssBytes: 500000000,
             runtimeSeconds: 600,
-            preferredRssBytes: 200000000,
+            preferredRssBytes: 300000000,
             renderingProcesses: 1,
             childProcesses: 0,
           }
@@ -544,6 +590,9 @@ export async function exportWorld(
       storedFrameTileIds: [...STORED_FRAME_TILES],
       ...stats,
       frameCache: stats.frameCache ? { ...stats.frameCache } : null,
+      rawTextureCache: stats.rawTextureCache
+        ? structuredClone(stats.rawTextureCache)
+        : null,
       pngDecodeCache: stats.pngDecodeCache ? { ...stats.pngDecodeCache } : null,
       limitations: [
         `Static fullbright composition at 16 pixels per tile, exported at ${pixelsPerTile} pixels per tile, without dynamic lighting.`,

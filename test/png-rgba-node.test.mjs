@@ -63,12 +63,27 @@ test("first decode is strict, repeat is native and preserves hidden RGB and low 
       { width, height, data },
       { colorType: 6, inputColorType: 6, bitDepth: 8, filterType },
     );
+    const before = Buffer.from(png);
     for (let pass = 0; pass < 2; pass++) {
       const result = decoder.decode(png);
       assert.ok(result.data instanceof Uint8ClampedArray);
       assert.deepEqual(Buffer.from(result.data), data);
       assert.equal(result.width, width);
       assert.equal(result.height, height);
+      assert.equal(result.data.byteOffset, 0);
+      if (!pass)
+        assert.equal(result.data.buffer.byteLength, (width * 4 + 1) * height);
+      else
+        assert.ok(
+          [width * height * 4, (width * 4 + 1) * height + 1].includes(
+            result.data.buffer.byteLength,
+          ),
+        );
+      assert.deepEqual(
+        png,
+        before,
+        "in-place raw reconstruction leaves the encoded PNG unchanged",
+      );
     }
   }
   assert.equal(decoder.stats.strictInflations, 5);
@@ -276,11 +291,65 @@ test(
     assert.ok(names.length > 0);
     for (const name of names) {
       const png = readFileSync(new URL(name, assetDir));
-      const expected = decodePngRgba(png);
+      const before = Buffer.from(png),
+        expected = decodePngRgba(png);
       assert.deepEqual(decoder.decode(png), expected, `${name}: strict`);
       assert.deepEqual(decoder.decode(png), expected, `${name}: native`);
+      assert.deepEqual(png, before, `${name}: immutable encoded input`);
     }
     assert.ok(decoder.stats.nativeInflations >= names.length);
     assert.ok(decoder.stats.cachedStreams <= 512);
   },
 );
+
+test("tiny native output rejects the oversized minimum zlib slab", () => {
+  const png = makePng(),
+    before = Buffer.from(png),
+    decoder = createNodePngRgbaDecoder();
+  const cold = decoder.decode(png),
+    warm = decoder.decode(png);
+  assert.equal(cold.data.buffer.byteLength, 5);
+  assert.equal(warm.data.buffer.byteLength, 4);
+  assert.deepEqual(cold, warm);
+  assert.deepEqual(png, before);
+});
+
+test("in-place node reconstruction handles all filters on tall, narrow and wide rows", () => {
+  const decoder = createNodePngRgbaDecoder();
+  for (const [width, height] of [
+    [1, 1024],
+    [2, 53],
+    [35, 47],
+    [512, 2],
+  ])
+    for (let filterType = 0; filterType < 5; filterType++) {
+      const data = Buffer.alloc(width * height * 4);
+      for (let i = 0; i < data.length; i++)
+        data[i] = (i * 43 + (i >>> 5) * 21) % 256;
+      const png = PNG.sync.write(
+        { width, height, data },
+        { colorType: 6, inputColorType: 6, filterType },
+      );
+      const before = Buffer.from(png);
+      for (let pass = 0; pass < 2; pass++)
+        assert.deepEqual(Buffer.from(decoder.decode(png).data), data);
+      assert.deepEqual(png, before);
+    }
+});
+
+test("large native repeat retains one tightly sized inflated backing buffer", () => {
+  const width = 128,
+    height = 64,
+    data = Buffer.alloc(width * height * 4, 173);
+  const png = PNG.sync.write(
+    { width, height, data },
+    { colorType: 6, inputColorType: 6, filterType: 4 },
+  );
+  const decoder = createNodePngRgbaDecoder();
+  const cold = decoder.decode(png),
+    warm = decoder.decode(png);
+  assert.equal(cold.data.buffer.byteLength, (width * 4 + 1) * height);
+  assert.equal(warm.data.buffer.byteLength, (width * 4 + 1) * height + 1);
+  assert.deepEqual(Buffer.from(cold.data), data);
+  assert.deepEqual(Buffer.from(warm.data), data);
+});

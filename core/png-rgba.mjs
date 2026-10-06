@@ -281,8 +281,13 @@ function paeth(left, above, upperLeft) {
  * other pixel formats, unknown critical chunks, and trailing data are rejected.
  * Input may be an ArrayBuffer or an ArrayBuffer view. Returns straight RGBA.
  */
-export function decodePngRgba(input, { inflate = inflateZlib } = {}) {
+export function decodePngRgba(
+  input,
+  { inflate = inflateZlib, reuseInflatedBuffer = false } = {},
+) {
   if (typeof inflate !== "function") fail("invalid inflater");
+  if (typeof reuseInflatedBuffer !== "boolean")
+    fail("invalid inflated-buffer reuse option");
   const bytes =
     input instanceof ArrayBuffer
       ? new Uint8Array(input)
@@ -386,7 +391,18 @@ export function decodePngRgba(input, { inflate = inflateZlib } = {}) {
   const filtered = inflate(compressed, expectedLength, inflateZlib);
   if (!(filtered instanceof Uint8Array) || filtered.length !== expectedLength)
     fail("inflated output does not match dimensions");
-  const data = new Uint8ClampedArray(stride * height);
+  // Opt-in platform adapters own their inflater output. Compact rows toward
+  // the start of that buffer: each destination precedes its unread source,
+  // while left/up predictors refer to already reconstructed pixels. Never
+  // retain an oversized pooled slab or mutate a caller's encoded PNG bytes.
+  const reuse =
+    reuseInflatedBuffer &&
+    filtered.byteOffset === 0 &&
+    filtered.buffer.byteLength <= expectedLength + 1 &&
+    filtered.buffer !== bytes.buffer;
+  const data = reuse
+    ? new Uint8ClampedArray(filtered.buffer, 0, stride * height)
+    : new Uint8ClampedArray(stride * height);
   for (let y = 0; y < height; y++) {
     const source = y * (stride + 1) + 1,
       target = y * stride;

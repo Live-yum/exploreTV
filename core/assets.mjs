@@ -33,7 +33,7 @@ export function inspectPng(bytes) {
 const textureSources = new WeakMap();
 export function registerTextureSource(
   image,
-  { pngBytes, rawRgba = null, rawError = null },
+  { pngBytes, rawRgba = null, rawError = null, rawRgbaProvider = null },
 ) {
   const width = image.naturalWidth ?? image.width,
     height = image.naturalHeight ?? image.height;
@@ -42,14 +42,41 @@ export function registerTextureSource(
     pngBytes.byteLength > ASSET_LIMITS.encodedBytes
   )
     throw new Error("Invalid texture source bytes");
-  if (
-    rawRgba &&
-    (rawRgba.width !== width ||
-      rawRgba.height !== height ||
-      rawRgba.data.length !== width * height * 4)
-  )
-    throw new Error("Raw PNG dimensions differ from platform image");
-  textureSources.set(image, { pngBytes, rawRgba, rawError });
+  const checked = (raw) => {
+    if (
+      raw &&
+      (raw.width !== width ||
+        raw.height !== height ||
+        raw.data?.length !== width * height * 4)
+    )
+      throw new Error("Raw PNG dimensions differ from platform image");
+    return raw;
+  };
+  if (rawRgbaProvider !== null) {
+    if (typeof rawRgbaProvider !== "function" || rawRgba !== null)
+      throw new Error("Invalid raw texture provider");
+    // Optional script-owned sources can release decoded atlases independently
+    // of their stable registration identity. The ordinary eager path is intact.
+    // A PNG copy on explicit inspection keeps the provider's snapshot private.
+    textureSources.set(
+      image,
+      Object.freeze({
+        get pngBytes() {
+          return new Uint8Array(pngBytes);
+        },
+        get rawRgba() {
+          return checked(rawRgbaProvider());
+        },
+        rawError,
+      }),
+    );
+  } else {
+    textureSources.set(image, {
+      pngBytes,
+      rawRgba: checked(rawRgba),
+      rawError,
+    });
+  }
   return image;
 }
 export const textureSource = (image) => textureSources.get(image);

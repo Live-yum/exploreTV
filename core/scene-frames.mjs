@@ -377,12 +377,12 @@ export function prepareSceneFrames(
     try {
       let pixels;
       if (inputEncoding === "tconvert-game-raw") {
-        const imported = textureSource(source);
-        if (!imported?.rawRgba)
+        const imported = textureSource(source),
+          raw = imported?.rawRgba;
+        if (!raw)
           throw new UnsupportedPaintError(
             imported?.rawError || "raw-png-bytes-required",
           );
-        const raw = imported.rawRgba;
         pixels = { data: new Uint8ClampedArray(c.sw * c.sh * 4) };
         for (let y = 0; y < c.sh; y++) {
           const start = ((c.sy + y) * raw.width + c.sx) * 4;

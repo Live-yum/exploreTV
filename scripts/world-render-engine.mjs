@@ -1,5 +1,6 @@
+import { createRawTextureCache } from "./raw-texture-cache.mjs";
 import { createNodePngRgbaDecoder } from "./png-rgba-node.mjs";
-import { compactWaterfallRegistry } from "./compact-waterfall-registry.mjs";
+import { createCompactStaticWaterfallRegistry } from "./compact-waterfall-registry.mjs";
 import { prepareOpaqueOverview } from "./overview-fast-path.mjs";
 import { createStaticWaterfallRegistry } from "../core/static-waterfalls.mjs";
 import { sceneFrameReservedBytes } from "../core/scene-batches.mjs";
@@ -202,7 +203,11 @@ export function createWorldWaterfallRegistry(world, { compact = false } = {}) {
       commandsFor: () => [],
       buildMilliseconds: 0,
     };
-  const registry = createStaticWaterfallRegistry(
+  const registry = (
+    compact
+      ? createCompactStaticWaterfallRegistry
+      : createStaticWaterfallRegistry
+  )(
     {
       width: world.width,
       height: world.height,
@@ -219,17 +224,16 @@ export function createWorldWaterfallRegistry(world, { compact = false } = {}) {
       slowFrame: 0,
     },
   );
-  registry.buildMilliseconds = performance.now() - started;
-  if (compact) {
-    const packed = compactWaterfallRegistry(registry);
-    return {
-      ...packed,
-      compactStorageBytes: packed.compactStorageBytes,
-      compactTemplateCount: packed.compactTemplateCount,
-      buildMilliseconds: performance.now() - started,
-    };
-  }
-  return registry;
+  return {
+    ...registry,
+    ...(compact
+      ? {
+          compactStorageBytes: registry.compactStorageBytes,
+          compactTemplateCount: registry.compactTemplateCount,
+        }
+      : {}),
+    buildMilliseconds: performance.now() - started,
+  };
 }
 
 export function createWorldRenderer({
@@ -242,10 +246,11 @@ export function createWorldRenderer({
 }) {
   const frameCache = cacheFrames
     ? createSceneFrameCache(
-        lowMemory ? { maxFrames: 1024, maxBytes: 2 * 1024 * 1024 } : {},
+        lowMemory ? { maxFrames: 2048, maxBytes: 2 * 1024 * 1024 } : {},
       )
     : null;
-  const pngDecoder = lowMemory ? createNodePngRgbaDecoder() : null;
+  const lazyRaw = lowMemory && inputEncoding === "tconvert-game-raw";
+  const pngDecoder = lowMemory && !lazyRaw ? createNodePngRgbaDecoder() : null;
   const stats = {
     pngDecodeCache: pngDecoder?.stats ?? null,
     frameCache: frameCache?.stats ?? null,
@@ -299,6 +304,16 @@ export function createWorldRenderer({
     liquidUnsupported,
     unsupportedTiles,
   } = stats;
+  const rawTextures = lazyRaw
+    ? createRawTextureCache({
+        assetDir,
+        assetHashes,
+        assetFailures,
+        maxRawBytes: 8 * 1024 * 1024,
+      })
+    : null;
+  stats.rawTextureCache = rawTextures?.stats ?? null;
+  if (rawTextures) stats.pngDecodeCache = rawTextures.stats.pngDecodeCache;
   const assetCache = new Map(),
     MAX_ASSET_CACHE = (lowMemory ? 16 : 80) * 1024 * 1024;
   const add = (map, key, n = 1) => {
@@ -316,6 +331,7 @@ export function createWorldRenderer({
     },
   };
   async function assetsFor(plan) {
+    if (rawTextures) return rawTextures.assetsFor(plan.requiredAssets);
     const assets = new Map();
     for (const name of plan.requiredAssets) {
       let entry = assetCache.get(name);
@@ -367,7 +383,7 @@ export function createWorldRenderer({
       assetCache.delete(name);
       stats.assetCacheBytes -= entry.bytes;
     }
-    return assets;
+    return { assets, dispose() {} };
   }
   function inCore(c, region, rect) {
     const x = c.x + region.rect.x,
@@ -419,9 +435,28 @@ export function createWorldRenderer({
   async function drawRegion(
     region,
     canvas,
-    { core = region.rect, count = false, overview = false } = {},
+    {
+      core = region.rect,
+      count = false,
+      overview = false,
+      coreSurface = false,
+    } = {},
   ) {
     let stageStarted = performance.now();
+    if (
+      lowMemory &&
+      coreSurface &&
+      (![core.x, core.y, core.width, core.height].every(Number.isSafeInteger) ||
+        core.width < 1 ||
+        core.height < 1 ||
+        core.x < region.rect.x ||
+        core.y < region.rect.y ||
+        core.x + core.width > region.rect.x + region.rect.width ||
+        core.y + core.height > region.rect.y + region.rect.height)
+    )
+      throw new RangeError(
+        "Core surface must be a positive integer rectangle contained by the scene",
+      );
     const left = (core.x - region.rect.x) * 16,
       top = (core.y - region.rect.y) * 16,
       right = left + core.width * 16,
@@ -429,150 +464,187 @@ export function createWorldRenderer({
     const plan = planScene(region, options);
     stats.stageMilliseconds.plan += performance.now() - stageStarted;
     stageStarted = performance.now();
-    const assets = await assetsFor(plan),
-      ctx = canvas.getContext("2d");
-    stats.stageMilliseconds.assets += performance.now() - stageStarted;
-    canvas.width = plan.width;
-    canvas.height = plan.height;
-    ctx.fillStyle = "#000000";
-    ctx.fillRect(0, 0, plan.width, plan.height);
-    const coreCommands = plan.commands.filter((c) => inCore(c, region, core));
-    if (count) {
-      stats.maxChunkCells = Math.max(stats.maxChunkCells, region.cells.length);
-      stats.maxPlanCommands = Math.max(
-        stats.maxPlanCommands,
-        plan.commands.length,
-      );
-      for (const c of coreCommands) {
-        stats.plannedCommands++;
-        add(commandCounts, c.kind);
+    const assetView = await assetsFor(plan);
+    const useCoreSurface = lowMemory && coreSurface;
+    const ctx = canvas.getContext("2d");
+    let contextSaved = false;
+    try {
+      const assets = assetView.assets;
+      stats.stageMilliseconds.assets += performance.now() - stageStarted;
+      // A same-size resize discards the backing store even when dimensions do
+      // not change. Reuse it; the opaque fill below replaces every scene pixel.
+      const surfaceWidth = useCoreSurface ? core.width * 16 : plan.width;
+      const surfaceHeight = useCoreSurface ? core.height * 16 : plan.height;
+      if (canvas.width !== surfaceWidth) canvas.width = surfaceWidth;
+      if (canvas.height !== surfaceHeight) canvas.height = surfaceHeight;
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, surfaceWidth, surfaceHeight);
+      if (useCoreSurface) {
+        // Planning keeps the complete halo. Translate the same ordered draws
+        // onto a core-sized surface; its device clip replaces the later crop.
+        ctx.save();
+        contextSaved = true;
+        ctx.translate(-left, -top);
       }
-      for (const c of plan.sourceHiddenCells || [])
-        if (
-          c.x >= core.x &&
-          c.y >= core.y &&
-          c.x < core.x + core.width &&
-          c.y < core.y + core.height
-        )
-          add(stats.sourceHiddenTiles, c.type);
-      for (const c of plan.unsupportedCells)
-        if (
-          c.x >= core.x &&
-          c.y >= core.y &&
-          c.x < core.x + core.width &&
-          c.y < core.y + core.height
-        ) {
-          add(unsupportedTiles, c.type);
-          onOmission(c.x, c.y, 1);
+      const coreCommands = plan.commands.filter((c) => inCore(c, region, core));
+      if (count) {
+        stats.maxChunkCells = Math.max(
+          stats.maxChunkCells,
+          region.cells.length,
+        );
+        stats.maxPlanCommands = Math.max(
+          stats.maxPlanCommands,
+          plan.commands.length,
+        );
+        for (const c of coreCommands) {
+          stats.plannedCommands++;
+          add(commandCounts, c.kind);
         }
-      for (const c of plan.support.liquidDrawing.unsupportedCoordinates)
-        if (
-          c.x >= core.x &&
-          c.y >= core.y &&
-          c.x < core.x + core.width &&
-          c.y < core.y + core.height
-        ) {
-          add(liquidUnsupported, c.reason);
-          onOmission(c.x, c.y, 2);
-        }
-    }
-    // A private, immutable plan is used only during this draw. Intern each full
-    // frame key once instead of rebuilding it at batching, validation and draw.
-    const keyCache = new Map(),
-      internedKeys = new Map();
-    for (const c of plan.commands) {
-      const key = sceneFrameKey(c);
-      if (!internedKeys.has(key)) internedKeys.set(key, key);
-      keyCache.set(c, internedKeys.get(key));
-    }
-    stageStarted = performance.now();
-    const opaqueOverview = overview
-      ? prepareOpaqueOverview(plan, assets, createCanvas, {
+        for (const c of plan.sourceHiddenCells || [])
+          if (
+            c.x >= core.x &&
+            c.y >= core.y &&
+            c.x < core.x + core.width &&
+            c.y < core.y + core.height
+          )
+            add(stats.sourceHiddenTiles, c.type);
+        for (const c of plan.unsupportedCells)
+          if (
+            c.x >= core.x &&
+            c.y >= core.y &&
+            c.x < core.x + core.width &&
+            c.y < core.y + core.height
+          ) {
+            add(unsupportedTiles, c.type);
+            onOmission(c.x, c.y, 1);
+          }
+        for (const c of plan.support.liquidDrawing.unsupportedCoordinates)
+          if (
+            c.x >= core.x &&
+            c.y >= core.y &&
+            c.x < core.x + core.width &&
+            c.y < core.y + core.height
+          ) {
+            add(liquidUnsupported, c.reason);
+            onOmission(c.x, c.y, 2);
+          }
+      }
+      // A private, immutable plan is used only during this draw. Intern each full
+      // frame key once instead of rebuilding it at batching, validation and draw.
+      const keyCache = new Map(),
+        internedKeys = new Map();
+      for (const c of plan.commands) {
+        const key = sceneFrameKey(c);
+        if (!internedKeys.has(key)) internedKeys.set(key, key);
+        keyCache.set(c, internedKeys.get(key));
+      }
+      stageStarted = performance.now();
+      const opaqueOverview = overview
+        ? prepareOpaqueOverview(plan, assets, createCanvas, {
+            frameCache,
+            inputEncoding,
+            keyCache,
+          })
+        : null;
+      stats.stageMilliseconds.opaqueOverview +=
+        performance.now() - stageStarted;
+      if (opaqueOverview)
+        for (const key of Object.keys(stats.opaqueOverview))
+          stats.opaqueOverview[key] += opaqueOverview[key];
+      stageStarted = performance.now();
+      const batches = commandBatches(plan, keyCache);
+      let rasterizedCommands = 0;
+      stats.stageMilliseconds.batches += performance.now() - stageStarted;
+      for (const commands of batches) {
+        stageStarted = performance.now();
+        const part = { ...plan, commands };
+        const frames = prepareSceneFrames(part, assets, createCanvas, {
           frameCache,
-          inputEncoding,
           keyCache,
-        })
-      : null;
-    stats.stageMilliseconds.opaqueOverview += performance.now() - stageStarted;
-    if (opaqueOverview)
-      for (const key of Object.keys(stats.opaqueOverview))
-        stats.opaqueOverview[key] += opaqueOverview[key];
-    stageStarted = performance.now();
-    const batches = commandBatches(plan, keyCache);
-    stats.stageMilliseconds.batches += performance.now() - stageStarted;
-    for (const commands of batches) {
-      stageStarted = performance.now();
-      const part = { ...plan, commands };
-      const frames = prepareSceneFrames(part, assets, createCanvas, {
-        frameCache,
-        keyCache,
-        inputEncoding: inputEncoding,
-        opaqueScene: true,
-      });
-      stats.stageMilliseconds.prepareFrames += performance.now() - stageStarted;
-      stageStarted = performance.now();
-      // The single opaque scene was initialized above. Keep it between batches.
-      const frameView = { ...frames, opaqueScene: false };
-      // renderScene rejects an entire asset if ANY crop is invalid. Filter the
-      // invalid commands explicitly and report each instead of losing valid ones.
-      const valid = [];
-      for (const c of commands) {
-        const tracked = count && inCore(c, region, core),
-          asset = assets.get(c.asset);
-        if (!asset) {
-          if (tracked) {
-            add(missingCommands, c.asset);
-            onOmission(c.x + region.rect.x, c.y + region.rect.y, 4);
+          inputEncoding: inputEncoding,
+          opaqueScene: true,
+        });
+        stats.stageMilliseconds.prepareFrames +=
+          performance.now() - stageStarted;
+        stageStarted = performance.now();
+        // The single opaque scene was initialized above. Keep it between batches.
+        const frameView = { ...frames, opaqueScene: false };
+        // renderScene rejects an entire asset if ANY crop is invalid. Filter the
+        // invalid commands explicitly and report each instead of losing valid ones.
+        const valid = [];
+        for (const c of commands) {
+          const tracked = count && inCore(c, region, core),
+            asset = assets.get(c.asset);
+          if (!asset) {
+            if (tracked) {
+              add(missingCommands, c.asset);
+              onOmission(c.x + region.rect.x, c.y + region.rect.y, 4);
+            }
+            continue;
           }
-          continue;
-        }
-        if (invalidCrop(c, asset)) {
-          if (tracked) {
-            add(invalidCommands, c.asset);
-            onOmission(c.x + region.rect.x, c.y + region.rect.y, 8);
+          if (invalidCrop(c, asset)) {
+            if (tracked) {
+              add(invalidCommands, c.asset);
+              onOmission(c.x + region.rect.x, c.y + region.rect.y, 8);
+            }
+            continue;
           }
-          continue;
-        }
-        const resolved = frames.resolve(c);
-        if (resolved?.unsupported) {
-          if (tracked) {
-            add(effectFailures, resolved.unsupported);
-            onOmission(c.x + region.rect.x, c.y + region.rect.y, 16);
+          const resolved = frames.resolve(c);
+          if (resolved?.unsupported) {
+            if (tracked) {
+              add(effectFailures, resolved.unsupported);
+              onOmission(c.x + region.rect.x, c.y + region.rect.y, 16);
+            }
+            continue;
           }
-          continue;
+          if (!opaqueOverview?.skip.has(c)) {
+            // Neighbor tiles still participate in planning and validation. Only
+            // native draws whose destination cannot touch the exported core are
+            // omitted; overhanging sprites and boundary antialiasing stay intact.
+            const outside =
+              lowMemory &&
+              [c.dx, c.dy, c.dw, c.dh].every(Number.isFinite) &&
+              c.dw > 0 &&
+              c.dh > 0 &&
+              (c.dx + c.dw + 1 <= left ||
+                c.dy + c.dh + 1 <= top ||
+                c.dx - 1 >= right ||
+                c.dy - 1 >= bottom);
+            if (outside) stats.culledOutsideCoreCommands++;
+            else valid.push(c);
+          }
+          if (tracked) stats.renderedCommands++;
         }
-        if (!opaqueOverview?.skip.has(c)) {
-          // Neighbor tiles still participate in planning and validation. Only
-          // native draws whose destination cannot touch the exported core are
-          // omitted; overhanging sprites and boundary antialiasing stay intact.
-          const outside =
-            lowMemory &&
-            [c.dx, c.dy, c.dw, c.dh].every(Number.isFinite) &&
-            c.dw > 0 &&
-            c.dh > 0 &&
-            (c.dx + c.dw + 1 <= left ||
-              c.dy + c.dh + 1 <= top ||
-              c.dx - 1 >= right ||
-              c.dy - 1 >= bottom);
-          if (outside) stats.culledOutsideCoreCommands++;
-          else valid.push(c);
-        }
-        if (tracked) stats.renderedCommands++;
+        stats.stageMilliseconds.validate += performance.now() - stageStarted;
+        stageStarted = performance.now();
+        rasterizedCommands += valid.length;
+        renderScene(ctx, { ...part, commands: valid }, assets, {
+          strict: true,
+          sceneFrames: frameView,
+        });
+        stats.stageMilliseconds.draw += performance.now() - stageStarted;
+        stats.maxPreparedBytes = Math.max(
+          stats.maxPreparedBytes,
+          frames.support.bytes,
+        );
+        frames.dispose();
       }
-      stats.stageMilliseconds.validate += performance.now() - stageStarted;
-      stageStarted = performance.now();
-      renderScene(ctx, { ...part, commands: valid }, assets, {
-        strict: true,
-        sceneFrames: frameView,
-      });
-      stats.stageMilliseconds.draw += performance.now() - stageStarted;
-      stats.maxPreparedBytes = Math.max(
-        stats.maxPreparedBytes,
-        frames.support.bytes,
-      );
-      frames.dispose();
+      return {
+        plan,
+        coreCommands: coreCommands.length,
+        opaqueOverview,
+        rasterizedCommands,
+        readbackX: useCoreSurface ? 0 : left,
+        readbackY: useCoreSurface ? 0 : top,
+      };
+    } finally {
+      if (contextSaved) ctx.restore();
+      assetView.dispose();
+      if (rawTextures) {
+        stats.assetCacheBytes = rawTextures.stats.retainedBytes;
+        stats.peakAssetCacheBytes = rawTextures.stats.peakLiveBytes;
+      }
     }
-    return { plan, coreCommands: coreCommands.length, opaqueOverview };
   }
 
   return {
@@ -581,6 +653,7 @@ export function createWorldRenderer({
     dispose() {
       frameCache?.dispose();
       pngDecoder?.clear();
+      rawTextures?.dispose();
       assetCache.clear();
       stats.assetCacheBytes = 0;
     },

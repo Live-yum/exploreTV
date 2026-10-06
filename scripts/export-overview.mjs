@@ -1,6 +1,12 @@
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { parseExportCli, exportWorld } from "./export-world.mjs";
+const isCli =
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+// The image-only CLI never draws text; avoid scanning and retaining system fonts.
+// Programmatic consumers keep their process-wide font policy unchanged.
+if (isCli) process.env.DISABLE_SYSTEM_FONTS_LOAD ??= "1";
+const { parseExportCli, exportWorld } = await import("./export-world.mjs");
 
 const USAGE = `Usage: npm run export:overview -- <world.wld> <png-directory> <output.png> [options]
 
@@ -8,8 +14,8 @@ Directly export a small full-extent panorama from the world and real textures.
 Each bounded region is composited at 16 px/tile, area-reduced immediately, and
 streamed to the final PNG. No giant full-resolution PNG or tile files are made.
   --pixels-per-tile <1|2|4|8>    Output scale; default 1 (8400x2400 for a large world)
-  --band-tiles <1..128>         Bounded render stripe height; default 64
-  --chunk-tiles <1..252>        Bounded render width; default 128
+  --band-tiles <1..128>         Bounded render stripe height; default 48
+  --chunk-tiles <1..252>        Bounded render width; default 120
   --region <x,y,width,height>   Optional world-tile crop; default entire world
   --expect-world-sha256 <hash>  Refuse a different input world
   --input-encoding <encoding>  tconvert-game-raw (default) or standard-straight
@@ -37,7 +43,8 @@ export function parseOverviewCli(argv) {
     } else rest.push(argv[i]);
   }
   const config = parseExportCli(rest, { pixelsPerTile });
-  if (!rest.includes("--band-tiles")) config.bandTiles = 64;
+  if (!rest.includes("--band-tiles")) config.bandTiles = 48;
+  if (!rest.includes("--chunk-tiles")) config.chunkTiles = 120;
   return { ...config, pixelsPerTile };
 }
 
