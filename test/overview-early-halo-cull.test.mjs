@@ -166,12 +166,53 @@ async function draw(
   }
 }
 
-function assertEquivalent(actual, baseline) {
+function assertEquivalent(actual, baseline, region, core) {
   assert.deepEqual(actual.pixels, baseline.pixels);
+  const { commands: referenceCommands, ...referenceDiagnostics } =
+      baseline.plan,
+    { commands, generationCulling, ...diagnostics } = actual.plan;
   assert.deepEqual(
-    actual.plan,
-    baseline.plan,
-    "the complete diagnostic plan is returned unchanged",
+    diagnostics,
+    referenceDiagnostics,
+    "full read-region assets, support and diagnostics remain unchanged",
+  );
+  const left = (core.x - region.rect.x) * 16,
+    top = (core.y - region.rect.y) * 16;
+  // Independent pixel envelope for this fixture's ordinary tile and wall
+  // owners. All special sprites keep their exact previous planning path.
+  const expectedCommands = referenceCommands.filter((c) => {
+    if (
+      c.kind !== "wall" &&
+      !(c.kind === "tile" && c.fidelity === "approximate")
+    )
+      return true;
+    const wall = c.kind === "wall",
+      size = wall ? 32 : 16,
+      dx = c.x * 16 - (wall ? 8 : 0),
+      dy = c.y * 16 - (wall ? 8 : 0);
+    return !(
+      dx + size + 1 <= left ||
+      dy + size + 1 <= top ||
+      dx - 1 >= left + core.width * 16 ||
+      dy - 1 >= top + core.height * 16
+    );
+  });
+  assert.deepEqual(
+    commands,
+    expectedCommands,
+    "only proven ordinary halo commands are absent; retained ordering is exact",
+  );
+  assert.deepEqual(generationCulling, {
+    culledCommands: referenceCommands.length - expectedCommands.length,
+    logicalCommands: referenceCommands.length,
+  });
+  assert.ok(generationCulling.culledCommands > 0);
+  assert.equal(
+    actual.stats.generationCulledHaloCommands,
+    generationCulling.culledCommands,
+  );
+  assert.ok(
+    actual.stats.earlyCulledHaloCommands >= generationCulling.culledCommands,
   );
   assert.equal(actual.coreCommands, baseline.coreCommands);
   assert.deepEqual(actual.omissions, baseline.omissions);
@@ -232,7 +273,7 @@ test("early halo culling retains exterior 8-pixel wall spans, tall crowns and ex
       lowMemory: true,
       native,
     });
-    assertEquivalent(actual, baseline);
+    assertEquivalent(actual, baseline, region, core);
     if (native) {
       assert.ok(actual.stats.nativeOverview.nativeCommands > 0);
       assert.ok(actual.stats.nativeOverview.rawPreparedFrames > 0);
@@ -276,7 +317,7 @@ test("early halo culling preserves owner omissions and still validates halo-only
       lowMemory: true,
       native,
     });
-    assertEquivalent(actual, baseline);
+    assertEquivalent(actual, baseline, region, core);
   }
 });
 
@@ -300,5 +341,5 @@ test("all core-owner effects remain validated even when individual crown pieces 
     lowMemory: true,
     native: nativeBlitterStatus.available,
   });
-  assertEquivalent(actual, baseline);
+  assertEquivalent(actual, baseline, region, core);
 });

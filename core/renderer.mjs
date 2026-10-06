@@ -192,6 +192,55 @@ export function planScene(region, options = {}) {
     region.cells?.length !== w * h
   )
     throw new Error("Invalid or oversized scene region");
+  // The full region remains available for neighbor reads and diagnostics. An
+  // explicit emission core only avoids allocating ordinary exterior owners.
+  // Reject ambiguous world coordinates before proving any owner invisible.
+  const emissionCore = options.emissionCore;
+  let emissionLeft = 0,
+    emissionTop = 0,
+    emissionRight = w,
+    emissionBottom = h,
+    culledCommands = 0;
+  if (emissionCore !== undefined) {
+    const r = region.rect;
+    if (
+      !emissionCore ||
+      ![
+        r.x,
+        r.y,
+        r.x + w,
+        r.y + h,
+        emissionCore.x,
+        emissionCore.y,
+        emissionCore.width,
+        emissionCore.height,
+        emissionCore.x + emissionCore.width,
+        emissionCore.y + emissionCore.height,
+      ].every(Number.isSafeInteger) ||
+      emissionCore.width < 1 ||
+      emissionCore.height < 1 ||
+      emissionCore.x < r.x ||
+      emissionCore.y < r.y ||
+      emissionCore.x + emissionCore.width > r.x + w ||
+      emissionCore.y + emissionCore.height > r.y + h
+    )
+      throw new RangeError(
+        "Emission core must be a positive integer rectangle contained by a safe integer scene",
+      );
+    // Retain one owner cell on every side. This encloses the 32px wall span
+    // (-8..24), all ordinary 16px shapes, and the existing 1px drawing guard.
+    emissionLeft = emissionCore.x - r.x - 1;
+    emissionTop = emissionCore.y - r.y - 1;
+    emissionRight = emissionCore.x - r.x + emissionCore.width + 1;
+    emissionBottom = emissionCore.y - r.y + emissionCore.height + 1;
+  }
+  const outsideEmission = (x, y) =>
+    x < emissionLeft ||
+    x >= emissionRight ||
+    y < emissionTop ||
+    y >= emissionBottom;
+  const registry =
+    options.liquids?.enabled && options.liquids?.waterfallRegistry;
   const cells = region.cells,
     commands = [],
     assets = new Set(),
@@ -238,6 +287,13 @@ export function planScene(region, options = {}) {
       throw new Error(
         "Scene command budget exceeded; choose a smaller preview region",
       );
+  };
+  const omitOrdinary = (asset) => {
+    // Budget and asset discovery describe the complete logical scene even
+    // when no draw object is allocated. The caller must load requiredAssets.
+    reserve();
+    assets.add(asset);
+    culledCommands++;
   };
   const emit = (c) => {
     commands.push(c);
@@ -300,6 +356,17 @@ export function planScene(region, options = {}) {
         if (!t?.wall) continue;
         if (!revealInvisible && (t.invisibleWall || t.wall === 318)) {
           support.hiddenWalls++;
+          continue;
+        }
+        if (
+          outsideEmission(x, y) &&
+          Number.isInteger(t.wall) &&
+          t.wall > 0 &&
+          t.wall < wallAssets.length
+        ) {
+          omitOrdinary(wallAssets[t.wall]);
+          support.walls++;
+          support.approximateWalls++;
           continue;
         }
         // Match cellAt's region-edge contract without allocating a predicate
@@ -403,6 +470,17 @@ export function planScene(region, options = {}) {
           t.frameY >= 0
         )
       ) {
+        if (
+          outsideEmission(x, y) &&
+          Number.isInteger(shape) &&
+          (!registry || classifyTileDrawLayer(t.type) !== undefined)
+        ) {
+          omitOrdinary(ordinaryAsset);
+          support.tiles++;
+          support.approximateTiles++;
+          if (shape) support.shapes++;
+          continue;
+        }
         const north = y > 0 ? cells[i - 1] : null,
           west = x > 0 ? cells[i - h] : null,
           east = x + 1 < w ? cells[i + h] : null,
@@ -755,8 +833,6 @@ export function planScene(region, options = {}) {
     foliageCommands,
     specialAbove,
   ];
-  const registry =
-    options.liquids?.enabled && options.liquids?.waterfallRegistry;
   if (registry) {
     if (
       typeof registry.commandsFor !== "function" ||
@@ -915,6 +991,9 @@ export function planScene(region, options = {}) {
     requiredAssets: [...assets].sort(),
     width: w * 16,
     height: h * 16,
+    ...(emissionCore !== undefined
+      ? { generationCulling: { culledCommands, logicalCommands: commandCount } }
+      : {}),
   };
 }
 /** Preflight all textures before strict drawing. Never substitutes colors or invented sprites. */

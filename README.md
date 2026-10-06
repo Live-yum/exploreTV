@@ -33,9 +33,9 @@ MALLOC_ARENA_MAX=2 MALLOC_MMAP_THRESHOLD_=131072 npm run export:overview -- fixt
 
 大世界默认输出完整范围的 **8400×2400 PNG（每 Tile 1 px）**；项目示例的既有精确输出约 **17 MB**，其他世界以实际压缩结果为准。`prepare:overview` 只提前编译与世界无关的原生合成及缩小模块，不读取世界或纹理；世界加载、索引、完整瀑布登记、PNG 解码、冷缓存建立、合成与最终 PNG 写入仍计入整图耗时。
 
-当前采用单渲染进程、**128×48 Tile** 分块、每 **32 行**一个稀疏 RLE 检查点；npm 命令将 V8 old-space 限为 **48 MiB**，原生帧像素的保留与活动引用合并计数后限为 **8 MiB**。1 px/Tile 使用精确整数像素合成，并对复杂几何保留 Canvas 路径；2/4/8 px/Tile 保留原有完整合成后面积缩小的画质路径。模块加载会核对源码及二进制 SHA-256，缺失、过期或不兼容时自动退回 Canvas／JavaScript。全景保持现有 **fullbright 静态纹理渲染**范围，实时光照、动态实体和运行时效果仍受限制；适合全世界概览与结构检查。
+当前采用单渲染进程、**160×48 Tile** 分块、每 **32 行**一个稀疏 RLE 检查点；npm 命令将 V8 old-space 限为 **48 MiB**，原生帧像素的保留与活动引用合并计数后限为 **8 MiB**。1 px/Tile 使用精确整数像素合成，并对复杂几何保留 Canvas 路径；2/4/8 px/Tile 保留原有完整合成后面积缩小的画质路径。模块加载会核对源码及二进制 SHA-256，缺失、过期或不兼容时自动退回 Canvas／JavaScript。全景保持现有 **fullbright 静态纹理渲染**范围，实时光照、动态实体和运行时效果仍受限制；适合全世界概览与结构检查。
 
-最终默认配置在[远端同机对照](https://github.com/Live-yum/exploreTV/actions/runs/37408281055)中为 **125.064 秒 / 291.48 MB 保守总峰值**，同机原版为 **240.309 秒 / 297.81 MB**，耗时下降 **47.96%**、峰值减少 **6.33 MB**。整图全部像素与 13 个细节窗口保持一致。**300 MB 内存目标通过，60 秒时间目标尚未达到。** 本轮 runner 为 AMD EPYC 7763，不能与其他 CPU 上的历史时间直接计算加速比。[完整实测记录](docs/benchmarks/overview-native-20261006-final.json)保留输入、源码、原生二进制、平台及计时口径。历史远端 **257.554 秒 / 302.17 MB** 见 [run 37395562331](https://github.com/Live-yum/exploreTV/actions/runs/37395562331)；当前架构与复现见[原生概览文档](docs/overview-native.md)。
+已合并 PR #2 的历史配置在[远端同机对照](https://github.com/Live-yum/exploreTV/actions/runs/37408281055)中为 **125.064 秒 / 291.48 MB 保守总峰值**，同机原版为 **240.309 秒 / 297.81 MB**，耗时下降 **47.96%**、峰值减少 **6.33 MB**。整图全部像素与 13 个细节窗口保持一致。**300 MB 内存目标通过，60 秒时间目标尚未达到。** 本轮 runner 为 AMD EPYC 7763，不能与其他 CPU 上的历史时间直接计算加速比。[完整实测记录](docs/benchmarks/overview-native-20261006-final.json)保留输入、源码、原生二进制、平台及计时口径。历史远端 **257.554 秒 / 302.17 MB** 见 [run 37395562331](https://github.com/Live-yum/exploreTV/actions/runs/37395562331)；当前架构与复现见[原生概览文档](docs/overview-native.md)。
 
 原分辨率导出采用流式PNG，不创建整张巨型Canvas。超大PNG不保证普通浏览器可打开，兼容分块输出可按清单重建完整细节。命令选项与实际内存/文件限制以导出文档为准。普通缩小全景只作overview，不等同于原分辨率全图。
 

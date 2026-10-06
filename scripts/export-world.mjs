@@ -269,6 +269,8 @@ export async function exportWorld(
     "scripts/native-blitter.c",
     "scripts/software-overview.mjs",
     "scripts/scene-frame-interner.mjs",
+    "scripts/scene-command-index.mjs",
+    "scripts/overview-geometry.mjs",
     "scripts/world-render-engine.mjs",
     "core/world.mjs",
     "core/utf8.mjs",

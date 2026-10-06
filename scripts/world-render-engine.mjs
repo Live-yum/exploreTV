@@ -1,6 +1,8 @@
 import { createRawTextureCache } from "./raw-texture-cache.mjs";
 import { createSoftwareOverview } from "./software-overview.mjs";
 import { createSceneFrameInterner } from "./scene-frame-interner.mjs";
+import { createSceneCommandIndex } from "./scene-command-index.mjs";
+import { createOverviewGeometryAnalysis } from "./overview-geometry.mjs";
 import { createNodePngRgbaDecoder } from "./png-rgba-node.mjs";
 import { createCompactStaticWaterfallRegistry } from "./compact-waterfall-registry.mjs";
 import {
@@ -290,7 +292,7 @@ export function createWorldRenderer({
   const frameMetadataCache = lowMemory
     ? createOverviewFrameMetadataCache()
     : null;
-  const frameInterner = createSceneFrameInterner();
+  const frameInterner = createSceneFrameInterner({ numericIds: lowMemory });
   const lazyRaw = lowMemory && inputEncoding === "tconvert-game-raw";
   const softwareRenderer =
     lazyRaw && nativeOverview ? createSoftwareOverview() : null;
@@ -311,6 +313,7 @@ export function createWorldRenderer({
       draw: 0,
       opaqueOverview: 0,
       nativePartition: 0,
+      sharedGeometry: 0,
       keyGeneration: 0,
     },
     opaqueOverview: { eligibleTiles: 0, skippedCommands: 0, totalCommands: 0 },
@@ -333,6 +336,7 @@ export function createWorldRenderer({
     maxPreparedBytes: 0,
     renderedCommands: 0,
     earlyCulledHaloCommands: 0,
+    generationCulledHaloCommands: 0,
     culledOutsideCoreCommands: 0,
     plannedCommands: 0,
     assetHashes: {},
@@ -463,11 +467,11 @@ export function createWorldRenderer({
       reserved = 0;
     for (const c of plan.commands) {
       const key = keyCache.get(c),
-        extra = keys.has(key) ? 0 : sceneFrameReservedBytes(c);
+        hasKey = keys.has(key),
+        extra = hasKey ? 0 : sceneFrameReservedBytes(c);
       if (
         commands.length &&
-        ((!keys.has(key) && keys.size >= 450) ||
-          reserved + extra > 7 * 1024 * 1024)
+        ((!hasKey && keys.size >= 450) || reserved + extra > 7 * 1024 * 1024)
       ) {
         batches.push(commands);
         commands = [];
@@ -512,14 +516,22 @@ export function createWorldRenderer({
       top = (core.y - region.rect.y) * 16,
       right = left + core.width * 16,
       bottom = top + core.height * 16;
-    const plan = planScene(region, options);
+    const plan = planScene(
+      region,
+      lowMemory && coreSurface ? { ...options, emissionCore: core } : options,
+    );
+    stats.generationCulledHaloCommands +=
+      plan.generationCulling?.culledCommands ?? 0;
+    stats.earlyCulledHaloCommands +=
+      plan.generationCulling?.culledCommands ?? 0;
     stats.stageMilliseconds.plan += performance.now() - stageStarted;
     stageStarted = performance.now();
     const assetView = await assetsFor(plan);
     const useCoreSurface = lowMemory && coreSurface;
     const ctx = canvas.getContext("2d");
     let contextSaved = false,
-      softwareOverview = null;
+      softwareOverview = null,
+      keyCache = null;
     try {
       const assets = assetView.assets;
       stats.stageMilliseconds.assets += performance.now() - stageStarted;
@@ -531,7 +543,7 @@ export function createWorldRenderer({
         );
         stats.maxPlanCommands = Math.max(
           stats.maxPlanCommands,
-          plan.commands.length,
+          plan.generationCulling?.logicalCommands ?? plan.commands.length,
         );
         for (const c of plan.sourceHiddenCells || [])
           if (
@@ -574,14 +586,13 @@ export function createWorldRenderer({
           c.dy + c.dh + 1 <= top ||
           c.dx - 1 >= right ||
           c.dy - 1 >= bottom);
-      // Keep the complete halo plan for dependencies, assets and diagnostics.
-      // Only the working command list omits external owners whose complete draw
-      // cannot touch the core, with the same conservative antialiasing margin as
-      // the final draw cull. Core owners retain every original validation path.
-      // Fuse selection with key generation to avoid another whole-plan scan.
+      // The planner retains full halo dependencies/assets/diagnostics while
+      // omitting proved exterior ordinary owners. Cull remaining special/edge
+      // commands only when their complete draw cannot touch the core, keeping
+      // the same antialiasing margin and every core-owner validation path.
+      // Build one shared command index for frame and geometry lookups.
       stageStarted = performance.now();
-      const keyCache = new Map(),
-        renderCommands = lowMemory ? [] : plan.commands;
+      const renderCommands = lowMemory ? [] : plan.commands;
       for (const c of plan.commands) {
         const ownerInCore = inCore(c, region, core);
         if (lowMemory) {
@@ -591,7 +602,6 @@ export function createWorldRenderer({
           }
           renderCommands.push(c);
         }
-        keyCache.set(c, frameInterner.key(c));
         if (ownerInCore) {
           coreCommandCount++;
           if (count) {
@@ -603,6 +613,10 @@ export function createWorldRenderer({
       const renderPlan = lowMemory
         ? { ...plan, commands: renderCommands }
         : plan;
+      keyCache = lowMemory
+        ? createSceneCommandIndex(renderCommands)
+        : new Map();
+      for (const c of renderCommands) keyCache.set(c, frameInterner.key(c));
       stats.stageMilliseconds.keyGeneration += performance.now() - stageStarted;
       const metadata = frameMetadataCache?.view(
         assets,
@@ -610,12 +624,20 @@ export function createWorldRenderer({
         inputEncoding,
       );
       stageStarted = performance.now();
+      const analysis =
+        overview && softwareRenderer
+          ? createOverviewGeometryAnalysis(renderPlan, core, region, keyCache)
+          : null;
+      stats.stageMilliseconds.sharedGeometry +=
+        performance.now() - stageStarted;
+      stageStarted = performance.now();
       const opaqueOverview = overview
         ? prepareOpaqueOverview(renderPlan, assets, createCanvas, {
             frameCache,
             inputEncoding,
             keyCache,
             metadata,
+            analysis,
           })
         : null;
       stats.stageMilliseconds.opaqueOverview +=
@@ -626,7 +648,14 @@ export function createWorldRenderer({
       stageStarted = performance.now();
       softwareOverview =
         overview && softwareRenderer
-          ? softwareRenderer.begin(renderPlan, core, region, assets, keyCache)
+          ? softwareRenderer.begin(
+              renderPlan,
+              core,
+              region,
+              assets,
+              keyCache,
+              analysis,
+            )
           : null;
       stats.stageMilliseconds.nativePartition +=
         performance.now() - stageStarted;
@@ -663,11 +692,12 @@ export function createWorldRenderer({
           const previous = validation?.command;
           if (
             !previous ||
-            previous.asset !== c.asset ||
-            previous.sx !== c.sx ||
-            previous.sy !== c.sy ||
-            previous.sw !== c.sw ||
-            previous.sh !== c.sh
+            (typeof key !== "number" &&
+              (previous.asset !== c.asset ||
+                previous.sx !== c.sx ||
+                previous.sy !== c.sy ||
+                previous.sw !== c.sw ||
+                previous.sh !== c.sh))
           ) {
             const asset = assets.get(c.asset),
               missing = !asset,
@@ -842,6 +872,7 @@ export function createWorldRenderer({
       };
     } finally {
       softwareOverview?.finish();
+      keyCache?.dispose?.();
       if (contextSaved) ctx.restore();
       assetView.dispose();
       if (rawTextures) {

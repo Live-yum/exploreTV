@@ -377,7 +377,7 @@ test("overview CLI accepts bounded defaults and supported flags but refuses inva
   const defaults = parseOverviewCli(["w", "a", "out"]);
   assert.equal(defaults.pixelsPerTile, 1);
   assert.equal(defaults.bandTiles, 48);
-  assert.equal(defaults.chunkTiles, 128);
+  assert.equal(defaults.chunkTiles, 160);
   assert.equal(defaults.compressionLevel, 6);
   assert.equal(defaults.inputEncoding, "tconvert-game-raw");
   for (const scale of [1, 2, 4, 8]) {
@@ -390,7 +390,7 @@ test("overview CLI accepts bounded defaults and supported flags but refuses inva
     ]);
     assert.equal(scaled.pixelsPerTile, scale);
     assert.equal(scaled.bandTiles, 48);
-    assert.equal(scaled.chunkTiles, scale === 1 ? 128 : 120);
+    assert.equal(scaled.chunkTiles, scale === 1 ? 160 : 120);
     const overridden = parseOverviewCli([
       "w",
       "a",
