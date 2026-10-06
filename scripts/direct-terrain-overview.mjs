@@ -168,6 +168,7 @@ export function createDirectTerrainOverview({
   maxDetailedBytes = 6 * 1024 * 1024,
   inputEncoding = "tconvert-game-raw",
   detailedRgbaArena = null,
+  framePack = null,
   // Fewer pixel operations did not beat unmasked composition in the complete
   // CI export. Keep this kernel available for measured A/B, explicitly opt-in.
   resolvedCellMask = false,
@@ -197,8 +198,16 @@ export function createDirectTerrainOverview({
       detailedRgbaArena.maxBytes < 4)
   )
     throw new TypeError("Invalid shared overview RGBA arena");
+  if (
+    framePack !== null &&
+    ["lookup", "readPage", "frame"].some(
+      (name) => typeof framePack[name] !== "function",
+    )
+  )
+    throw new TypeError("Invalid precompiled overview frame pack");
 
   const entries = new Map(),
+    packPages = new Map(),
     // Per-view compact frame references contain only slot/generation numbers.
     // Retiring an entry removes the sole unpinned strong reference from this
     // table; stale view slots can never keep its pixel planes alive.
@@ -228,6 +237,15 @@ export function createDirectTerrainOverview({
     peakActiveFrameBytes: 0,
     frameEntries: 0,
     peakFrameEntries: 0,
+    packPageBytes: 0,
+    peakPackPageBytes: 0,
+    packResidentPages: 0,
+    packFrameHits: 0,
+    packFrameMisses: 0,
+    packPageReads: 0,
+    packPageEvictions: 0,
+    packFailures: 0,
+    commandStreamCommands: 0,
     hits: 0,
     misses: 0,
     evictions: 0,
@@ -296,16 +314,29 @@ export function createDirectTerrainOverview({
   };
   const clearEntries = () => {
     entries.clear();
+    packPages.clear();
     cacheSlots.fill(undefined);
     cacheGenerations.fill(0);
     freeCacheSlots.length = nextCacheSlot = 0;
     stats.frameBytes = stats.liveFrameBytes = stats.frameEntries = 0;
+    stats.packPageBytes = stats.packResidentPages = 0;
   };
-  const retire = (key, entry) => {
+  const retire = (key, entry, protectedPage = null) => {
     entries.delete(key);
     cacheSlots[entry.slot] = undefined;
     freeCacheSlots.push(entry.slot);
     stats.frameBytes -= entry.bytes;
+    if (
+      entry.page &&
+      --entry.page.references === 0 &&
+      entry.page !== protectedPage
+    ) {
+      packPages.delete(entry.page.id);
+      stats.frameBytes -= entry.page.bytes;
+      stats.packPageBytes -= entry.page.bytes;
+      stats.packResidentPages = packPages.size;
+      stats.packPageEvictions++;
+    }
     stats.liveFrameBytes = stats.frameBytes;
     stats.frameEntries = entries.size;
     stats.evictions++;
@@ -323,7 +354,9 @@ export function createDirectTerrainOverview({
       )
         return null;
       const rect = region?.rect,
-        commands = plan?.commands,
+        stream = plan?.commandStream,
+        commands = stream?.tokens ?? plan?.commands,
+        objects = stream?.objects,
         compact = plan?.compactTerrain,
         records = compact?.records,
         templates = compact?.frames;
@@ -340,9 +373,18 @@ export function createDirectTerrainOverview({
       )
         return null;
       if (
+        stream &&
+        (!(commands instanceof Int32Array) ||
+          !(commands.buffer instanceof ArrayBuffer) ||
+          commands.buffer.detached === true ||
+          !Array.isArray(objects) ||
+          objects.length > MAX_COMMANDS)
+      )
+        return null;
+      if (
         !rect ||
         !core ||
-        !Array.isArray(commands) ||
+        (!stream && !Array.isArray(commands)) ||
         commands.length > MAX_COMMANDS ||
         ![
           core.x,
@@ -391,6 +433,7 @@ export function createDirectTerrainOverview({
       rendering = true;
       stats.renders++;
       stats.totalCommands += commands.length;
+      if (stream) stats.commandStreamCommands += commands.length;
       stats.totalCells += width * height;
       const handled = new Uint8Array(commands.length),
         unsafe = new Uint8Array(width * height),
@@ -500,7 +543,10 @@ export function createDirectTerrainOverview({
         return true;
       };
       const clearBatch = () => {
-        for (const entry of pinned) entry.pinned = false;
+        for (const entry of pinned) {
+          entry.pinned = false;
+          if (entry.page) entry.page.pins--;
+        }
         pinned.length = sources.length = 0;
         used = batchCommands = 0;
         stats.activeFrameBytes = 0;
@@ -545,7 +591,7 @@ export function createDirectTerrainOverview({
           clearBatch();
         }
       };
-      const makeRoom = (bytes) => {
+      const makeRoom = (bytes, protectedPage = null) => {
         if (
           stats.frameBytes + bytes <= maxFrameBytes &&
           entries.size < maxFrames
@@ -573,7 +619,7 @@ export function createDirectTerrainOverview({
             entries.delete(key);
             entries.set(key, entry);
             stats.clockPromotions++;
-          } else retire(key, entry);
+          } else retire(key, entry, protectedPage);
         }
         return (
           stats.frameBytes + bytes <= maxFrameBytes && entries.size < maxFrames
@@ -619,7 +665,7 @@ export function createDirectTerrainOverview({
         previousNamespace = namespace;
         return namespace;
       };
-      const getFrame = (c, kind, secondPass = false) => {
+      const getFrame = (c, kind, secondPass = false, recipeId = undefined) => {
         const namespace = namespaceFor(c.asset);
         if (!namespace) {
           stats.preparationFailures++;
@@ -674,40 +720,132 @@ export function createDirectTerrainOverview({
         if (secondPass) stats.secondPassMisses++;
         if (typeof key === "number" && failedKeys.has(key)) return null;
         stats.misses++;
+        let frame = null,
+          page = null;
+        // Only this cache owns page pixels. Views into a page do not turn its
+        // allocation into several independently evictable tiny frame buffers.
+        // Hold an existing page through makeRoom; otherwise evicting its last
+        // frame could leave this local reference alive outside the byte count.
+        if (framePack) {
+          const started = performance.now();
+          try {
+            const descriptor = framePack.lookup(
+              namespace.source,
+              recipeId ?? c,
+              c,
+            );
+            if (descriptor) {
+              page = packPages.get(descriptor.pageId) ?? null;
+              const pageBytes = descriptor.pageBytes,
+                extra =
+                  keyBytes + (descriptor.mean ? 4 : 0) + (page ? 0 : pageBytes);
+              if (
+                Number.isSafeInteger(pageBytes) &&
+                pageBytes > 0 &&
+                extra <= maxFrameBytes
+              ) {
+                if (!makeRoom(extra, page)) flush();
+                if (makeRoom(extra, page)) {
+                  if (!page) {
+                    const data = framePack.readPage(descriptor);
+                    if (
+                      !(data instanceof Uint8Array) ||
+                      !(data.buffer instanceof ArrayBuffer) ||
+                      data.byteLength !== pageBytes ||
+                      data.buffer.byteLength !== pageBytes
+                    )
+                      throw new Error(
+                        "Frame pack page does not have exact bounded backing",
+                      );
+                    page = {
+                      id: descriptor.pageId,
+                      data,
+                      bytes: pageBytes,
+                      references: 0,
+                      pins: 0,
+                    };
+                    packPages.set(page.id, page);
+                    stats.frameBytes += pageBytes;
+                    stats.packPageBytes += pageBytes;
+                    stats.packResidentPages = packPages.size;
+                    stats.packPageReads++;
+                    stats.peakPackPageBytes = Math.max(
+                      stats.peakPackPageBytes,
+                      stats.packPageBytes,
+                    );
+                  }
+                  frame = framePack.frame(descriptor, page.data);
+                  if (
+                    !frame ||
+                    frame.unsupported ||
+                    frame.width !== c.sw ||
+                    frame.height !== c.sh ||
+                    frame.base?.buffer !== page.data.buffer ||
+                    frame.base.byteLength !== c.sw * c.sh * 4 ||
+                    (frame.additive &&
+                      (frame.additive.buffer !== page.data.buffer ||
+                        frame.additive.byteLength !== frame.base.byteLength)) ||
+                    (frame.mean && frame.mean.byteLength !== 4)
+                  )
+                    throw new Error("Frame pack returned invalid page views");
+                  stats.packFrameHits++;
+                }
+              }
+            }
+          } catch {
+            frame = null;
+            stats.packFailures++;
+          } finally {
+            stats.phaseMilliseconds.prepare += performance.now() - started;
+          }
+          if (!frame) {
+            stats.packFrameMisses++;
+            if (page && !page.references) {
+              packPages.delete(page.id);
+              stats.frameBytes -= page.bytes;
+              stats.packPageBytes -= page.bytes;
+              stats.packResidentPages = packPages.size;
+            }
+            page = null;
+          }
+        }
         // Reserve both complete planes, the optional four-byte opaque mean,
         // and the conservative string-key storage before preparing a frame.
         const reservation =
           c.sw * c.sh * 8 +
           (c.sw === 16 && c.sh === 16 && kind >= -1 ? 4 : 0) +
           keyBytes;
-        if (reservation > maxFrameBytes) {
+        if (!frame && reservation > maxFrameBytes) {
           stats.budgetFallbacks++;
           if (typeof key === "number" && failedKeys.size < 8192)
             failedKeys.add(key);
           return null;
         }
-        if (!makeRoom(reservation)) {
+        if (!frame && !makeRoom(reservation)) {
           flush();
           if (!makeRoom(reservation))
             throw new Error("Direct terrain active frame budget exhausted");
         }
-        let frame = null;
-        const started = performance.now();
-        try {
-          frame =
-            kind < -1
-              ? prepareCanonicalSlopeOverviewFrame(
-                  c.dx === undefined ? { ...c, dx: 0, dy: 0 } : c,
-                  namespace.source,
-                  {
+        if (!frame) {
+          const started = performance.now();
+          try {
+            frame =
+              kind < -1
+                ? prepareCanonicalSlopeOverviewFrame(
+                    c.dx === undefined ? { ...c, dx: 0, dy: 0 } : c,
+                    namespace.source,
+                    {
+                      inputEncoding,
+                    },
+                  )
+                : prepareRawOverviewFrame(c, namespace.source, {
                     inputEncoding,
-                  },
-                )
-              : prepareRawOverviewFrame(c, namespace.source, { inputEncoding });
-        } catch {
-          // The unchanged generic preparer owns unsupported-frame diagnostics.
-        } finally {
-          stats.phaseMilliseconds.prepare += performance.now() - started;
+                  });
+          } catch {
+            // The unchanged generic preparer owns unsupported-frame diagnostics.
+          } finally {
+            stats.phaseMilliseconds.prepare += performance.now() - started;
+          }
         }
         if (!frame || frame.unsupported) {
           stats.preparationFailures++;
@@ -716,8 +854,9 @@ export function createDirectTerrainOverview({
           return null;
         }
         const bytes =
-          frame.base.byteLength +
-          (frame.additive?.byteLength ?? 0) +
+          (page
+            ? 0
+            : frame.base.byteLength + (frame.additive?.byteLength ?? 0)) +
           (frame.mean?.byteLength ?? 0) +
           keyBytes;
         if (bytes > reservation || stats.frameBytes + bytes > maxFrameBytes)
@@ -729,6 +868,7 @@ export function createDirectTerrainOverview({
         cacheGenerations[slot] = generation;
         const entry = {
           ...frame,
+          page,
           slot,
           generation,
           meanWord: frame.mean
@@ -740,6 +880,7 @@ export function createDirectTerrainOverview({
           baseId: -1,
           additiveId: -1,
         };
+        if (page) page.references++;
         entries.set(key, entry);
         cacheSlots[slot] = entry;
         stats.frameBytes += bytes;
@@ -751,8 +892,10 @@ export function createDirectTerrainOverview({
           stats.frameBytes,
         );
         stats.peakFrameEntries = Math.max(stats.peakFrameEntries, entries.size);
-        if (kind < -1) stats.slopePreparedFrames++;
-        else stats.rawPreparedFrames++;
+        if (!page) {
+          if (kind < -1) stats.slopePreparedFrames++;
+          else stats.rawPreparedFrames++;
+        }
         return entry;
       };
       const append = (sourceId, c, frame, blend, destX, destY) => {
@@ -775,7 +918,7 @@ export function createDirectTerrainOverview({
             frameSlot = -1,
             flags = 0,
             meanWord = 0;
-          if (typeof command === "number") {
+          if (typeof command === "number" && command < 0) {
             const at = (-command - 1) * 5;
             if (
               !compact ||
@@ -802,13 +945,24 @@ export function createDirectTerrainOverview({
             flags = compactFlags[frameSlot];
             if (flags) stats.compactValidationReuses++;
           } else {
-            c = command;
+            c = stream ? objects[command] : command;
+            if (stream && (!c || typeof c !== "object")) {
+              markUnsafe(null);
+              break;
+            }
             destX = c?.dx;
             destY = c?.dy;
           }
           if (!flags) {
             const kind = c ? candidateKind(c, destX, destY) : 0,
-              entry = kind ? getFrame(c, kind) : null;
+              entry = kind
+                ? getFrame(
+                    c,
+                    kind,
+                    false,
+                    frameSlot >= 0 ? compact.recipeIds?.[frameSlot] : undefined,
+                  )
+                : null;
             if (frameSlot >= 0) stats.compactFramesValidated++;
             if (!entry) {
               if (frameSlot >= 0) compactFlags[frameSlot] = 128;
@@ -928,9 +1082,17 @@ export function createDirectTerrainOverview({
           const flags = handled[i];
           if (!flags) continue;
           const command = commands[i],
-            compactAt = typeof command === "number" ? (-command - 1) * 5 : -1,
+            compactAt =
+              typeof command === "number" && command < 0
+                ? (-command - 1) * 5
+                : -1,
             frameSlot = compactAt >= 0 ? records[compactAt] : -1,
-            c = frameSlot >= 0 ? templates[frameSlot] : command,
+            c =
+              frameSlot >= 0
+                ? templates[frameSlot]
+                : stream
+                  ? objects[command]
+                  : command,
             destX = frameSlot >= 0 ? records[compactAt + 1] : c.dx,
             destY = frameSlot >= 0 ? records[compactAt + 2] : c.dy;
           if (!setCandidateBounds(c, destX, destY)) {
@@ -987,7 +1149,7 @@ export function createDirectTerrainOverview({
               stats.compactSecondPassSlotHits++;
             } else {
               stats.compactSecondPassReloads++;
-              entry = getFrame(c, kind, true);
+              entry = getFrame(c, kind, true, compact.recipeIds?.[frameSlot]);
               if (entry) {
                 compactSlots[frameSlot] = entry.slot + 1;
                 compactGenerations[frameSlot] = entry.generation;
@@ -1033,6 +1195,8 @@ export function createDirectTerrainOverview({
             entry.pinned = true;
             pinned.push(entry);
             stats.activeFrameBytes += entry.bytes;
+            if (entry.page && entry.page.pins++ === 0)
+              stats.activeFrameBytes += entry.page.bytes;
             stats.peakActiveFrameBytes = Math.max(
               stats.peakActiveFrameBytes,
               stats.activeFrameBytes,

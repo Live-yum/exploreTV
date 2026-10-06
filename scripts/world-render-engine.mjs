@@ -1,4 +1,5 @@
 import { createRawTextureCache } from "./raw-texture-cache.mjs";
+import { openOverviewFramePack } from "./overview-frame-pack.mjs";
 import { createSoftwareOverview } from "./software-overview.mjs";
 import { createDirectTerrainOverview } from "./direct-terrain-overview.mjs";
 import { createOverviewRgbaArena } from "./overview-rgba-arena.mjs";
@@ -289,8 +290,46 @@ export function createWorldRenderer({
   nativeOverview = false,
   directTerrainOverview = false,
   compactTerrainOverview = false,
+  precompiledTerrainFrames = true,
+  framePackDir = process.env.EXPLORETV_FRAME_PACK_DIR ?? null,
+  wasmFrameStream = true,
   onNativeBatch = null,
 }) {
+  const lazyRaw = lowMemory && inputEncoding === "tconvert-game-raw";
+  const useDirectTerrain =
+    lazyRaw && nativeOverview && directTerrainOverview && !onNativeBatch;
+  let framePack = null,
+    framePackStatus = {
+      available: false,
+      reason: "precompiled frames disabled",
+    };
+  if (
+    useDirectTerrain &&
+    precompiledTerrainFrames &&
+    process.env.EXPLORETV_DISABLE_FRAME_PACK !== "1"
+  ) {
+    const explicit = framePackDir !== null,
+      packDir = explicit ? framePackDir : join(assetDir, "overview-frame-pack");
+    try {
+      if (!explicit && !existsSync(packDir))
+        framePackStatus = {
+          available: false,
+          reason: "default frame pack not found",
+          packDir,
+        };
+      else {
+        framePack = openOverviewFramePack({ packDir, inputEncoding });
+        framePackStatus = framePack.stats;
+      }
+    } catch (error) {
+      if (explicit) throw error;
+      framePackStatus = {
+        available: false,
+        reason: String(error.message),
+        packDir,
+      };
+    }
+  }
   const frameCache = cacheFrames
     ? createSceneFrameCache(
         lowMemory ? { maxFrames: 2048, maxBytes: 2 * 1024 * 1024 } : {},
@@ -300,9 +339,6 @@ export function createWorldRenderer({
     ? createOverviewFrameMetadataCache()
     : null;
   const frameInterner = createSceneFrameInterner({ numericIds: lowMemory });
-  const lazyRaw = lowMemory && inputEncoding === "tconvert-game-raw";
-  const useDirectTerrain =
-    lazyRaw && nativeOverview && directTerrainOverview && !onNativeBatch;
   const detailedRgbaArena = useDirectTerrain
     ? createOverviewRgbaArena({ maxBytes: 6 * 1024 * 1024 })
     : null;
@@ -318,12 +354,17 @@ export function createWorldRenderer({
   const directTerrainRenderer = useDirectTerrain
     ? createDirectTerrainOverview({
         detailedRgbaArena,
+        framePack,
         resolvedCellMask:
           process.env.EXPLORETV_ENABLE_RESOLVED_CELL_MASK === "1" &&
           process.env.EXPLORETV_DISABLE_RESOLVED_CELL_MASK !== "1",
       })
     : null;
   const useCompactTerrain = useDirectTerrain && compactTerrainOverview;
+  const useWasmFrameStream =
+    useCompactTerrain &&
+    wasmFrameStream &&
+    process.env.EXPLORETV_DISABLE_WASM_FRAME_STREAM !== "1";
   const terrainPlanner =
     useCompactTerrain && process.env.EXPLORETV_DISABLE_TERRAIN_WASM !== "1"
       ? createNodeOverviewTerrainPlanner()
@@ -338,6 +379,11 @@ export function createWorldRenderer({
     directTerrainOverviewStats: directTerrainRenderer?.stats ?? null,
     compactTerrainPlanning: useCompactTerrain,
     terrainWasm: terrainPlanner?.stats ?? null,
+    framePack: framePackStatus,
+    wasmFrameStreamEnabled: !!terrainPlanner && useWasmFrameStream,
+    commandStreamCommands: 0,
+    specialCommandObjects: 0,
+    peakCommandStreamBytes: 0,
     plannerPhaseMilliseconds: {
       walls: 0,
       liquids: 0,
@@ -416,6 +462,7 @@ export function createWorldRenderer({
         assetHashes,
         assetFailures,
         maxRawBytes: 8 * 1024 * 1024,
+        framePack,
       })
     : null;
   stats.rawTextureCache = rawTextures?.stats ?? null;
@@ -572,7 +619,10 @@ export function createWorldRenderer({
       bottom = top + core.height * 16;
     const compactOverview = overview && useCompactTerrain;
     const terrainFrames = compactOverview
-      ? terrainPlanner?.plan(region, options)
+      ? terrainPlanner?.plan(region, {
+          ...options,
+          overviewFrameStream: useWasmFrameStream,
+        })
       : null;
     const plan = (compactOverview ? planOverviewBand : planScene)(
       region,
@@ -582,6 +632,9 @@ export function createWorldRenderer({
             ...(terrainFrames ? { overviewTerrainFrames: terrainFrames } : {}),
             ...(terrainFrames && terrainPlanner?.liquidCandidates
               ? { overviewLiquidCandidates: terrainPlanner.liquidCandidates }
+              : {}),
+            ...(terrainFrames && terrainPlanner?.frameStream
+              ? { overviewFrameStream: terrainPlanner.frameStream }
               : {}),
             outputBounds: {
               x: left,
@@ -619,6 +672,16 @@ export function createWorldRenderer({
         plan.compactTerrain.records.buffer.byteLength,
       );
     }
+    const commandStream = plan.commandStream,
+      planCommands = commandStream?.tokens ?? plan.commands;
+    if (commandStream) {
+      stats.commandStreamCommands += planCommands.length;
+      stats.specialCommandObjects += commandStream.objects.length;
+      stats.peakCommandStreamBytes = Math.max(
+        stats.peakCommandStreamBytes,
+        planCommands.buffer.byteLength,
+      );
+    }
     stageStarted = performance.now();
     const assetView = await assetsFor(plan);
     const useCoreSurface = lowMemory && coreSurface;
@@ -653,7 +716,7 @@ export function createWorldRenderer({
         stats.maxPlanCommands = Math.max(
           stats.maxPlanCommands,
           plan.generationCulling?.logicalCommands ??
-            plan.commands.length + plannerCulledCommands,
+            planCommands.length + plannerCulledCommands,
         );
         for (const c of plan.sourceHiddenCells || [])
           if (
@@ -700,12 +763,16 @@ export function createWorldRenderer({
       // assigning the compact index domain for remaining generic commands.
       stageStarted = performance.now();
       const renderCommands = lowMemory ? [] : plan.commands;
-      for (let i = 0; i < plan.commands.length; i++) {
-        const token = plan.commands[i];
+      for (let i = 0; i < planCommands.length; i++) {
+        const token = planCommands[i];
         const compact =
           typeof token === "number" && token < 0 ? plan.compactTerrain : null;
         const at = compact ? (-token - 1) * compact.stride : 0;
-        const c = compact ? compact.frames[compact.records[at]] : token;
+        const c = compact
+          ? compact.frames[compact.records[at]]
+          : commandStream
+            ? commandStream.objects[token]
+            : token;
         const ownerX = compact ? compact.records[at + 3] : c.x;
         const ownerY = compact ? compact.records[at + 4] : c.y;
         const ownerInCore = compact
@@ -745,7 +812,7 @@ export function createWorldRenderer({
         }
       }
       const renderPlan = lowMemory
-        ? { ...plan, commands: renderCommands }
+        ? { ...plan, commandStream: undefined, commands: renderCommands }
         : plan;
       // Direct already partitions most commands. Avoid a second indexed
       // analysis allocation for its small generic residual; retain the shared
@@ -1053,6 +1120,7 @@ export function createWorldRenderer({
       detailedRgbaArena?.dispose();
       pngDecoder?.clear();
       rawTextures?.dispose();
+      framePack?.dispose?.();
       assetCache.clear();
       stats.assetCacheBytes = 0;
     },

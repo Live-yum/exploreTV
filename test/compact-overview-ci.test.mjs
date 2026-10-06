@@ -23,7 +23,7 @@ test("overview acceptance uses the integrated baseline, a title marker and one s
   );
   assert.equal(
     OVERVIEW_BASELINE_COMMIT,
-    "cbdf5b3c3b9f4952a2075a133f809b9b2d779d12",
+    "fae6f52a5227cef3f6544f383d074f10da84e1e0",
   );
   assert.ok(workflow.includes(`BASELINE_COMMIT: ${OVERVIEW_BASELINE_COMMIT}`));
   assert.ok(

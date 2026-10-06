@@ -4,7 +4,10 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { planScene, planOverviewBand } from "../core/renderer.mjs";
 import { materializeOverviewCommand } from "../core/overview-command-buffer.mjs";
-import { createOverviewTerrainPlanner } from "../core/overview-wasm.mjs";
+import {
+  createOverviewTerrainPlanner,
+  OVERVIEW_WASM_ABI,
+} from "../core/overview-wasm.mjs";
 import { createNodeOverviewTerrainPlanner } from "../scripts/overview-terrain-wasm.mjs";
 import { planLiquids } from "../core/liquid.mjs";
 import { isSolidOrSlopedTile } from "../core/tile-solidity.mjs";
@@ -272,15 +275,15 @@ test("WASM workspace stays bounded, returns borrowed views and isolates renderer
     assert.equal(first.plan(large), null);
     assert.equal(
       first.stats.peakWorkingBytes,
-      65536 * 10,
+      65536 * 10 + 64,
       "Validation fallback still reports the workspace already allocated",
     );
     large.cells[large.cells.length - 1].type = 1;
     const output = first.plan(large);
     assert.equal(output.length, 65536 * 2);
-    assert.equal(first.stats.peakWorkingBytes, 65536 * 10);
+    assert.equal(first.stats.peakWorkingBytes, 65536 * 10 + 64);
     first.plan(large, { liquids: { enabled: true } });
-    assert.equal(first.stats.peakWorkingBytes, 65536 * 18);
+    assert.equal(first.stats.peakWorkingBytes, 65536 * 18 + 64);
     assert.ok(first.liquidCandidates instanceof Uint32Array);
     assert.ok(first.stats.peakLinearMemoryBytes < 4 * 1024 * 1024);
     assert.deepEqual(
@@ -308,7 +311,7 @@ test("WASM workspace stays bounded, returns borrowed views and isolates renderer
 test("actual ABI rejects oversized workspaces and stale output after failed preparation", () => {
   assert.deepEqual(WebAssembly.Module.imports(module), []);
   const e = new WebAssembly.Instance(module, {}).exports;
-  assert.equal(e.overview_abi_version(), 2);
+  assert.equal(e.overview_abi_version(), OVERVIEW_WASM_ABI);
   assert.equal(e.overview_plan(0, 0, 0), 1);
   assert.equal(e.overview_prepare_liquids(), 0);
   assert.equal(e.overview_plan_liquids(), 1);
@@ -345,7 +348,7 @@ test("Node wrapper executes the checked-in WASM with verified build identity", (
       planner.stats.binarySha256,
       createHash("sha256").update(wasmBytes).digest("hex"),
     );
-    assert.equal(planner.stats.build.overviewAbiVersion, 2);
+    assert.equal(planner.stats.build.overviewAbiVersion, OVERVIEW_WASM_ABI);
     equivalent(planner, region());
   } finally {
     planner.dispose();
@@ -374,7 +377,7 @@ test("WASM ordinary liquid candidates preserve the complete reference plan and d
     assert.equal(output.support.drawn, 64);
     assert.equal(planner.liquidCandidates.length, 64);
     assert.equal(planner.stats.liquidFastCells, 36);
-    assert.equal(planner.stats.peakWorkingBytes, 64 * 18);
+    assert.equal(planner.stats.peakWorkingBytes, 64 * 18 + 64);
     for (const layer of ["background", "foreground"])
       for (const waterStyle of [0, 2, 13])
         for (const liquidKind of [1, 2, 3, 4]) {

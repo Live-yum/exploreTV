@@ -6,6 +6,10 @@ import { PNG } from "pngjs";
 import { createCanvas } from "@napi-rs/canvas";
 import { openWorld, LIMITS } from "../core/world.mjs";
 import {
+  OVERVIEW_WASM_ABI,
+  OVERVIEW_WASM_MAX_WORKING_BYTES,
+} from "../core/overview-wasm.mjs";
+import {
   createWorldRenderer,
   createWorldWaterfallRegistry,
   buildRowIndex,
@@ -13,6 +17,7 @@ import {
   paddedWorldRect,
 } from "./world-render-engine.mjs";
 import { verifyExport } from "./verify-export.mjs";
+import { verifyOverviewFramePack } from "./verify-overview-frame-pack.mjs";
 
 const [worldPath, assetDir, pngPath, ...flags] = process.argv.slice(2);
 if (!worldPath || !assetDir || !pngPath || flags.some((f) => f !== "--example"))
@@ -82,7 +87,7 @@ for (const name of [
 for (const [name, hash] of Object.entries(report.sourceHashes)) {
   assert.match(
     name,
-    /^(?:(core|scripts)\/[a-z][a-z0-9-]*\.mjs|scripts\/native-(reducer|blitter)\.c|wasm-core\/(?:src\/(?:lib|overview)\.rs|dist\/(?:exploretv_wld_core\.wasm|build-info\.json)|Cargo\.(?:toml|lock)|rust-toolchain\.toml|\.cargo\/config\.toml|build\.sh|verify-build\.mjs))$/,
+    /^(?:(core|scripts)\/[a-z][a-z0-9-]*\.mjs|scripts\/native-(reducer|blitter)\.c|package-lock\.json|wasm-core\/(?:src\/(?:lib|overview)\.rs|dist\/(?:exploretv_wld_core\.wasm|build-info\.json)|Cargo\.(?:toml|lock)|rust-toolchain\.toml|\.cargo\/config\.toml|build\.sh|verify-build\.mjs))$/,
   );
   assert.equal(
     createHash("sha256")
@@ -93,7 +98,11 @@ for (const [name, hash] of Object.entries(report.sourceHashes)) {
   );
 }
 if (report.terrainWasm?.available) {
-  assert.equal(report.terrainWasm.abiVersion, 2, "Executed terrain WASM ABI");
+  assert.equal(
+    report.terrainWasm.abiVersion,
+    OVERVIEW_WASM_ABI,
+    "Executed terrain WASM ABI",
+  );
   assert.equal(
     report.terrainWasm.binarySha256,
     report.sourceHashes["wasm-core/dist/exploretv_wld_core.wasm"],
@@ -110,10 +119,11 @@ if (report.terrainWasm?.available) {
     "Executed terrain WASM planning source",
   );
   assert.ok(
-    report.terrainWasm.peakWorkingBytes <= 65536 * 18,
+    report.terrainWasm.peakWorkingBytes <= OVERVIEW_WASM_MAX_WORKING_BYTES,
     "Bounded terrain WASM working data",
   );
 }
+verifyOverviewFramePack(report, { assetDir });
 for (const [native, source] of [
   [report.nativeReducer, "scripts/native-reducer.c"],
   [report.nativeOverview, "scripts/native-blitter.c"],

@@ -35,7 +35,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      BASELINE_COMMIT: cbdf5b3c3b9f4952a2075a133f809b9b2d779d12
+      BASELINE_COMMIT: fae6f52a5227cef3f6544f383d074f10da84e1e0
+      EXPLORETV_DISABLE_FRAME_PACK: "0"
+      EXPLORETV_DISABLE_WASM_FRAME_STREAM: "0"
       EXPLORETV_DISABLE_TERRAIN_WASM: "0"
       EXPLORETV_ENABLE_RESOLVED_CELL_MASK: "0"
       EXPLORETV_DISABLE_RESOLVED_CELL_MASK: "0"
@@ -51,11 +53,14 @@ jobs:
       - run: npm run prepare:overview
       - run: node scripts/check-overview-native.mjs
       - run: node scripts/prepare-example.mjs example/assets --check
+      - name: Precompile world-independent terrain frames and record resource preparation cost
+        run: npm run prepare:overview-frames -- example/assets artifacts/overview-frame-pack
       - run: node --test test/png-stream.test.mjs test/export-world.test.mjs test/overview-export.test.mjs test/overview-fast-path.test.mjs test/scene-frame-cache.test.mjs test/compact-waterfall-registry.test.mjs test/overview-budget.test.mjs test/png-rgba.test.mjs test/png-rgba-node.test.mjs test/overview-core-cull.test.mjs test/static-planner-dispatch.test.mjs test/raw-texture-cache.test.mjs test/overview-comparison.test.mjs
       - run: node --test test/native-reducer.test.mjs test/native-blitter.test.mjs test/software-overview-partition.test.mjs test/software-overview-composite.test.mjs test/overview-frame-metadata.test.mjs test/scene-frame-interner.test.mjs test/ordinary-planner-fast-path.test.mjs test/indexed-shimmer-hint.test.mjs test/process-memory.test.mjs test/raw-overview-frame.test.mjs test/raw-identity-preparation.test.mjs test/slope-overview-frame.test.mjs test/reduce-overview-canvas.test.mjs test/native-provenance.test.mjs test/overview-early-halo-cull.test.mjs
       - run: node --test test/world-validation-memo.test.mjs test/renderer-slope-polygons.test.mjs test/scene-frame-id.test.mjs test/renderer-emission-core.test.mjs test/overview-shared-geometry.test.mjs test/compact-overview-ci.test.mjs
       - run: node --test test/compact-overview-planner.test.mjs test/overview-terrain-wasm.test.mjs test/compact-terrain-engine.test.mjs test/direct-terrain-overview.test.mjs
       - run: node --test test/compact-ablation.test.mjs test/liquid-visible-level-cache.test.mjs
+      - run: node --test test/overview-frame-pack.test.mjs test/overview-frame-stream.test.mjs test/frame-pack-comparison.test.mjs
       - name: Measure pinned baseline on this runner
         run: |
           set -euo pipefail
@@ -80,6 +85,8 @@ jobs:
           node scripts/run-overview-ci.mjs "$GITHUB_WORKSPACE/artifacts/direct-overview-baseline"
           node scripts/verify-overview.mjs fixtures/example-world.wld example/assets "$GITHUB_WORKSPACE/artifacts/direct-overview-baseline/world-1px.png" --example
       - run: node scripts/run-overview-ci.mjs
+        env:
+          EXPLORETV_FRAME_PACK_DIR: ${{ github.workspace }}/artifacts/overview-frame-pack
       - run: node scripts/verify-overview.mjs fixtures/example-world.wld example/assets artifacts/direct-overview/world-1px.png --example
       - name: Compare complete sequential runs
         run: |
@@ -87,25 +94,24 @@ jobs:
             artifacts/direct-overview-baseline artifacts/direct-overview \
             "$(git rev-parse HEAD)" "$BASELINE_COMMIT" \
             "$RUNNER_TEMP/exploretv-overview-baseline" "$GITHUB_WORKSPACE"
-      - name: Measure the same compact candidate with terrain WASM disabled
+      - name: Measure the same candidate with dynamic frames and WASM stream
         env:
-          EXPLORETV_DISABLE_TERRAIN_WASM: "1"
-          EXPLORETV_ENABLE_RESOLVED_CELL_MASK: "0"
-          EXPLORETV_DISABLE_RESOLVED_CELL_MASK: "1"
-        run: node scripts/run-overview-ci.mjs artifacts/compact-js
-      - run: node scripts/verify-overview.mjs fixtures/example-world.wld example/assets artifacts/compact-js/world-1px.png --example
-      - name: Measure the same compact candidate with the experimental resolved-cell mask enabled
+          EXPLORETV_FRAME_PACK_DIR: ${{ github.workspace }}/artifacts/overview-frame-pack
+          EXPLORETV_DISABLE_FRAME_PACK: "1"
+        run: node scripts/run-overview-ci.mjs artifacts/dynamic-frames
+      - run: node scripts/verify-overview.mjs fixtures/example-world.wld example/assets artifacts/dynamic-frames/world-1px.png --example
+      - name: Measure the same candidate with precompiled frames and legacy command planning
         env:
-          EXPLORETV_DISABLE_TERRAIN_WASM: "0"
-          EXPLORETV_ENABLE_RESOLVED_CELL_MASK: "1"
-          EXPLORETV_DISABLE_RESOLVED_CELL_MASK: "0"
-        run: node scripts/run-overview-ci.mjs artifacts/compact-masked
-      - run: node scripts/verify-overview.mjs fixtures/example-world.wld example/assets artifacts/compact-masked/world-1px.png --example
+          EXPLORETV_FRAME_PACK_DIR: ${{ github.workspace }}/artifacts/overview-frame-pack
+          EXPLORETV_DISABLE_WASM_FRAME_STREAM: "1"
+        run: node scripts/run-overview-ci.mjs artifacts/legacy-frame-planning
+      - run: node scripts/verify-overview.mjs fixtures/example-world.wld example/assets artifacts/legacy-frame-planning/world-1px.png --example
       - name: Compare complete same-commit feature ablations
         run: |
-          node scripts/compare-compact-ablations.mjs \
-            artifacts/direct-overview artifacts/compact-js artifacts/compact-masked \
-            "$(git rev-parse HEAD)" "$GITHUB_WORKSPACE"
+          node scripts/compare-frame-pack-benchmarks.mjs \
+            artifacts/direct-overview artifacts/dynamic-frames artifacts/legacy-frame-planning \
+            "$(git rev-parse HEAD)" "$GITHUB_WORKSPACE" \
+            artifacts/overview-frame-pack/build-report.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -114,9 +120,18 @@ jobs:
             artifacts/direct-overview/world-1px.png
             artifacts/direct-overview/*.json
             artifacts/direct-overview-baseline/*.json
-            artifacts/compact-js/*.json
-            artifacts/compact-masked/*.json
+            artifacts/dynamic-frames/*.json
+            artifacts/legacy-frame-planning/*.json
+            artifacts/overview-frame-pack/manifest.json
+            artifacts/overview-frame-pack/build-report.json
           compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: precompiled-terrain-frames-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/overview-frame-pack/
+          compression-level: 6
           retention-days: 7
       - uses: actions/upload-artifact@v4
         if: always()

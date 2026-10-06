@@ -6,6 +6,7 @@ import { renderSceneBatched } from "../core/scene-batches.mjs";
 import { materializeOverviewCommand } from "../core/overview-command-buffer.mjs";
 import { createDirectTerrainOverview } from "../scripts/direct-terrain-overview.mjs";
 import { nativeBlitterStatus } from "../scripts/native-blitter.mjs";
+import { prepareRawOverviewFrame } from "../scripts/raw-overview-frame.mjs";
 import { boxDownsampleRgba } from "../scripts/downsample-rgba.mjs";
 
 const nativeTest = {
@@ -76,6 +77,14 @@ function scene(width = 8, height = 4) {
   return { core, region, make, plan };
 }
 
+function logicalCommands(plan) {
+  return plan.commandStream
+    ? Array.from(plan.commandStream.tokens, (token) =>
+        token < 0 ? token : plan.commandStream.objects[token],
+      )
+    : plan.commands;
+}
+
 function reference(plan, imageAssets, core, region) {
   const canvas = createCanvas(core.width * 16, core.height * 16),
     context = canvas.getContext("2d");
@@ -89,7 +98,7 @@ function reference(plan, imageAssets, core, region) {
       plan.compactTerrain
         ? {
             ...plan,
-            commands: plan.commands.map((command) =>
+            commands: logicalCommands(plan).map((command) =>
               materializeOverviewCommand(plan, command),
             ),
           }
@@ -118,10 +127,11 @@ function reference(plan, imageAssets, core, region) {
 function composePartition(renderer, plan, imageAssets, core, region) {
   const direct = renderer.render(plan, core, region, imageAssets);
   assert.ok(direct, "Scene must exercise a nonempty direct partition");
-  assert.equal(direct.handled.length, plan.commands.length);
-  const remaining = plan.commands.filter((_, i) => !direct.handled[i]),
+  const commands = logicalCommands(plan);
+  assert.equal(direct.handled.length, commands.length);
+  const remaining = commands.filter((_, i) => !direct.handled[i]),
     result = reference(
-      { ...plan, commands: remaining },
+      { ...plan, commandStream: undefined, commands: remaining },
       imageAssets,
       core,
       region,
@@ -1495,6 +1505,373 @@ test(
       ])
         assert.equal(renderer.render(p, s.core, s.region, imageAssets), null);
       assert.equal(renderer.stats.activeFrameBytes, 0);
+    } finally {
+      renderer.dispose();
+    }
+  },
+);
+
+function streamPlan(plan) {
+  const compact = compactPlan(plan),
+    objects = [];
+  const tokens = Int32Array.from(compact.commands, (c) => {
+    if (typeof c === "number") return c;
+    objects.push(c);
+    return objects.length - 1;
+  });
+  return { ...compact, commands: [], commandStream: { tokens, objects } };
+}
+
+// A deterministic read-only pack double. Source pages stand in for files;
+// readPage allocates a distinct exact backing, as the real reader does.
+function testFramePack(
+  templates,
+  imageAssets,
+  { pageBytes = 4096, selected = () => true } = {},
+) {
+  const directory = new Map(),
+    pages = [],
+    sources = new WeakMap();
+  let used = pageBytes,
+    page;
+  const identity = (c) =>
+    JSON.stringify([
+      c.asset,
+      c.sx,
+      c.sy,
+      c.sw,
+      c.sh,
+      c.paintId ?? 0,
+      c.opacity ?? 1,
+      c.clip ?? null,
+      c.flipX ?? false,
+      c.flipY ?? false,
+    ]);
+  for (const c of templates) {
+    if (!selected(c)) continue;
+    const source = imageAssets.get(c.asset),
+      prepared = prepareRawOverviewFrame(c, source);
+    if (!prepared || prepared.unsupported || c.clip) continue;
+    const bytes =
+      prepared.base.byteLength + (prepared.additive?.byteLength ?? 0);
+    if (used + bytes > pageBytes) {
+      page = new Uint8Array(pageBytes);
+      pages.push(page);
+      used = 0;
+    }
+    const descriptor = {
+      ...prepared,
+      pageId: pages.length - 1,
+      pageBytes,
+      baseOffset: used,
+      source,
+    };
+    page.set(prepared.base, used);
+    used += prepared.base.byteLength;
+    if (prepared.additive) {
+      descriptor.additiveOffset = used;
+      page.set(prepared.additive, used);
+      used += prepared.additive.byteLength;
+    }
+    directory.set(identity(c), descriptor);
+    sources.set(source, textureSource(source));
+  }
+  const stats = { reads: 0, lookups: 0 };
+  return {
+    stats,
+    lookup(source, _recipe, c) {
+      stats.lookups++;
+      const descriptor = directory.get(identity(c));
+      return descriptor?.source === source &&
+        sources.get(source) === textureSource(source)
+        ? descriptor
+        : null;
+    },
+    readPage(descriptor) {
+      stats.reads++;
+      return pages[descriptor.pageId].slice();
+    },
+    frame(descriptor, data) {
+      const n = descriptor.width * descriptor.height * 4;
+      return {
+        width: descriptor.width,
+        height: descriptor.height,
+        base: data.subarray(descriptor.baseOffset, descriptor.baseOffset + n),
+        additive: descriptor.additive
+          ? data.subarray(
+              descriptor.additiveOffset,
+              descriptor.additiveOffset + n,
+            )
+          : null,
+        mean: descriptor.mean,
+        uvFlipApplied: false,
+      };
+    },
+  };
+}
+
+test(
+  "Int32 streams preserve mixed command order without an ordinary command array",
+  nativeTest,
+  () => {
+    const s = scene(),
+      imageAssets = assets(),
+      renderer = createDirectTerrainOverview();
+    const commands = [];
+    for (let i = 0; i < 48; i++) {
+      commands.push(
+        s.make({
+          asset: "plain",
+          sx: (i % 4) * 16,
+          dx: 32 + (i % 8) * 16,
+          dy: 32 + (i % 4) * 16,
+        }),
+      );
+      if (i % 7 === 0)
+        commands.push(
+          s.make({ kind: "liquid", asset: "excess", opacity: 0.6 }),
+        );
+      if (i % 13 === 0)
+        commands.push(
+          s.make({ kind: "sprite", asset: "plain", dx: 35.5, dy: 36 }),
+        );
+    }
+    const full = s.plan(commands),
+      stream = streamPlan(full);
+    try {
+      const actual = composePartition(
+        renderer,
+        stream,
+        imageAssets,
+        s.core,
+        s.region,
+      );
+      equalPixels(
+        actual.result,
+        reference(full, imageAssets, s.core, s.region),
+      );
+      assert.equal(stream.commands.length, 0);
+      assert.equal(renderer.stats.commandStreamCommands, commands.length);
+      assert.ok(renderer.stats.compactSecondPassSlotHits > 0);
+      for (const broken of [
+        {
+          ...stream,
+          commandStream: {
+            ...stream.commandStream,
+            tokens: Int32Array.of(999),
+          },
+        },
+        {
+          ...stream,
+          commandStream: {
+            ...stream.commandStream,
+            tokens: new Int32Array(new SharedArrayBuffer(4)),
+          },
+        },
+      ])
+        assert.equal(
+          renderer.render(broken, s.core, s.region, imageAssets),
+          null,
+        );
+    } finally {
+      renderer.dispose();
+    }
+  },
+);
+
+test(
+  "precompiled pages and dynamic frames share one budget through pinning and slot invalidation",
+  nativeTest,
+  () => {
+    const s = scene(16, 8),
+      imageAssets = assets(),
+      commands = [];
+    for (let i = 0; i < 240; i++) {
+      commands.push(
+        s.make({
+          asset: "excess",
+          sx: (i % 4) * 16,
+          sy: (Math.floor(i / 4) % 4) * 16,
+          dx: 32 + (i % 16) * 16,
+          dy: 32 + (Math.floor(i / 16) % 8) * 16,
+        }),
+      );
+      if (i % 11 === 0)
+        commands.push(
+          s.make({ kind: "liquid", asset: "plain", opacity: 0.37 }),
+        );
+    }
+    const full = s.plan(commands),
+      stream = streamPlan(full);
+    const framePack = testFramePack(stream.compactTerrain.frames, imageAssets);
+    const renderer = createDirectTerrainOverview({
+      framePack,
+      maxFrameBytes: 8192,
+    });
+    try {
+      const actual = composePartition(
+        renderer,
+        stream,
+        imageAssets,
+        s.core,
+        s.region,
+      );
+      equalPixels(
+        actual.result,
+        reference(full, imageAssets, s.core, s.region),
+      );
+      assert.ok(renderer.stats.packFrameHits > 100);
+      assert.ok(renderer.stats.packPageEvictions > 20);
+      assert.ok(
+        renderer.stats.rawPreparedFrames > 0,
+        "unpacked liquid remains dynamic",
+      );
+      assert.ok(renderer.stats.compactSecondPassReloads > 100);
+      assert.equal(renderer.stats.packPageReads, framePack.stats.reads);
+      assert.ok(renderer.stats.peakLiveFrameBytes <= 8192);
+      assert.ok(renderer.stats.peakActiveFrameBytes <= 8192);
+      assert.ok(renderer.stats.peakPackPageBytes <= 8192);
+      assert.equal(renderer.stats.activeFrameBytes, 0);
+      renderer.dispose();
+      assert.equal(renderer.stats.packPageBytes, 0);
+      assert.equal(renderer.stats.packResidentPages, 0);
+      assert.equal(renderer.stats.frameBytes, 0);
+    } finally {
+      renderer.dispose();
+    }
+  },
+);
+
+test(
+  "page reuse remains accounted when the frame-entry limit retires its final old view",
+  nativeTest,
+  () => {
+    const s = scene(),
+      imageAssets = assets();
+    const full = s.plan(
+      Array.from({ length: 40 }, (_, i) =>
+        s.make({ asset: "excess", sx: (i % 2) * 16 }),
+      ),
+    );
+    const stream = streamPlan(full),
+      framePack = testFramePack(stream.compactTerrain.frames, imageAssets);
+    const renderer = createDirectTerrainOverview({
+      framePack,
+      maxFrameBytes: 8192,
+      maxFrames: 1,
+    });
+    try {
+      equalPixels(
+        composePartition(renderer, stream, imageAssets, s.core, s.region)
+          .result,
+        reference(full, imageAssets, s.core, s.region),
+      );
+      assert.equal(framePack.stats.reads, 1);
+      assert.equal(renderer.stats.packPageBytes, 4096);
+      assert.equal(renderer.stats.frameBytes, 4096);
+      assert.ok(renderer.stats.evictions > 30);
+      assert.equal(renderer.stats.peakFrameEntries, 1);
+      assert.equal(renderer.stats.peakActiveFrameBytes, 4096);
+    } finally {
+      renderer.dispose();
+    }
+  },
+);
+
+test(
+  "oversized, unreadable and invalid page views fall back to the unchanged frame preparer",
+  nativeTest,
+  () => {
+    const s = scene(),
+      imageAssets = assets(),
+      full = s.plan([s.make({ asset: "excess" })]),
+      stream = streamPlan(full);
+    for (const mode of ["oversized", "read", "view"]) {
+      const framePack = testFramePack(
+        stream.compactTerrain.frames,
+        imageAssets,
+        { pageBytes: mode === "oversized" ? 16384 : 4096 },
+      );
+      if (mode === "read")
+        framePack.readPage = () => {
+          throw new Error("page hash mismatch");
+        };
+      if (mode === "view")
+        framePack.frame = () => ({
+          width: 16,
+          height: 16,
+          base: new Uint8Array(1024),
+        });
+      const renderer = createDirectTerrainOverview({
+        framePack,
+        maxFrameBytes: 8192,
+      });
+      try {
+        equalPixels(
+          composePartition(renderer, stream, imageAssets, s.core, s.region)
+            .result,
+          reference(full, imageAssets, s.core, s.region),
+        );
+        assert.equal(renderer.stats.rawPreparedFrames, 1);
+        assert.equal(renderer.stats.packPageBytes, 0);
+        assert.equal(renderer.stats.packResidentPages, 0);
+        assert.ok(renderer.stats.frameBytes <= 8192);
+      } finally {
+        renderer.dispose();
+      }
+    }
+  },
+);
+
+test(
+  "precompiled opaque means remain only metadata until final coverage proves the cell",
+  nativeTest,
+  () => {
+    const s = scene(3, 2),
+      imageAssets = assets();
+    const commands = [
+      s.make({ asset: "opaque", dx: 32 }),
+      s.make({ asset: "opaque", dx: 48 }),
+      s.make({
+        kind: "wall",
+        asset: "plain",
+        sw: 32,
+        sh: 32,
+        dw: 32,
+        dh: 32,
+        dx: 24,
+        dy: 24,
+      }),
+      s.make({ asset: "opaque", dx: 64 }),
+    ];
+    const full = s.plan(commands),
+      stream = streamPlan(full);
+    const framePack = testFramePack(stream.compactTerrain.frames, imageAssets, {
+      pageBytes: 8192,
+    });
+    const renderer = createDirectTerrainOverview({ framePack });
+    try {
+      const actual = composePartition(
+        renderer,
+        stream,
+        imageAssets,
+        s.core,
+        s.region,
+      );
+      equalPixels(
+        actual.result,
+        reference(full, imageAssets, s.core, s.region),
+      );
+      assert.equal(
+        renderer.stats.opaqueCells,
+        1,
+        "the later wall invalidates both earlier opaque means",
+      );
+      assert.equal(renderer.stats.rawPreparedFrames, 0);
+      assert.ok(
+        renderer.stats.frameBytes > renderer.stats.packPageBytes,
+        "mean metadata remains charged",
+      );
     } finally {
       renderer.dispose();
     }

@@ -85,6 +85,7 @@ export function createRawTextureCache({
   maxActiveSnapshots = RAW_TEXTURE_CACHE_LIMITS.activeSnapshots,
   assetHashes = {},
   assetFailures = {},
+  framePack = null,
 } = {}) {
   if (typeof assetDir !== "string")
     throw new Error("Invalid raw asset directory");
@@ -133,6 +134,7 @@ export function createRawTextureCache({
     rawEntries: 0,
     rawHits: 0,
     rawDecodes: 0,
+    compiledSourceSnapshots: 0,
     rawEvictions: 0,
     rawBypasses: 0,
     retainedBytes: 0,
@@ -268,10 +270,13 @@ export function createRawTextureCache({
       const size = checkedFileSize(statSync(path).size);
       assertBorrowBudget(size);
       const pngBytes = readBoundedSnapshot(path, size),
-        // Validate every new snapshot completely before declaring it present.
-        // This also primes the bounded strict/native decoder, without a native
-        // image allocation or a promise keeping decoded data alive per plan.
-        raw = decode(pngBytes),
+        hash = createHash("sha256").update(pngBytes).digest("hex"),
+        // A compiled source was strictly decoded by the bound baker. Only its
+        // exact encoded snapshot can reuse that validation and dimensions.
+        // Uncovered or changed bytes still take the original strict decoder.
+        compiled = framePack?.sourceInfo(name, hash, pngBytes.byteLength),
+        raw = compiled ? null : decode(pngBytes),
+        dimensions = compiled ?? raw,
         entry = {
           id: nextIdentity++,
           name,
@@ -281,12 +286,21 @@ export function createRawTextureCache({
           image: null,
         };
       entry.image = registerTextureSource(
-        Object.freeze({ width: raw.width, height: raw.height }),
+        Object.freeze({ width: dimensions.width, height: dimensions.height }),
         { pngBytes, rawRgbaProvider: () => readRaw(entry) },
       );
-      assetHashes[name] = createHash("sha256").update(pngBytes).digest("hex");
+      if (compiled) {
+        framePack.bindVerifiedSource(
+          entry.image,
+          name,
+          hash,
+          pngBytes.byteLength,
+        );
+        stats.compiledSourceSnapshots++;
+      }
+      assetHashes[name] = hash;
       delete assetFailures[name];
-      retainRaw(entry.id, raw);
+      if (raw) retainRaw(entry.id, raw);
       retainSnapshot(entry);
       return entry;
     } catch (error) {
