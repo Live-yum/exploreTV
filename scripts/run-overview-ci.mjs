@@ -54,7 +54,7 @@ const child = spawn(
     join(root, "lifetime-usage.json"),
     process.execPath,
     "--max-old-space-size=48",
-    "--max-semi-space-size=4",
+    "--max-semi-space-size=1",
     "--expose-gc",
     "scripts/export-overview.mjs",
     "fixtures/example-world.wld",

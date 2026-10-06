@@ -157,13 +157,20 @@ const sum = (counts) =>
 
 export async function exportWorld(
   config,
-  { signal, onProgress = () => {} } = {},
+  { signal, onProgress = () => {}, commandRecorder = null } = {},
 ) {
   validateConfig(config);
   const pixelsPerTile = config.pixelsPerTile ?? 16;
   if (![1, 2, 4, 8, 16].includes(pixelsPerTile))
     throw new Error("pixelsPerTile must be 1, 2, 4, 8 or 16");
   const overview = pixelsPerTile < 16;
+  if (
+    commandRecorder &&
+    (pixelsPerTile !== 1 || config.inputEncoding !== "tconvert-game-raw")
+  )
+    throw new Error(
+      "World instruction preparation requires 1 px/tile raw input",
+    );
   if (overview && config.tilesPath)
     throw new Error("Direct overview does not emit full-resolution tile files");
   throwIfAborted(signal);
@@ -206,7 +213,7 @@ export async function exportWorld(
       getHeapStatistics().heap_size_limit > 120000000)
   )
     throw new Error(
-      "Large overview requires bounded Node memory: use npm run export:overview, or --expose-gc --max-old-space-size=48 --max-semi-space-size=4",
+      "Large overview requires bounded Node memory: use npm run export:overview, or --expose-gc --max-old-space-size=48 --max-semi-space-size=1",
     );
   const plannedChunks =
     Math.ceil(rect.width / config.chunkTiles) *
@@ -240,9 +247,18 @@ export async function exportWorld(
       throw new Error("Overview exceeded the 600-second generation limit");
   };
   checkOverviewBudget();
+  const directTerrainEnabled =
+    pixelsPerTile === 1 &&
+    config.inputEncoding === "tconvert-game-raw" &&
+    !commandRecorder &&
+    process.env.EXPLORETV_DISABLE_DIRECT_TERRAIN !== "1";
   const renderer = createWorldRenderer({
+    onNativeBatch: commandRecorder
+      ? (batch) => commandRecorder.recordBatch(batch)
+      : null,
     lowMemory: overview,
     nativeOverview: overview,
+    directTerrainOverview: directTerrainEnabled,
     waterfallRegistry,
     assetDir: config.assetDir,
     inputEncoding: config.inputEncoding,
@@ -253,6 +269,11 @@ export async function exportWorld(
   for (const relative of [
     "scripts/export-world.mjs",
     "scripts/export-overview.mjs",
+    "scripts/prepared-world.mjs",
+    "scripts/prepared-world-tape.mjs",
+    "scripts/direct-terrain-overview.mjs",
+    "scripts/direct-slope-overview-frame.mjs",
+    "scripts/overview-rgba-arena.mjs",
     "scripts/downsample-rgba.mjs",
     "scripts/reduce-overview-canvas.mjs",
     "scripts/overview-fast-path.mjs",
@@ -269,6 +290,8 @@ export async function exportWorld(
     "scripts/native-blitter.c",
     "scripts/software-overview.mjs",
     "scripts/scene-frame-interner.mjs",
+    "scripts/scene-command-index.mjs",
+    "scripts/overview-geometry.mjs",
     "scripts/world-render-engine.mjs",
     "core/world.mjs",
     "core/utf8.mjs",
@@ -351,6 +374,7 @@ export async function exportWorld(
     }
   };
   const memorySamples = [];
+  const preparedPixelHash = commandRecorder ? createHash("sha256") : null;
   const tiles = [];
   try {
     if (tilesTemporary) mkdirSync(tilesTemporary, { recursive: true });
@@ -365,6 +389,7 @@ export async function exportWorld(
     // suspended outer loop before collection and its required macrotask yield.
     const renderChunk = async (x, y, width, height, currentRows) => {
       const core = { x, y, width, height };
+      commandRecorder?.beginChunk(core);
       const regionStarted = performance.now();
       const region = readIndexedRegion(
         world,
@@ -389,15 +414,21 @@ export async function exportWorld(
           width * 16,
           height * 16,
           16,
-          drawn.opaqueOverview
+          drawn.directTerrainOverview
             ? {
-                safe: drawn.opaqueOverview.safe,
-                rgba: drawn.opaqueOverview.rgba,
-                widthTiles: drawn.opaqueOverview.widthTiles,
-                offsetX: core.x - region.rect.x,
-                offsetY: core.y - region.rect.y,
+                safe: drawn.directTerrainOverview.safe,
+                rgba: drawn.directTerrainOverview.pixels,
+                widthTiles: width,
               }
-            : null,
+            : drawn.opaqueOverview
+              ? {
+                  safe: drawn.opaqueOverview.safe,
+                  rgba: drawn.opaqueOverview.rgba,
+                  widthTiles: drawn.opaqueOverview.widthTiles,
+                  offsetX: core.x - region.rect.x,
+                  offsetY: core.y - region.rect.y,
+                }
+              : null,
         );
         if (software.canvasCommands) {
           // Native cells already contain the exact area mean. Only cells touched
@@ -441,18 +472,42 @@ export async function exportWorld(
               width * 16,
               height * 16,
               16 / pixelsPerTile,
-              drawn.opaqueOverview
+              drawn.directTerrainOverview
                 ? {
-                    ...drawn.opaqueOverview,
-                    offsetX: core.x - region.rect.x,
-                    offsetY: core.y - region.rect.y,
+                    safe: drawn.directTerrainOverview.safe,
+                    rgba: drawn.directTerrainOverview.pixels,
+                    widthTiles: width,
                   }
-                : null,
+                : drawn.opaqueOverview
+                  ? {
+                      ...drawn.opaqueOverview,
+                      offsetX: core.x - region.rect.x,
+                      offsetY: core.y - region.rect.y,
+                    }
+                  : null,
             )
           : fullData;
       }
       if (drawn.opaqueOverview)
         applyOpaqueOverview(data, core, region, drawn.opaqueOverview);
+      if (drawn.directTerrainOverview) {
+        const { safe, pixels } = drawn.directTerrainOverview;
+        assert.equal(pixelsPerTile, 1);
+        assert.equal(safe.length, width * height);
+        assert.equal(pixels.length, data.length);
+        // These complete cells were proven unaffected by every command left
+        // to the general renderer. Their ordered raw compositing and reduction
+        // use the same integer kernels; copy only that proven subset.
+        for (let cell = 0; cell < safe.length; cell++) {
+          if (!safe[cell]) continue;
+          const i = cell * 4;
+          data[i] = pixels[i];
+          data[i + 1] = pixels[i + 1];
+          data[i + 2] = pixels[i + 2];
+          data[i + 3] = pixels[i + 3];
+        }
+      }
+      commandRecorder?.endChunk(data, drawn.softwareOverview?.pixels ?? null);
       readbackAndReductionSeconds +=
         (performance.now() - readbackAndReductionStarted) / 1000;
       const chunkRowBytes = width * pixelsPerTile * 4;
@@ -485,7 +540,10 @@ export async function exportWorld(
       // the outer loop while it collects and waits for native finalization.
       return {
         seconds: (performance.now() - renderStarted) / 1000,
-        softwareOverview: pixelsPerTile === 1 && !!drawn.softwareOverview,
+        softwareOverview:
+          pixelsPerTile === 1 &&
+          (!!drawn.softwareOverview ||
+            (!!drawn.directTerrainOverview && drawn.rasterizedCommands === 0)),
       };
     };
     for (let y = rect.y; y < rect.y + rect.height; y += config.bandTiles) {
@@ -536,6 +594,7 @@ export async function exportWorld(
       );
       throwIfAborted(signal);
       const compressionStarted = performance.now();
+      preparedPixelHash?.update(band.subarray(0, rowBytes * currentRows));
       await writer.writeRows(
         band.subarray(0, rowBytes * currentRows),
         currentRows,
@@ -620,6 +679,7 @@ export async function exportWorld(
     checkOverviewBudget();
     if (tilesTemporary) renameSync(tilesTemporary, config.tilesPath);
     const report = {
+      preparedWorldPixelSha256: preparedPixelHash?.digest("hex") ?? null,
       schema: overview
         ? "exploretv-direct-overview-export-v1"
         : "exploretv-full-resolution-export-v1",
@@ -690,8 +750,7 @@ export async function exportWorld(
       overviewGc: overview
         ? {
             ...overviewGc,
-            meaning:
-              "When GC is available, at most 4 chunks between major collections for actual 1px software-overview cores; any Canvas fallback lowers the pending interval to 2 until collection. A major collection also follows each output band. Collection counts include only GC calls actually made.",
+            meaning: `When GC is available, at most ${overviewGc.nativeOverviewInterval} chunks between major collections for actual 1px native-overview cores, for both direct and generic native paths; any Canvas fallback limits the pending interval to ${overviewGc.canvasInterval} until collection. A major collection also follows each output band. Collection counts include only GC calls actually made.`,
           }
         : null,
       nativeFinalizationSeconds: +nativeFinalizationSeconds.toFixed(3),
@@ -756,6 +815,12 @@ export async function exportWorld(
         : null,
       frameKeyInterner: { ...stats.frameKeyInterner },
       nativeOverview: stats.nativeOverview ? { ...stats.nativeOverview } : null,
+      sharedDetailedRgba: stats.sharedDetailedRgba
+        ? { ...stats.sharedDetailedRgba }
+        : null,
+      directTerrainOverview: stats.directTerrainOverviewStats
+        ? structuredClone(stats.directTerrainOverviewStats)
+        : null,
       rawTextureCache: stats.rawTextureCache
         ? structuredClone(stats.rawTextureCache)
         : null,

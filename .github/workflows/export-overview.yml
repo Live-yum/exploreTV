@@ -46,10 +46,10 @@ jobs:
       - run: node scripts/prepare-example.mjs example/assets --check
       - run: node --test test/png-stream.test.mjs test/export-world.test.mjs test/overview-export.test.mjs test/overview-fast-path.test.mjs test/scene-frame-cache.test.mjs test/compact-waterfall-registry.test.mjs test/overview-budget.test.mjs test/png-rgba.test.mjs test/png-rgba-node.test.mjs test/overview-core-cull.test.mjs test/static-planner-dispatch.test.mjs test/raw-texture-cache.test.mjs test/overview-comparison.test.mjs
       - run: node --test test/native-reducer.test.mjs test/native-blitter.test.mjs test/software-overview-partition.test.mjs test/software-overview-composite.test.mjs test/overview-frame-metadata.test.mjs test/scene-frame-interner.test.mjs test/ordinary-planner-fast-path.test.mjs test/indexed-shimmer-hint.test.mjs test/process-memory.test.mjs test/raw-overview-frame.test.mjs test/raw-identity-preparation.test.mjs test/slope-overview-frame.test.mjs test/reduce-overview-canvas.test.mjs test/native-provenance.test.mjs test/overview-early-halo-cull.test.mjs
-      - run: node --test test/world-validation-memo.test.mjs test/renderer-slope-polygons.test.mjs
+      - run: node --test test/world-validation-memo.test.mjs test/renderer-slope-polygons.test.mjs test/scene-frame-id.test.mjs test/renderer-emission-core.test.mjs test/overview-shared-geometry.test.mjs
       - name: Measure pinned baseline on this runner
         env:
-          BASELINE_COMMIT: 7fa7da3daf37e01d0bd3569edbdf46cdeb54529e
+          BASELINE_COMMIT: 12389011ce9be374328e331837f1f16645ddb5fb
         run: |
           git fetch --no-tags --depth=1 origin "$BASELINE_COMMIT"
           node --input-type=module <<'NODE'
@@ -66,6 +66,8 @@ jobs:
           test "$(git -C "$baseline" rev-parse HEAD)" = "$BASELINE_COMMIT"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$baseline/node_modules"
           cd "$baseline"
+          npm run prepare:overview
+          node scripts/check-overview-native.mjs
           node scripts/run-overview-ci.mjs "$GITHUB_WORKSPACE/artifacts/direct-overview-baseline"
           node scripts/verify-overview.mjs fixtures/example-world.wld example/assets "$GITHUB_WORKSPACE/artifacts/direct-overview-baseline/world-1px.png" --example
       - run: node scripts/run-overview-ci.mjs
