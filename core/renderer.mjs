@@ -3,6 +3,10 @@ import { classifyTileDrawLayer } from "./static-waterfalls.mjs";
 import { cellAt } from "./world.mjs";
 import { planSceneLiquids } from "./liquid-composite.mjs";
 import { isSolidOrSlopedTile } from "./tile-solidity.mjs";
+import {
+  createOverviewCommandBuffer,
+  OVERVIEW_COMMAND_STRIDE,
+} from "./overview-command-buffer.mjs";
 import { planStaticNature, STATIC_NATURE_TYPES } from "./static-nature.mjs";
 export { STATIC_NATURE_TYPES } from "./static-nature.mjs";
 import { planStaticObject, STATIC_OBJECT_TILES } from "./static-objects.mjs";
@@ -170,6 +174,16 @@ function slopePolygon(shape) {
 }
 export const MAX_SCENE_COMMANDS = 131072;
 export function planScene(region, options = {}) {
+  return planSceneInternal(region, options, false);
+}
+/** Internal overview entry: ordinary terrain is emitted compactly at source. */
+export function planOverviewBand(region, options = {}) {
+  return planSceneInternal(region, options, true);
+}
+function planSceneInternal(region, options, compactOverview) {
+  const measurePlanning = compactOverview || options.profilePlanning === true,
+    planningStart = measurePlanning ? performance.now() : 0,
+    planningMilliseconds = measurePlanning ? {} : null;
   const maxCommands = options.maxCommands ?? MAX_SCENE_COMMANDS;
   if (
     !Number.isSafeInteger(maxCommands) ||
@@ -193,6 +207,22 @@ export function planScene(region, options = {}) {
     region.cells?.length !== w * h
   )
     throw new Error("Invalid or oversized scene region");
+  // A validated WASM batch can supply both masks without repeating neighbor
+  // reads in JavaScript. Public planScene always computes its own reference.
+  const terrainFrames = compactOverview
+    ? options.overviewTerrainFrames
+    : undefined;
+  if (
+    terrainFrames !== undefined &&
+    (!(terrainFrames instanceof Uint8Array) ||
+      terrainFrames.length !== w * h * 2)
+  )
+    throw new RangeError("Invalid compact overview terrain frame table");
+  const compact = compactOverview
+    ? createOverviewCommandBuffer(
+        Math.min(maxCommands, w * h * ((tiles ? 1 : 0) + (walls ? 1 : 0))),
+      )
+    : null;
   // Optional destination crop for bounded exporters. Neighbor reads and all
   // source diagnostics still use the complete scene; coordinates remain local
   // to it. Keep a one-pixel guard for Canvas edge antialiasing.
@@ -392,7 +422,12 @@ export function planScene(region, options = {}) {
   };
   const emit = (c) => {
     commands.push(c);
-    assets.add(c.asset);
+    assets.add(
+      typeof c === "number"
+        ? compact.frames[compact.records[(-c - 1) * OVERVIEW_COMMAND_STRIDE]]
+            .asset
+        : c.asset,
+    );
   };
   const add = (c) => {
     reserve();
@@ -443,6 +478,7 @@ export function planScene(region, options = {}) {
     if (contextOnly) support.contextCommands++;
   };
   // Whole wall pass first, so a wall crop cannot cover a foreground sprite.
+  let phaseStart = measurePlanning ? performance.now() : 0;
   if (walls)
     for (let x = 0; x < w; x++)
       for (let y = 0; y < h; y++) {
@@ -474,60 +510,82 @@ export function planScene(region, options = {}) {
           support.approximateWalls++;
           continue;
         }
-        // Match cellAt's region-edge contract without allocating a predicate
-        // and four iterator tuples for every wall.
-        const north = y > 0 ? cells[i - 1] : null,
-          west = x > 0 ? cells[i - h] : null,
-          east = x + 1 < w ? cells[i + h] : null,
-          south = y + 1 < h ? cells[i + 1] : null;
-        let mask =
-          (north?.wall > 0 &&
-          (revealInvisible || (!north.invisibleWall && north.wall !== 318))
-            ? 1
-            : 0) |
-          (west?.wall > 0 &&
-          (revealInvisible || (!west.invisibleWall && west.wall !== 318))
-            ? 2
-            : 0) |
-          (east?.wall > 0 &&
-          (revealInvisible || (!east.invisibleWall && east.wall !== 318))
-            ? 4
-            : 0) |
-          (south?.wall > 0 &&
-          (revealInvisible || (!south.invisibleWall && south.wall !== 318))
-            ? 8
-            : 0);
-        if (mask === 15)
-          mask +=
-            WALL_CENTER[modulo3(x + (region.rect.x || 0))][
-              modulo3(y + (region.rect.y || 0))
-            ];
-        const [gx, gy] = WALL_GRID[mask];
-        // The owner interval already checked this fixed geometry.
-        reserve();
-        emit({
-          kind: "wall",
-          asset:
+        let mask;
+        if (terrainFrames) mask = terrainFrames[i * 2];
+        else {
+          // Match cellAt's region-edge contract without allocating a predicate
+          // and four iterator tuples for every wall.
+          const north = y > 0 ? cells[i - 1] : null,
+            west = x > 0 ? cells[i - h] : null,
+            east = x + 1 < w ? cells[i + h] : null,
+            south = y + 1 < h ? cells[i + 1] : null;
+          mask =
+            (north?.wall > 0 &&
+            (revealInvisible || (!north.invisibleWall && north.wall !== 318))
+              ? 1
+              : 0) |
+            (west?.wall > 0 &&
+            (revealInvisible || (!west.invisibleWall && west.wall !== 318))
+              ? 2
+              : 0) |
+            (east?.wall > 0 &&
+            (revealInvisible || (!east.invisibleWall && east.wall !== 318))
+              ? 4
+              : 0) |
+            (south?.wall > 0 &&
+            (revealInvisible || (!south.invisibleWall && south.wall !== 318))
+              ? 8
+              : 0);
+          if (mask === 15)
+            mask +=
+              WALL_CENTER[modulo3(x + (region.rect.x || 0))][
+                modulo3(y + (region.rect.y || 0))
+              ];
+        }
+        const grid = WALL_GRID[mask],
+          asset =
             typeof t.wall === "number" && wallAssets[t.wall] !== undefined
               ? wallAssets[t.wall]
               : "Wall_" + t.wall + ".png",
-          sx: gx * 36,
-          sy: gy * 36,
-          sw: 32,
-          sh: 32,
-          dx: x * 16 - 8,
-          dy: y * 16 - 8,
-          dw: 32,
-          dh: 32,
-          x,
-          y,
-          type: t.wall,
-          paintId: paintEnabled ? t.wallPaint || 0 : 0,
-          fidelity: "approximate",
-        });
+          paintId = paintEnabled ? t.wallPaint || 0 : 0;
+        // The owner interval already checked this fixed geometry.
+        reserve();
+        if (
+          compact &&
+          Number.isInteger(t.wall) &&
+          t.wall > 0 &&
+          t.wall <= 65535 &&
+          Number.isInteger(paintId) &&
+          paintId >= 0 &&
+          paintId <= 255
+        )
+          emit(compact.wall(t.wall, asset, mask, grid, paintId, x, y));
+        else
+          emit({
+            kind: "wall",
+            asset,
+            sx: grid[0] * 36,
+            sy: grid[1] * 36,
+            sw: 32,
+            sh: 32,
+            dx: x * 16 - 8,
+            dy: y * 16 - 8,
+            dw: 32,
+            dh: 32,
+            x,
+            y,
+            type: t.wall,
+            paintId,
+            fidelity: "approximate",
+          });
         support.walls++;
         support.approximateWalls++;
       }
+  if (measurePlanning) {
+    const now = performance.now();
+    planningMilliseconds.walls = now - phaseStart;
+    phaseStart = now;
+  }
   const liquidPlan = planSceneLiquids(region, {
     ...options.liquids,
     isSolid: isSolidOrSlopedTile,
@@ -537,6 +595,11 @@ export function planScene(region, options = {}) {
       if (!command.drawBeforeTiles) add(command);
   for (const command of liquidPlan.commands)
     if (command.drawBeforeTiles) add(command);
+  if (measurePlanning) {
+    const now = performance.now();
+    planningMilliseconds.liquids = now - phaseStart;
+    phaseStart = now;
+  }
   const tilePassStart = commands.length;
   for (let x = 0; x < w; x++)
     for (let y = 0; y < h; y++) {
@@ -595,33 +658,65 @@ export function planScene(region, options = {}) {
           if (shape === 1 || shape >= 2) support.shapes++;
           continue;
         }
-        const north = y > 0 ? cells[i - 1] : null,
-          west = x > 0 ? cells[i - h] : null,
-          east = x + 1 < w ? cells[i + h] : null,
-          south = y + 1 < h ? cells[i + 1] : null,
-          type = t.type;
-        const mask =
-          (north?.active &&
-          north.type === type &&
-          (revealInvisible || !north.invisibleBlock)
-            ? 1
-            : 0) |
-          (west?.active &&
-          west.type === type &&
-          (revealInvisible || !west.invisibleBlock)
-            ? 2
-            : 0) |
-          (east?.active &&
-          east.type === type &&
-          (revealInvisible || !east.invisibleBlock)
-            ? 4
-            : 0) |
-          (south?.active &&
-          south.type === type &&
-          (revealInvisible || !south.invisibleBlock)
-            ? 8
-            : 0);
-        const frame = BLOCK_FRAME[mask];
+        const type = t.type;
+        let mask;
+        if (terrainFrames) mask = terrainFrames[i * 2 + 1];
+        else {
+          const north = y > 0 ? cells[i - 1] : null,
+            west = x > 0 ? cells[i - h] : null,
+            east = x + 1 < w ? cells[i + h] : null,
+            south = y + 1 < h ? cells[i + 1] : null;
+          mask =
+            (north?.active &&
+            north.type === type &&
+            (revealInvisible || !north.invisibleBlock)
+              ? 1
+              : 0) |
+            (west?.active &&
+            west.type === type &&
+            (revealInvisible || !west.invisibleBlock)
+              ? 2
+              : 0) |
+            (east?.active &&
+            east.type === type &&
+            (revealInvisible || !east.invisibleBlock)
+              ? 4
+              : 0) |
+            (south?.active &&
+            south.type === type &&
+            (revealInvisible || !south.invisibleBlock)
+              ? 8
+              : 0);
+        }
+        const frame = BLOCK_FRAME[mask],
+          paintId = paintEnabled ? t.paint || 0 : 0;
+        if (
+          compact &&
+          Number.isInteger(shape) &&
+          Number.isInteger(paintId) &&
+          paintId >= 0 &&
+          paintId <= 255
+        ) {
+          // No intermediate command object or per-owner slope polygon. The
+          // destination/owner record refers directly to one unique template.
+          reserve();
+          emit(
+            compact.tile(
+              type,
+              ordinaryAsset,
+              mask,
+              frame,
+              paintId,
+              shape,
+              x,
+              y,
+            ),
+          );
+          if (shape === 1 || shape >= 2) support.shapes++;
+          support.tiles++;
+          support.approximateTiles++;
+          continue;
+        }
         const command = {
           kind: "tile",
           asset: ordinaryAsset,
@@ -637,7 +732,7 @@ export function planScene(region, options = {}) {
           y,
           type,
           ownerType: type,
-          paintId: paintEnabled ? t.paint || 0 : 0,
+          paintId,
           fidelity: "approximate",
         };
         if (shape === 1) {
@@ -908,12 +1003,30 @@ export function planScene(region, options = {}) {
         for (const c of extra?.commands || []) appendSprite(c, t, x, y, true);
       }
   }
+  if (measurePlanning) {
+    const now = performance.now();
+    planningMilliseconds.tiles = now - phaseStart;
+    phaseStart = now;
+  }
   const ordinaryTileCommands = commands.splice(tilePassStart);
   // Preserve full-scene owner traversal when context bodies enter a cropped ROI.
   // Without appended context owners all three groups already follow the
   // column-major tile traversal. A stable sort is needed only for the ROI path.
   if (tiles && region.context) {
-    const byOwner = (a, b) => a.x - b.x || a.y - b.y;
+    const byOwner = compact
+      ? (a, b) => {
+          const ai =
+              typeof a === "number" ? (-a - 1) * OVERVIEW_COMMAND_STRIDE : -1,
+            bi =
+              typeof b === "number" ? (-b - 1) * OVERVIEW_COMMAND_STRIDE : -1;
+          return (
+            (ai < 0 ? a.x : compact.records[ai + 3]) -
+              (bi < 0 ? b.x : compact.records[bi + 3]) ||
+            (ai < 0 ? a.y : compact.records[ai + 4]) -
+              (bi < 0 ? b.y : compact.records[bi + 4])
+          );
+        }
+      : (a, b) => a.x - b.x || a.y - b.y;
     ordinaryTileCommands.sort(byOwner);
     specialBehind.sort(byOwner);
     specialAbove.sort(byOwner);
@@ -932,20 +1045,35 @@ export function planScene(region, options = {}) {
       typeof registry.hasOrigin !== "function"
     )
       throw new Error("Invalid waterfall registry");
+    const compactLayers = compact?.frames.map((frame) =>
+      frame.kind === "tile"
+        ? classifyTileDrawLayer(frame.ownerType ?? frame.type)
+        : undefined,
+    );
     // Classify each owner once. Compact the private groups in place to retain
     // their solid pass without a second command array or repeated Set lookups.
     for (const group of tileGroups) {
       let retained = 0;
       for (const c of group) {
-        const layer = classifyTileDrawLayer(c.ownerType ?? c.type);
+        const offset =
+            typeof c === "number" ? (-c - 1) * OVERVIEW_COMMAND_STRIDE : -1,
+          frame = offset < 0 ? c : compact.frames[compact.records[offset]],
+          layer =
+            offset < 0
+              ? classifyTileDrawLayer(frame.ownerType ?? frame.type)
+              : compactLayers[compact.records[offset]];
         if (layer === "non-solid") emit(c);
         else {
           group[retained++] = c;
           if (layer === undefined)
             contextOmissions.push({
-              x: region.rect.x + c.x,
-              y: region.rect.y + c.y,
-              type: c.ownerType ?? c.type,
+              x:
+                region.rect.x +
+                (offset < 0 ? c.x : compact.records[offset + 3]),
+              y:
+                region.rect.y +
+                (offset < 0 ? c.y : compact.records[offset + 4]),
+              type: frame.ownerType ?? frame.type,
               reason: "unknown-waterfall-tile-draw-layer",
             });
         }
@@ -1073,6 +1201,12 @@ export function planScene(region, options = {}) {
   }
   warnings.push(...liquidPlan.warnings);
   support.liquidDrawing = liquidPlan.support;
+  const compactTerrain = compact?.finish();
+  if (measurePlanning) {
+    const now = performance.now();
+    planningMilliseconds.layers = now - phaseStart;
+    planningMilliseconds.total = now - planningStart;
+  }
   return {
     commands,
     warnings,
@@ -1088,6 +1222,8 @@ export function planScene(region, options = {}) {
     ...(emissionCore !== undefined
       ? { generationCulling: { culledCommands, logicalCommands: commandCount } }
       : {}),
+    ...(compactTerrain ? { compactTerrain } : {}),
+    ...(planningMilliseconds ? { planningMilliseconds } : {}),
   };
 }
 /** Preflight all textures before strict drawing. Never substitutes colors or invented sprites. */

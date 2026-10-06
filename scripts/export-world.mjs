@@ -259,6 +259,9 @@ export async function exportWorld(
     lowMemory: overview,
     nativeOverview: overview,
     directTerrainOverview: directTerrainEnabled,
+    compactTerrainOverview:
+      directTerrainEnabled &&
+      process.env.EXPLORETV_DISABLE_COMPACT_TERRAIN !== "1",
     waterfallRegistry,
     assetDir: config.assetDir,
     inputEncoding: config.inputEncoding,
@@ -292,10 +295,13 @@ export async function exportWorld(
     "scripts/scene-frame-interner.mjs",
     "scripts/scene-command-index.mjs",
     "scripts/overview-geometry.mjs",
+    "scripts/overview-terrain-wasm.mjs",
     "scripts/world-render-engine.mjs",
     "core/world.mjs",
     "core/utf8.mjs",
     "core/renderer.mjs",
+    "core/overview-command-buffer.mjs",
+    "core/overview-wasm.mjs",
     "core/static-nature.mjs",
     "core/cobweb-shapes.mjs",
     "core/static-objects.mjs",
@@ -322,6 +328,16 @@ export async function exportWorld(
     "core/scene-frames.mjs",
     "core/assets.mjs",
     "core/png-rgba.mjs",
+    "wasm-core/src/lib.rs",
+    "wasm-core/src/overview.rs",
+    "wasm-core/dist/exploretv_wld_core.wasm",
+    "wasm-core/dist/build-info.json",
+    "wasm-core/Cargo.toml",
+    "wasm-core/Cargo.lock",
+    "wasm-core/rust-toolchain.toml",
+    "wasm-core/.cargo/config.toml",
+    "wasm-core/build.sh",
+    "wasm-core/verify-build.mjs",
   ])
     sourceHashes[relative] = createHash("sha256")
       .update(readFileSync(new URL("../" + relative, import.meta.url)))

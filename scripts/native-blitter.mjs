@@ -52,6 +52,7 @@ try {
   addon = require(addonPath);
   if (
     typeof addon?.composeInto !== "function" ||
+    typeof addon?.composeIntoMasked !== "function" ||
     typeof addon?.premultiplyInto !== "function" ||
     typeof addon?.scaleOpacityInto !== "function" ||
     typeof addon?.clearOpaque !== "function" ||
@@ -210,8 +211,41 @@ export function clearOpaque(target) {
  * before selecting this optimization to avoid a slower JS compositing path.
  */
 export function composeInto(target, width, height, descriptors, frames) {
+  return composeBatch(target, width, height, descriptors, frames, null);
+}
+
+/**
+ * The same ordered compositor, skipping nonzero 16x16 destination mask cells.
+ * Mask 1 means an independently resolved output cell; other nonzero values
+ * mean an unused output cell. Edge cells can be partial, including a 32x32
+ * wall at an eight-pixel offset touching three cells on each axis.
+ * Returns exact per-plane { pixelsSkipped, pixelsToResolvedCells } counts.
+ * Skipped destination bytes are left intact. The mask must not alias output.
+ */
+export function composeIntoMasked(
+  target,
+  width,
+  height,
+  descriptors,
+  frames,
+  resolved,
+) {
+  if (resolved == null) throw new TypeError("A resolved-cell mask is required");
+  return composeBatch(target, width, height, descriptors, frames, resolved);
+}
+
+function composeBatch(target, width, height, descriptors, frames, resolved) {
   if (addon)
-    return addon.composeInto(target, width, height, descriptors, frames);
+    return resolved === null
+      ? addon.composeInto(target, width, height, descriptors, frames)
+      : addon.composeIntoMasked(
+          target,
+          width,
+          height,
+          descriptors,
+          frames,
+          resolved,
+        );
   if (!Array.isArray(frames) || frames.length > 8192)
     throw new TypeError("Invalid integer-blitter frame array");
   // Resolve possible accessors before validating buffers, matching the addon.
@@ -231,7 +265,11 @@ export function composeInto(target, width, height, descriptors, frames) {
     overlaps(descriptors, target) ||
     descriptors.length % BLIT_DESCRIPTOR_SIZE ||
     descriptors.length / BLIT_DESCRIPTOR_SIZE > 262144 ||
-    sources.some((frame) => !isBytes(frame) || overlaps(frame, target))
+    sources.some((frame) => !isBytes(frame) || overlaps(frame, target)) ||
+    (resolved !== null &&
+      (!isBytes(resolved) ||
+        resolved.length !== Math.ceil(width / 16) * Math.ceil(height / 16) ||
+        overlaps(resolved, target)))
   )
     throw new TypeError(
       "Invalid integer-blitter target, descriptors, or frame array",
@@ -256,6 +294,9 @@ export function composeInto(target, width, height, descriptors, frames) {
         "Invalid integer-blitter frame index, dimensions, flips, or blend",
       );
   }
+  let pixelsSkipped = 0,
+    pixelsToResolvedCells = 0;
+  const maskWidth = Math.ceil(width / 16);
   for (let i = 0; i < descriptors.length; i += BLIT_DESCRIPTOR_SIZE) {
     const [index, fw, fh, dx, dy, flipX, flipY, blend] = descriptors.subarray(
       i,
@@ -269,6 +310,12 @@ export function composeInto(target, width, height, descriptors, frames) {
     for (let y = y0; y < y1; y++) {
       const sy = flipY ? fh - 1 - (y - dy) : y - dy;
       for (let x = x0; x < x1; x++) {
+        const cell = resolved?.[(y >> 4) * maskWidth + (x >> 4)];
+        if (cell) {
+          pixelsSkipped++;
+          if (cell === 1) pixelsToResolvedCells++;
+          continue;
+        }
         const sx = flipX ? fw - 1 - (x - dx) : x - dx,
           s = (sy * fw + sx) * 4,
           d = (y * width + x) * 4;
@@ -299,7 +346,7 @@ export function composeInto(target, width, height, descriptors, frames) {
       }
     }
   }
-  return target;
+  return resolved === null ? target : { pixelsSkipped, pixelsToResolvedCells };
 }
 
 /** Explicit offline compilation; headers must already be installed or supplied. */

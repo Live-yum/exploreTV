@@ -82,7 +82,7 @@ for (const name of [
 for (const [name, hash] of Object.entries(report.sourceHashes)) {
   assert.match(
     name,
-    /^(?:(core|scripts)\/[a-z][a-z0-9-]*\.mjs|scripts\/native-(reducer|blitter)\.c)$/,
+    /^(?:(core|scripts)\/[a-z][a-z0-9-]*\.mjs|scripts\/native-(reducer|blitter)\.c|wasm-core\/(?:src\/(?:lib|overview)\.rs|dist\/(?:exploretv_wld_core\.wasm|build-info\.json)|Cargo\.(?:toml|lock)|rust-toolchain\.toml|\.cargo\/config\.toml|build\.sh|verify-build\.mjs))$/,
   );
   assert.equal(
     createHash("sha256")
@@ -90,6 +90,28 @@ for (const [name, hash] of Object.entries(report.sourceHashes)) {
       .digest("hex"),
     hash,
     `Source provenance: ${name}`,
+  );
+}
+if (report.terrainWasm?.available) {
+  assert.equal(report.terrainWasm.abiVersion, 1, "Executed terrain WASM ABI");
+  assert.equal(
+    report.terrainWasm.binarySha256,
+    report.sourceHashes["wasm-core/dist/exploretv_wld_core.wasm"],
+    "Executed terrain WASM binary provenance",
+  );
+  assert.equal(
+    report.terrainWasm.build.sourceSha256,
+    report.sourceHashes["wasm-core/src/lib.rs"],
+    "Executed terrain WASM core source",
+  );
+  assert.equal(
+    report.terrainWasm.build.overviewSourceSha256,
+    report.sourceHashes["wasm-core/src/overview.rs"],
+    "Executed terrain WASM planning source",
+  );
+  assert.ok(
+    report.terrainWasm.peakWorkingBytes <= 65536 * 10,
+    "Bounded terrain WASM working data",
   );
 }
 for (const [native, source] of [

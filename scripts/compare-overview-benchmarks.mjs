@@ -1,14 +1,76 @@
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const OVERVIEW_BASELINE_COMMIT =
-  "12389011ce9be374328e331837f1f16645ddb5fb";
+  "cbdf5b3c3b9f4952a2075a133f809b9b2d779d12";
 const WORLD_SHA =
   "d551a6b360c7af49a07dadbb1e82223ac43ad398e2054c29f500ec5e8b5b1cab";
 const PIXEL_SHA =
   "7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e";
+
+// The verifier checks files in each checkout. This second check binds the
+// measured report to immutable Git objects, so a named commit alone cannot
+// accidentally attribute a dirty or different implementation to that commit.
+export function verifyOverviewSourceProvenance(render, checkout, commit) {
+  assert.match(commit, /^[0-9a-f]{40}$/);
+  const git = (...args) =>
+    execFileSync("git", ["-C", checkout, ...args], {
+      maxBuffer: 32 * 1024 * 1024,
+    });
+  assert.equal(git("rev-parse", "HEAD").toString().trim(), commit);
+  const sourceHashes = render.sourceHashes;
+  assert.ok(sourceHashes && typeof sourceHashes === "object");
+  for (const required of [
+    "scripts/export-overview.mjs",
+    "scripts/world-render-engine.mjs",
+    "core/renderer.mjs",
+  ])
+    assert.ok(sourceHashes[required], `Required source identity: ${required}`);
+  for (const [name, hash] of Object.entries(sourceHashes)) {
+    assert.match(name, /^[A-Za-z0-9._/-]+$/);
+    assert.ok(
+      !name.split("/").some((part) => ["", ".", ".."].includes(part)),
+      "Source identity must name a repository file",
+    );
+    assert.match(hash, /^[0-9a-f]{64}$/);
+    const actual = createHash("sha256")
+      .update(git("show", `${commit}:${name}`))
+      .digest("hex");
+    assert.equal(actual, hash, `Exact-commit source identity: ${name}`);
+  }
+  return {
+    commit,
+    tree: git("rev-parse", `${commit}^{tree}`).toString().trim(),
+    verifiedSourceFiles: Object.keys(sourceHashes).length,
+    sourceHashes: { ...sourceHashes },
+  };
+}
+
+export function summarizeOverviewPhases(render) {
+  const direct = render.directTerrainOverviewStats ?? {};
+  return {
+    stageMilliseconds: { ...render.stageMilliseconds },
+    plannerPhaseMilliseconds: { ...render.plannerPhaseMilliseconds },
+    directPhaseMilliseconds: { ...direct.phaseMilliseconds },
+    directCounters: Object.fromEntries(
+      Object.entries(direct).filter(([, value]) => typeof value === "number"),
+    ),
+    regionDecodeSeconds: render.regionDecodeSeconds ?? null,
+    garbageCollectionSeconds: render.garbageCollectionSeconds ?? null,
+    readbackAndReductionSeconds: render.readbackAndReductionSeconds ?? null,
+    compressionSeconds: render.compressionSeconds ?? null,
+    timingRelationships:
+      "These are raw, overlapping phase measurements, not an additive breakdown. " +
+      "Planner total contains its ordinary phases; wasmPacking and wasmPlanning " +
+      "belong to the outer plan stage and may lie outside planner total. " +
+      "Direct scanAndBatch contains scan and batch; frame prepare, clear and " +
+      "compose are nested within direct work. Compare each named metric separately.",
+  };
+}
 
 export function compareOverviewBenchmarks(
   baseline,
@@ -120,6 +182,18 @@ export function compareOverviewBenchmarks(
     preferredMemoryPassed: candidateBytes < 300000000,
     preferredRuntimeSeconds: 60,
     preferredRuntimePassed: candidateSeconds < 60,
+    preferredTargetsPassed: candidateSeconds < 60 && candidateBytes < 300000000,
+    correctnessPassed: true,
+    protectiveBudgetsPassed: true,
+    acceptanceMeaning:
+      "Correctness and the 600-second/500-MB protective budgets are required " +
+      "to compare completed runs. The 60-second runtime and 300-MB conservative " +
+      "total peak goals are reported independently and jointly; a successful " +
+      "workflow does not by itself mean those preferred goals were met.",
+    phases: {
+      baseline: summarizeOverviewPhases(baseline.render),
+      candidate: summarizeOverviewPhases(candidate.render),
+    },
     environment: candidate.timing.environment,
   };
 }
@@ -128,10 +202,25 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(resolve(process.argv[1])).href
 ) {
-  const [baselineDir, candidateDir, candidateCommit] = process.argv.slice(2);
-  if (!baselineDir || !candidateDir || !candidateCommit)
+  const [
+    baselineDir,
+    candidateDir,
+    candidateCommit,
+    baselineCommit = OVERVIEW_BASELINE_COMMIT,
+    baselineCheckout,
+    candidateCheckout,
+    ...extra
+  ] = process.argv.slice(2);
+  if (
+    !baselineDir ||
+    !candidateDir ||
+    !candidateCommit ||
+    extra.length ||
+    Boolean(baselineCheckout) !== Boolean(candidateCheckout)
+  )
     throw new Error(
-      "Usage: node compare-overview-benchmarks.mjs baseline-dir candidate-dir candidate-commit",
+      "Usage: node compare-overview-benchmarks.mjs baseline-dir candidate-dir " +
+        "candidate-commit [baseline-commit [baseline-checkout candidate-checkout]]",
     );
   const load = (dir) => {
     const read = (name) => JSON.parse(readFileSync(join(dir, name)));
@@ -141,15 +230,54 @@ if (
       fidelity: read("world-1px.png.fidelity.json"),
     };
   };
+  const baseline = load(baselineDir),
+    candidate = load(candidateDir);
   const comparison = compareOverviewBenchmarks(
-    load(baselineDir),
-    load(candidateDir),
+    baseline,
+    candidate,
     candidateCommit,
+    baselineCommit,
   );
+  if (baselineCheckout) {
+    comparison.provenance = {
+      baseline: verifyOverviewSourceProvenance(
+        baseline.render,
+        baselineCheckout,
+        baselineCommit,
+      ),
+      candidate: verifyOverviewSourceProvenance(
+        candidate.render,
+        candidateCheckout,
+        candidateCommit,
+      ),
+    };
+  }
   writeFileSync(
     join(candidateDir, "sequential-comparison.json"),
     JSON.stringify(comparison, null, 2),
     { flag: "wx" },
   );
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    const status = (passed) => (passed ? "passed" : "not met");
+    appendFileSync(
+      process.env.GITHUB_STEP_SUMMARY,
+      "## Complete panorama comparison\n\n" +
+        `Baseline: \`${baselineCommit}\`; candidate: \`${candidateCommit}\`. ` +
+        "Sequential fresh processes on the same runner; operating-system file caches are uncontrolled.\n\n" +
+        "| Measurement | Pinned main | Candidate |\n|---|---:|---:|\n" +
+        `| Complete process time | ${comparison.baseline.endToEndSeconds.toFixed(3)} s | ${comparison.candidate.endToEndSeconds.toFixed(3)} s |\n` +
+        `| Conservative total peak | ${(comparison.baseline.conservativeAggregatePeakRssBytes / 1e6).toFixed(2)} MB | ${(comparison.candidate.conservativeAggregatePeakRssBytes / 1e6).toFixed(2)} MB |\n\n` +
+        `Candidate < 60 seconds: **${status(comparison.preferredRuntimePassed)}**. ` +
+        `Candidate < 300 MB: **${status(comparison.preferredMemoryPassed)}**. ` +
+        `Both preferred goals: **${status(comparison.preferredTargetsPassed)}**.\n\n` +
+        "All 20,160,000 pixels, 13 independent regions, 384 texture identities, " +
+        "logical command counts and omission diagnostics passed. " +
+        (comparison.provenance
+          ? `Exact-commit source identities passed (${comparison.provenance.baseline.verifiedSourceFiles} baseline, ${comparison.provenance.candidate.verifiedSourceFiles} candidate). `
+          : "") +
+        "Raw timing, fidelity, lifetime and phase reports are retained in the artifact. " +
+        "Nested phase timings must not be added together.\n",
+    );
+  }
   console.log(JSON.stringify(comparison));
 }

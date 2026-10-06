@@ -5,6 +5,7 @@ import { createOverviewRgbaArena } from "./overview-rgba-arena.mjs";
 import { createSceneFrameInterner } from "./scene-frame-interner.mjs";
 import { createSceneCommandIndex } from "./scene-command-index.mjs";
 import { createOverviewGeometryAnalysis } from "./overview-geometry.mjs";
+import { createNodeOverviewTerrainPlanner } from "./overview-terrain-wasm.mjs";
 import { createNodePngRgbaDecoder } from "./png-rgba-node.mjs";
 import { createCompactStaticWaterfallRegistry } from "./compact-waterfall-registry.mjs";
 import {
@@ -23,7 +24,8 @@ import {
   validateRect,
   getWorldTileAccessor,
 } from "../core/world.mjs";
-import { planScene, renderScene } from "../core/renderer.mjs";
+import { planScene, planOverviewBand, renderScene } from "../core/renderer.mjs";
+import { materializeOverviewCommand } from "../core/overview-command-buffer.mjs";
 import { decodePngRgba } from "../core/png-rgba.mjs";
 import { registerTextureSource, textureMemoryBytes } from "../core/assets.mjs";
 import {
@@ -286,6 +288,7 @@ export function createWorldRenderer({
   lowMemory = false,
   nativeOverview = false,
   directTerrainOverview = false,
+  compactTerrainOverview = false,
   onNativeBatch = null,
 }) {
   const frameCache = cacheFrames
@@ -313,8 +316,17 @@ export function createWorldRenderer({
         })
       : null;
   const directTerrainRenderer = useDirectTerrain
-    ? createDirectTerrainOverview({ detailedRgbaArena })
+    ? createDirectTerrainOverview({
+        detailedRgbaArena,
+        resolvedCellMask:
+          process.env.EXPLORETV_DISABLE_RESOLVED_CELL_MASK !== "1",
+      })
     : null;
+  const useCompactTerrain = useDirectTerrain && compactTerrainOverview;
+  const terrainPlanner =
+    useCompactTerrain && process.env.EXPLORETV_DISABLE_TERRAIN_WASM !== "1"
+      ? createNodeOverviewTerrainPlanner()
+      : null;
   const pngDecoder = lowMemory && !lazyRaw ? createNodePngRgbaDecoder() : null;
   const stats = {
     pngDecodeCache: pngDecoder?.stats ?? null,
@@ -323,6 +335,21 @@ export function createWorldRenderer({
     frameKeyInterner: frameInterner.stats,
     nativeOverview: softwareRenderer?.stats ?? null,
     directTerrainOverviewStats: directTerrainRenderer?.stats ?? null,
+    compactTerrainPlanning: useCompactTerrain,
+    terrainWasm: terrainPlanner?.stats ?? null,
+    plannerPhaseMilliseconds: {
+      walls: 0,
+      liquids: 0,
+      tiles: 0,
+      layers: 0,
+      total: 0,
+      wasmPacking: 0,
+      wasmPlanning: 0,
+    },
+    compactTerrainCommands: 0,
+    compactTerrainFrames: 0,
+    materializedTerrainCommands: 0,
+    peakCompactTerrainBytes: 0,
     sharedDetailedRgba: detailedRgbaArena?.stats ?? null,
     skippedFramePreparationCommands: 0,
     stageMilliseconds: {
@@ -542,11 +569,16 @@ export function createWorldRenderer({
       top = (core.y - region.rect.y) * 16,
       right = left + core.width * 16,
       bottom = top + core.height * 16;
-    const plan = planScene(
+    const compactOverview = overview && useCompactTerrain;
+    const terrainFrames = compactOverview
+      ? terrainPlanner?.plan(region, options)
+      : null;
+    const plan = (compactOverview ? planOverviewBand : planScene)(
       region,
       overview
         ? {
             ...options,
+            ...(terrainFrames ? { overviewTerrainFrames: terrainFrames } : {}),
             outputBounds: {
               x: left,
               y: top,
@@ -565,6 +597,24 @@ export function createWorldRenderer({
     stats.earlyCulledHaloCommands +=
       plan.generationCulling?.culledCommands ?? 0;
     stats.stageMilliseconds.plan += performance.now() - stageStarted;
+    if (plan.planningMilliseconds)
+      for (const [name, value] of Object.entries(plan.planningMilliseconds))
+        stats.plannerPhaseMilliseconds[name] += value;
+    if (terrainPlanner?.stats.phaseMilliseconds) {
+      stats.plannerPhaseMilliseconds.wasmPacking =
+        terrainPlanner.stats.phaseMilliseconds.packing;
+      stats.plannerPhaseMilliseconds.wasmPlanning =
+        terrainPlanner.stats.phaseMilliseconds.planning;
+    }
+    if (plan.compactTerrain) {
+      stats.compactTerrainCommands +=
+        plan.compactTerrain.records.length / plan.compactTerrain.stride;
+      stats.compactTerrainFrames += plan.compactTerrain.frames.length;
+      stats.peakCompactTerrainBytes = Math.max(
+        stats.peakCompactTerrainBytes,
+        plan.compactTerrain.records.buffer.byteLength,
+      );
+    }
     stageStarted = performance.now();
     const assetView = await assetsFor(plan);
     const useCoreSurface = lowMemory && coreSurface;
@@ -647,9 +697,26 @@ export function createWorldRenderer({
       stageStarted = performance.now();
       const renderCommands = lowMemory ? [] : plan.commands;
       for (let i = 0; i < plan.commands.length; i++) {
-        const c = plan.commands[i];
-        const ownerInCore = inCore(c, region, core);
-        if (lowMemory && !ownerInCore && outsideCore(c)) {
+        const token = plan.commands[i];
+        const compact =
+          typeof token === "number" && token < 0 ? plan.compactTerrain : null;
+        const at = compact ? (-token - 1) * compact.stride : 0;
+        const c = compact ? compact.frames[compact.records[at]] : token;
+        const ownerX = compact ? compact.records[at + 3] : c.x;
+        const ownerY = compact ? compact.records[at + 4] : c.y;
+        const ownerInCore = compact
+          ? ownerX + region.rect.x >= core.x &&
+            ownerY + region.rect.y >= core.y &&
+            ownerX + region.rect.x < core.x + core.width &&
+            ownerY + region.rect.y < core.y + core.height
+          : inCore(c, region, core);
+        const outside = compact
+          ? compact.records[at + 1] + c.dw + 1 <= left ||
+            compact.records[at + 2] + c.dh + 1 <= top ||
+            compact.records[at + 1] - 1 >= right ||
+            compact.records[at + 2] - 1 >= bottom
+          : outsideCore(c);
+        if (lowMemory && !ownerInCore && outside) {
           stats.earlyCulledHaloCommands++;
           continue;
         }
@@ -666,7 +733,12 @@ export function createWorldRenderer({
           if (count && ownerInCore) stats.renderedCommands++;
           continue;
         }
-        if (lowMemory) renderCommands.push(c);
+        if (lowMemory) {
+          renderCommands.push(
+            compact ? materializeOverviewCommand(plan, token) : c,
+          );
+          if (compact) stats.materializedTerrainCommands++;
+        }
       }
       const renderPlan = lowMemory
         ? { ...plan, commands: renderCommands }
@@ -973,6 +1045,7 @@ export function createWorldRenderer({
       frameInterner.dispose();
       softwareRenderer?.dispose();
       directTerrainRenderer?.dispose();
+      terrainPlanner?.dispose();
       detailedRgbaArena?.dispose();
       pngDecoder?.clear();
       rawTextures?.dispose();

@@ -6,6 +6,7 @@ import {
   nativeBlitterStatus,
   clearOpaque,
   composeInto,
+  composeIntoMasked,
   quantizeCanvasOpacity,
 } from "./native-blitter.mjs";
 import { boxDownsampleRgbaNative } from "./native-reducer.mjs";
@@ -25,7 +26,7 @@ for (const type of ORDINARY_BLOCKS) ordinary[type] = 1;
 // Restrict the shader and geometry, not the atlas filename. Identity paint has
 // no type-dependent paint settings; every new source/crop is still checked by
 // the same raw preparer used by the generic native backend.
-function ordinaryCandidateSide(c) {
+function ordinaryCandidateSide(c, dx = c.dx, dy = c.dy) {
   const wall = c.kind === "wall",
     side = wall ? 32 : 16,
     paint = c.paintId === undefined ? 0 : c.paintId;
@@ -50,10 +51,10 @@ function ordinaryCandidateSide(c) {
     c.sy < 0 ||
     c.sx > 4095 ||
     c.sy > 4095 ||
-    !Number.isSafeInteger(c.dx) ||
-    !Number.isSafeInteger(c.dy) ||
-    Math.abs(c.dx) > 0x3fffffff ||
-    Math.abs(c.dy) > 0x3fffffff
+    !Number.isSafeInteger(dx) ||
+    !Number.isSafeInteger(dy) ||
+    Math.abs(dx) > 0x3fffffff ||
+    Math.abs(dy) > 0x3fffffff
   )
     return 0;
   return side;
@@ -62,8 +63,8 @@ function ordinaryCandidateSide(c) {
 // Preserve the short numeric-key path for ordinary terrain, but the same raw
 // identity shader can also draw half bricks, liquid frames and small sprites.
 // Their original command order and fractional opacity are not approximated.
-function candidateKind(c) {
-  const ordinarySide = ordinaryCandidateSide(c);
+function candidateKind(c, dx = c.dx, dy = c.dy) {
+  const ordinarySide = ordinaryCandidateSide(c, dx, dy);
   if (ordinarySide) return ordinarySide;
   const opacity = c.opacity === undefined ? 1 : c.opacity,
     paint = c.paintId === undefined ? 0 : c.paintId;
@@ -102,7 +103,9 @@ function candidateKind(c) {
       )
         return 0;
     }
-    const shape = canonicalSlopeClip(c);
+    const shape = canonicalSlopeClip(
+      c.dx === dx && c.dy === dy ? c : { ...c, dx, dy },
+    );
     return shape === null ? 0 : -shape - 1;
   }
   if (
@@ -125,10 +128,10 @@ function candidateKind(c) {
     c.sh > 64 ||
     c.dw !== c.sw ||
     c.dh !== c.sh ||
-    !Number.isSafeInteger(c.dx) ||
-    !Number.isSafeInteger(c.dy) ||
-    Math.abs(c.dx) > 0x3fffffff ||
-    Math.abs(c.dy) > 0x3fffffff
+    !Number.isSafeInteger(dx) ||
+    !Number.isSafeInteger(dy) ||
+    Math.abs(dx) > 0x3fffffff ||
+    Math.abs(dy) > 0x3fffffff
   )
     return 0;
   return -1;
@@ -142,10 +145,13 @@ function candidateKind(c) {
  * command has passed raw preparation and touches no unsafe core cell. All
  * commands which fail that proof stay in the generic renderer. Safe pixels
  * include even the candidates crossing an unsafe boundary, in original order.
+ * Compact terrain arrives as numeric records and unique frame templates; no
+ * per-command objects or prepared-frame strong references are materialized.
  * The first pass also proves final opaque tile means. The second pass submits
  * only commands touching a safe cell which still needs detailed composition;
- * a crossing wall remains whole, and proven final means replace its covered
- * cells during reduction. A mean never substitutes for source validation.
+ * a crossing wall stays one command while the native kernel skips resolved
+ * and unsafe destination fragments. Proven means replace those cells during
+ * reduction. A mean never substitutes for source validation.
  *
  * Retained frames, sources pinned by the current native batch, and conservative
  * UTF-16 bytes for extended string keys share ONE byte limit. Bounded CLOCK
@@ -162,8 +168,10 @@ export function createDirectTerrainOverview({
   maxDetailedBytes = 6 * 1024 * 1024,
   inputEncoding = "tconvert-game-raw",
   detailedRgbaArena = null,
+  resolvedCellMask = true,
 } = {}) {
   if (
+    typeof resolvedCellMask !== "boolean" ||
     !Number.isSafeInteger(maxFrameBytes) ||
     maxFrameBytes < 8192 ||
     maxFrameBytes > 4 * 1024 * 1024 ||
@@ -188,7 +196,14 @@ export function createDirectTerrainOverview({
   )
     throw new TypeError("Invalid shared overview RGBA arena");
 
-  const entries = new Map();
+  const entries = new Map(),
+    // Per-view compact frame references contain only slot/generation numbers.
+    // Retiring an entry removes the sole unpinned strong reference from this
+    // table; stale view slots can never keep its pixel planes alive.
+    cacheSlots = new Array(maxFrames),
+    cacheGenerations = new Uint32Array(maxFrames),
+    freeCacheSlots = [];
+  let nextCacheSlot = 0;
   let identities = new WeakMap(),
     nextIdentity = 1,
     backing = null,
@@ -224,12 +239,26 @@ export function createDirectTerrainOverview({
     slopeCandidates: 0,
     slopePreparedFrames: 0,
     secondPassHits: 0,
+    frameKeyLookups: 0,
+    compactCommands: 0,
+    compactFramesValidated: 0,
+    compactValidationReuses: 0,
+    compactSecondPassSlotHits: 0,
+    compactSecondPassReloads: 0,
+    compactSlotBytes: 0,
+    peakCompactSlotBytes: 0,
     secondPassMisses: 0,
     secondPassFailures: 0,
     candidateCoreCommands: 0,
     candidateBlitPixels: 0,
     skippedBlitPixels: 0,
     nativeBlitPixels: 0,
+    resolvedCellMask,
+    // Exact counts over submitted planes only; whole-command skips above are
+    // already measured separately and never enter the native kernel.
+    blitPixelsToResolvedCells: 0,
+    maskedBlitPixelsSkipped: 0,
+    maskedUnsafeBlitPixelsSkipped: 0,
     skippedWallCommands: 0,
     skippedTileCommands: 0,
     skippedUnsafeCommands: 0,
@@ -265,10 +294,15 @@ export function createDirectTerrainOverview({
   };
   const clearEntries = () => {
     entries.clear();
+    cacheSlots.fill(undefined);
+    cacheGenerations.fill(0);
+    freeCacheSlots.length = nextCacheSlot = 0;
     stats.frameBytes = stats.liveFrameBytes = stats.frameEntries = 0;
   };
   const retire = (key, entry) => {
     entries.delete(key);
+    cacheSlots[entry.slot] = undefined;
+    freeCacheSlots.push(entry.slot);
     stats.frameBytes -= entry.bytes;
     stats.liveFrameBytes = stats.frameBytes;
     stats.frameEntries = entries.size;
@@ -287,7 +321,22 @@ export function createDirectTerrainOverview({
       )
         return null;
       const rect = region?.rect,
-        commands = plan?.commands;
+        commands = plan?.commands,
+        compact = plan?.compactTerrain,
+        records = compact?.records,
+        templates = compact?.frames;
+      if (
+        compact &&
+        (compact.stride !== 5 ||
+          !(records instanceof Int32Array) ||
+          !(records.buffer instanceof ArrayBuffer) ||
+          records.buffer.detached === true ||
+          records.length % 5 ||
+          records.length / 5 > MAX_COMMANDS ||
+          !Array.isArray(templates) ||
+          templates.length > MAX_COMMANDS)
+      )
+        return null;
       if (
         !rect ||
         !core ||
@@ -353,7 +402,18 @@ export function createDirectTerrainOverview({
         // per-view failure Set which could otherwise retain many megabytes.
         failedKeys = new Set(),
         sources = [],
-        pinned = [];
+        pinned = [],
+        // Validation and opaque means survive eviction as scalar metadata.
+        // No template or command instance retains a prepared frame object.
+        compactFlags = compact ? new Uint8Array(templates.length) : null,
+        compactMeans = compact ? new Uint32Array(templates.length) : null,
+        compactSlots = compact ? new Uint32Array(templates.length) : null,
+        compactGenerations = compact ? new Uint32Array(templates.length) : null;
+      stats.compactSlotBytes = compact ? templates.length * 13 : 0;
+      stats.peakCompactSlotBytes = Math.max(
+        stats.peakCompactSlotBytes,
+        stats.compactSlotBytes,
+      );
       let previousAsset,
         previousNamespace,
         unsafeCells = 0,
@@ -362,12 +422,13 @@ export function createDirectTerrainOverview({
         batchCommands = 0,
         detailed = null,
         detailedLease = null,
+        useResolvedMask = false,
         scanFinished = false,
         batchStarted = null;
       const scanStarted = performance.now();
 
-      const setBounds = (c) => {
-        const { dx, dy, dw, dh } = c;
+      const setBounds = (c, dx = c.dx, dy = c.dy) => {
+        const { dw, dh } = c;
         if (
           !Number.isFinite(dx) ||
           !Number.isFinite(dy) ||
@@ -403,8 +464,8 @@ export function createDirectTerrainOverview({
         );
         return true;
       };
-      const markUnsafe = (c) => {
-        if (!c || !setBounds(c)) {
+      const markUnsafe = (c, dx, dy) => {
+        if (!c || !setBounds(c, dx, dy)) {
           unsafe.fill(1);
           unsafeCells = unsafe.length;
           return;
@@ -423,9 +484,9 @@ export function createDirectTerrainOverview({
       // This is queried only after candidateKind and frame validation.
       // Repeating the general finite/clip/fractional checks for every ordinary
       // tile was a substantial part of the previous partition pass.
-      const setCandidateBounds = (c) => {
-        const dx = c.dx - left,
-          dy = c.dy - top,
+      const setCandidateBounds = (c, destX = c.dx, destY = c.dy) => {
+        const dx = destX - left,
+          dy = destY - top,
           right = dx + c.sw,
           bottom = dy + c.sh;
         if (right <= 0 || bottom <= 0 || dx >= pixelWidth || dy >= pixelHeight)
@@ -446,13 +507,29 @@ export function createDirectTerrainOverview({
         if (!used) return;
         const started = performance.now();
         try {
-          composeInto(
-            detailed,
-            pixelWidth,
-            pixelHeight,
-            descriptors.subarray(0, used),
-            sources,
-          );
+          if (useResolvedMask) {
+            const masked = composeIntoMasked(
+              detailed,
+              pixelWidth,
+              pixelHeight,
+              descriptors.subarray(0, used),
+              sources,
+              resolved,
+            );
+            stats.blitPixelsToResolvedCells += masked.pixelsToResolvedCells;
+            stats.maskedBlitPixelsSkipped += masked.pixelsSkipped;
+            stats.maskedUnsafeBlitPixelsSkipped +=
+              masked.pixelsSkipped - masked.pixelsToResolvedCells;
+            stats.skippedBlitPixels += masked.pixelsSkipped;
+            stats.nativeBlitPixels -= masked.pixelsSkipped;
+          } else
+            composeInto(
+              detailed,
+              pixelWidth,
+              pixelHeight,
+              descriptors.subarray(0, used),
+              sources,
+            );
           stats.nativeBatches++;
           stats.nativeCommands += batchCommands;
           stats.nativeBlits += used / 8;
@@ -584,6 +661,7 @@ export function createDirectTerrainOverview({
           return null;
         }
         const keyBytes = typeof key === "string" ? key.length * 2 : 0;
+        stats.frameKeyLookups++;
         const hit = entries.get(key);
         if (hit) {
           hit.recent = true;
@@ -616,9 +694,13 @@ export function createDirectTerrainOverview({
         try {
           frame =
             kind < -1
-              ? prepareCanonicalSlopeOverviewFrame(c, namespace.source, {
-                  inputEncoding,
-                })
+              ? prepareCanonicalSlopeOverviewFrame(
+                  c.dx === undefined ? { ...c, dx: 0, dy: 0 } : c,
+                  namespace.source,
+                  {
+                    inputEncoding,
+                  },
+                )
               : prepareRawOverviewFrame(c, namespace.source, { inputEncoding });
         } catch {
           // The unchanged generic preparer owns unsupported-frame diagnostics.
@@ -638,8 +720,15 @@ export function createDirectTerrainOverview({
           keyBytes;
         if (bytes > reservation || stats.frameBytes + bytes > maxFrameBytes)
           throw new Error("Direct terrain frame exceeded its byte reservation");
+        const slot = freeCacheSlots.length
+          ? freeCacheSlots.pop()
+          : nextCacheSlot++;
+        const generation = (cacheGenerations[slot] + 1) >>> 0;
+        cacheGenerations[slot] = generation;
         const entry = {
           ...frame,
+          slot,
+          generation,
           meanWord: frame.mean
             ? new Uint32Array(frame.mean.buffer, frame.mean.byteOffset, 1)[0]
             : 0,
@@ -650,6 +739,7 @@ export function createDirectTerrainOverview({
           additiveId: -1,
         };
         entries.set(key, entry);
+        cacheSlots[slot] = entry;
         stats.frameBytes += bytes;
         stats.liveFrameBytes = stats.frameBytes;
         stats.frameEntries = entries.size;
@@ -663,12 +753,12 @@ export function createDirectTerrainOverview({
         else stats.rawPreparedFrames++;
         return entry;
       };
-      const append = (sourceId, c, frame, blend) => {
+      const append = (sourceId, c, frame, blend, destX, destY) => {
         descriptors[used++] = sourceId;
         descriptors[used++] = frame.width;
         descriptors[used++] = frame.height;
-        descriptors[used++] = c.dx - left;
-        descriptors[used++] = c.dy - top;
+        descriptors[used++] = destX - left;
+        descriptors[used++] = destY - top;
         descriptors[used++] = c.flipX && !frame.uvFlipApplied ? 1 : 0;
         descriptors[used++] = c.flipY && !frame.uvFlipApplied ? 1 : 0;
         descriptors[used++] = blend;
@@ -676,28 +766,72 @@ export function createDirectTerrainOverview({
 
       try {
         for (let i = 0; i < commands.length; i++) {
-          const c = commands[i],
-            kind = c ? candidateKind(c) : 0;
-          if (!kind) {
-            markUnsafe(c);
+          const command = commands[i];
+          let c = command,
+            destX = c?.dx,
+            destY = c?.dy,
+            frameSlot = -1,
+            flags = 0,
+            meanWord = 0;
+          if (typeof command === "number") {
+            const at = (-command - 1) * 5;
+            if (
+              !compact ||
+              !Number.isSafeInteger(command) ||
+              command >= 0 ||
+              at < 0 ||
+              at + 5 > records.length ||
+              (frameSlot = records[at]) < 0 ||
+              frameSlot >= templates.length ||
+              !(c = templates[frameSlot]) ||
+              typeof c !== "object"
+            ) {
+              markUnsafe(null);
+              break;
+            }
+            destX = records[at + 1];
+            destY = records[at + 2];
+            stats.compactCommands++;
+            if (Math.abs(destX) > 0x3fffffff || Math.abs(destY) > 0x3fffffff) {
+              markUnsafe(c, destX, destY);
+              if (unsafeCells === unsafe.length) break;
+              continue;
+            }
+            flags = compactFlags[frameSlot];
+            if (flags) stats.compactValidationReuses++;
+          }
+          if (!flags) {
+            const kind = c ? candidateKind(c, destX, destY) : 0,
+              entry = kind ? getFrame(c, kind) : null;
+            if (frameSlot >= 0) stats.compactFramesValidated++;
+            if (!entry) {
+              if (frameSlot >= 0) compactFlags[frameSlot] = 128;
+              markUnsafe(c, destX, destY);
+              if (unsafeCells === unsafe.length) break;
+              continue;
+            }
+            // Bit 1 is the validated additive-plane count. The remaining bits
+            // preserve the extended/slope kind without retaining frame pixels.
+            flags =
+              (entry.additive ? 3 : 1) |
+              (kind === -1 ? 4 : kind < -1 ? 8 | ((-kind - 1) << 4) : 0);
+            meanWord = entry.mean ? entry.meanWord : 0;
+            if (frameSlot >= 0) {
+              compactFlags[frameSlot] = flags;
+              compactMeans[frameSlot] = meanWord;
+              compactSlots[frameSlot] = entry.slot + 1;
+              compactGenerations[frameSlot] = entry.generation;
+            }
+          } else if (flags === 128) {
+            markUnsafe(c, destX, destY);
             if (unsafeCells === unsafe.length) break;
             continue;
-          }
-          const entry = getFrame(c, kind);
-          if (!entry) {
-            markUnsafe(c);
-            if (unsafeCells === unsafe.length) break;
-            continue;
-          }
-          // Bit 1 carries the already validated additive-plane count to the
-          // second pass without retaining any per-command frame reference.
-          handled[i] =
-            (entry.additive ? 3 : 1) |
-            (kind === -1 ? 4 : kind < -1 ? 8 | ((-kind - 1) << 4) : 0);
-          if (kind < 0) stats.extendedCandidates++;
-          if (kind < -1) stats.slopeCandidates++;
-          const dx = c.dx - left,
-            dy = c.dy - top;
+          } else meanWord = compactMeans[frameSlot];
+          handled[i] = flags;
+          if (flags & 12) stats.extendedCandidates++;
+          if (flags & 8) stats.slopeCandidates++;
+          const dx = destX - left,
+            dy = destY - top;
           if (
             c.sw === 16 &&
             c.sh === 16 &&
@@ -709,17 +843,17 @@ export function createDirectTerrainOverview({
             const at = (dy >> 4) * width + (dx >> 4);
             if (
               !c.clip &&
-              entry.mean &&
+              meanWord &&
               (c.opacity === undefined || c.opacity === 1)
             ) {
               if (!resolved[at]) opaqueCells++;
               resolved[at] = 1;
-              resolvedWords[at] = entry.meanWord;
+              resolvedWords[at] = meanWord;
             } else if (resolved[at]) {
               resolved[at] = 0;
               opaqueCells--;
             }
-          } else if (opaqueCells && setCandidateBounds(c)) {
+          } else if (opaqueCells && setCandidateBounds(c, destX, destY)) {
             // A later wall or nonaligned tile invalidates an earlier tile's
             // mean wherever it overlaps. Before any opaque tile is seen (the
             // usual wall pass), this loop is unnecessary.
@@ -750,7 +884,7 @@ export function createDirectTerrainOverview({
             if (resolved[i]) opaqueCells--;
             // Unsafe results are ignored by the caller. Supplying opaque black
             // also lets the existing masked reducer avoid those unused pixels.
-            resolved[i] = 1;
+            resolved[i] = 2;
             resolvedWords[i] = OPAQUE_BLACK_WORD;
           }
         const stride = width + 1,
@@ -772,11 +906,12 @@ export function createDirectTerrainOverview({
                 prefix[at] = prefix[at - stride] + row;
               }
               if (nativePrefix) {
-                nativeRow += resolved[source] ^ 1;
+                nativeRow += resolved[source] ? 0 : 1;
                 nativePrefix[at] = nativePrefix[at - stride] + nativeRow;
               }
             }
           }
+        useResolvedMask = resolvedCellMask && !!(opaqueCells || unsafeCells);
         stats.opaqueCells += opaqueCells;
         stats.nativeRequiredCells += nativeRequiredCells;
         stats.phaseMilliseconds.partition +=
@@ -786,8 +921,13 @@ export function createDirectTerrainOverview({
         for (let i = 0; i < commands.length; i++) {
           const flags = handled[i];
           if (!flags) continue;
-          const c = commands[i];
-          if (!setCandidateBounds(c)) {
+          const command = commands[i],
+            compactAt = typeof command === "number" ? (-command - 1) * 5 : -1,
+            frameSlot = compactAt >= 0 ? records[compactAt] : -1,
+            c = frameSlot >= 0 ? templates[frameSlot] : command,
+            destX = frameSlot >= 0 ? records[compactAt + 1] : c.dx,
+            destY = frameSlot >= 0 ? records[compactAt + 2] : c.dy;
+          if (!setCandidateBounds(c, destX, destY)) {
             handled[i] = 1;
             handledCount++;
             continue;
@@ -812,8 +952,8 @@ export function createDirectTerrainOverview({
                 ? cells
                 : 0,
             kind = flags & 8 ? -(flags >> 4) - 1 : flags & 4 ? -1 : c.sw,
-            dx = c.dx - left,
-            dy = c.dy - top,
+            dx = destX - left,
+            dy = destY - top,
             clippedPixels =
               (Math.min(pixelWidth, dx + c.sw) - Math.max(0, dx)) *
               (Math.min(pixelHeight, dy + c.sh) - Math.max(0, dy)) *
@@ -831,7 +971,23 @@ export function createDirectTerrainOverview({
           }
           if (c.kind === "wall" && cells > unsafeCount + nativeCount)
             stats.keptCrossOpaqueWallCommands++;
-          const entry = getFrame(c, kind, true);
+          let entry;
+          if (frameSlot >= 0) {
+            entry = cacheSlots[compactSlots[frameSlot] - 1];
+            if (entry && entry.generation === compactGenerations[frameSlot]) {
+              entry.recent = true;
+              stats.hits++;
+              stats.secondPassHits++;
+              stats.compactSecondPassSlotHits++;
+            } else {
+              stats.compactSecondPassReloads++;
+              entry = getFrame(c, kind, true);
+              if (entry) {
+                compactSlots[frameSlot] = entry.slot + 1;
+                compactGenerations[frameSlot] = entry.generation;
+              }
+            }
+          } else entry = getFrame(c, kind, true);
           if (!entry) {
             // A source which becomes unavailable after the validating pass
             // cannot leave stale "handled" flags in the engine. Nothing from
@@ -882,8 +1038,9 @@ export function createDirectTerrainOverview({
               sources.push(entry.additive);
             }
           }
-          append(entry.baseId, c, entry, 0);
-          if (entry.additive) append(entry.additiveId, c, entry, 1);
+          append(entry.baseId, c, entry, 0, destX, destY);
+          if (entry.additive)
+            append(entry.additiveId, c, entry, 1, destX, destY);
           batchCommands++;
           stats.nativeBlitPixels += clippedPixels;
         }
@@ -937,6 +1094,7 @@ export function createDirectTerrainOverview({
         }
         clearBatch();
         detailedLease?.release();
+        stats.compactSlotBytes = 0;
         rendering = false;
       }
     },

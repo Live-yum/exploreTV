@@ -35,7 +35,8 @@ const isCli =
 if (isCli) process.env.DISABLE_SYSTEM_FONTS_LOAD ??= "1";
 
 const HASH = /^[0-9a-f]{64}$/;
-const SOURCE = /^(core|scripts)\/[a-z][a-z0-9-]*\.(mjs|c)$/;
+const SOURCE =
+  /^(?:(core|scripts)\/[a-z][a-z0-9-]*\.(mjs|c)|wasm-core\/(?:src\/(?:lib|overview)\.rs|dist\/(?:exploretv_wld_core\.wasm|build-info\.json)|Cargo\.(?:toml|lock)|rust-toolchain\.toml|\.cargo\/config\.toml|build\.sh|verify-build\.mjs))$/;
 const ASSET = /^[A-Za-z0-9_-]+\.png$/;
 
 function checkAbort(signal) {

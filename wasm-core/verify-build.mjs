@@ -9,6 +9,8 @@ if (WebAssembly.Module.imports(module).length)
 const { exports } = new WebAssembly.Instance(module, {});
 if (exports.abi_version() !== 1 || exports.cell_bytes() !== 32)
   throw new Error("Unexpected ABI");
+if (exports.overview_abi_version() !== 1)
+  throw new Error("Unexpected terrain planning ABI");
 let limited = false;
 try {
   exports.memory.grow(2049);
@@ -23,11 +25,15 @@ const info = {
   bytes: bytes.length,
   abiVersion: 1,
   cellBytes: 32,
+  overviewAbiVersion: 1,
   maxLinearMemoryBytes: 128 * 1024 * 1024,
   target: "wasm32-unknown-unknown",
   rustc: execFileSync("rustc", ["--version"], { encoding: "utf8" }).trim(),
   sourceSha256: createHash("sha256")
     .update(await readFile(new URL("./src/lib.rs", import.meta.url)))
+    .digest("hex"),
+  overviewSourceSha256: createHash("sha256")
+    .update(await readFile(new URL("./src/overview.rs", import.meta.url)))
     .digest("hex"),
   imports: [],
   profile:

@@ -72,10 +72,13 @@ test("prepared marker runs all three pinned baselines and candidate in one seque
     assert.ok(workflow.includes(`test/${name}.test.mjs`));
 });
 
-test("standalone overview workflow retains PR4 coverage and the same main baseline", () => {
+test("standalone overview workflow retains coverage and compares against integrated main", () => {
   const workflow = read("../.github/workflows/export-overview.yml");
-  assert.equal(OVERVIEW_BASELINE_COMMIT, main);
-  assert.ok(workflow.includes(`BASELINE_COMMIT: ${main}`));
+  assert.equal(
+    OVERVIEW_BASELINE_COMMIT,
+    "cbdf5b3c3b9f4952a2075a133f809b9b2d779d12",
+  );
+  assert.ok(workflow.includes(`BASELINE_COMMIT: ${OVERVIEW_BASELINE_COMMIT}`));
   for (const name of [
     "world-validation-memo",
     "renderer-slope-polygons",
