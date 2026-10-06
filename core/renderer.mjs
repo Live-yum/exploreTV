@@ -124,6 +124,14 @@ export const ORDINARY_BLOCKS = Object.freeze([
   151, 367, 368, 383, 396, 397, 402, 403, 404,
 ]);
 const ordinary = new Set(ORDINARY_BLOCKS);
+// Common terrain accounts for most whole-world commands. Reuse its immutable
+// names; command geometry remains private to each scene.
+const ordinaryAssets = [];
+for (const type of ORDINARY_BLOCKS) ordinaryAssets[type] = `Tiles_${type}.png`;
+const wallAssets = Array.from(
+  { length: 1024 },
+  (_, type) => `Wall_${type}.png`,
+);
 export const STORED_FRAME_TILES = Object.freeze([
   4, 10, 11, 14, 15, 18, 19, 21, 27, 172,
 ]);
@@ -142,29 +150,22 @@ function storedHeight(type, y) {
   if (type === 172 && y % 38 === 18) return 18;
   return 16;
 }
+const SLOPE_COORDINATES = Object.freeze({
+  2: Object.freeze([0, 0, 16, 16, 0, 16]),
+  3: Object.freeze([0, 16, 16, 0, 16, 16]),
+  4: Object.freeze([0, 0, 16, 0, 0, 16]),
+  5: Object.freeze([0, 0, 16, 0, 16, 16]),
+});
 function slopePolygon(shape) {
-  return {
-    2: [
-      [0, 0],
-      [16, 16],
-      [0, 16],
-    ],
-    3: [
-      [0, 16],
-      [16, 0],
-      [16, 16],
-    ],
-    4: [
-      [0, 0],
-      [16, 0],
-      [0, 16],
-    ],
-    5: [
-      [0, 0],
-      [16, 0],
-      [16, 16],
-    ],
-  }[shape];
+  const points = SLOPE_COORDINATES[shape];
+  if (!Array.isArray(points)) return points;
+  // Plans expose mutable clips. Allocate only the chosen triangle, keeping
+  // every returned polygon and point private to that command as before.
+  return [
+    [points[0], points[1]],
+    [points[2], points[3]],
+    [points[4], points[5]],
+  ];
 }
 export const MAX_SCENE_COMMANDS = 131072;
 export function planScene(region, options = {}) {
@@ -191,7 +192,8 @@ export function planScene(region, options = {}) {
     region.cells?.length !== w * h
   )
     throw new Error("Invalid or oversized scene region");
-  const commands = [],
+  const cells = region.cells,
+    commands = [],
     assets = new Set(),
     unsupported = new Map(),
     unsupportedCells = [],
@@ -293,20 +295,36 @@ export function planScene(region, options = {}) {
   if (walls)
     for (let x = 0; x < w; x++)
       for (let y = 0; y < h; y++) {
-        const t = cellAt(region, x, y);
+        const i = x * h + y,
+          t = cells[i];
         if (!t?.wall) continue;
         if (!revealInvisible && (t.invisibleWall || t.wall === 318)) {
           support.hiddenWalls++;
           continue;
         }
-        let mask = maskAt(
-          region,
-          x,
-          y,
-          (n) =>
-            n?.wall > 0 &&
-            (revealInvisible || (!n.invisibleWall && n.wall !== 318)),
-        );
+        // Match cellAt's region-edge contract without allocating a predicate
+        // and four iterator tuples for every wall.
+        const north = y > 0 ? cells[i - 1] : null,
+          west = x > 0 ? cells[i - h] : null,
+          east = x + 1 < w ? cells[i + h] : null,
+          south = y + 1 < h ? cells[i + 1] : null;
+        let mask =
+          (north?.wall > 0 &&
+          (revealInvisible || (!north.invisibleWall && north.wall !== 318))
+            ? 1
+            : 0) |
+          (west?.wall > 0 &&
+          (revealInvisible || (!west.invisibleWall && west.wall !== 318))
+            ? 2
+            : 0) |
+          (east?.wall > 0 &&
+          (revealInvisible || (!east.invisibleWall && east.wall !== 318))
+            ? 4
+            : 0) |
+          (south?.wall > 0 &&
+          (revealInvisible || (!south.invisibleWall && south.wall !== 318))
+            ? 8
+            : 0);
         if (mask === 15)
           mask +=
             WALL_CENTER[modulo3(x + (region.rect.x || 0))][
@@ -315,7 +333,10 @@ export function planScene(region, options = {}) {
         const [gx, gy] = WALL_GRID[mask];
         add({
           kind: "wall",
-          asset: "Wall_" + t.wall + ".png",
+          asset:
+            typeof t.wall === "number" && wallAssets[t.wall] !== undefined
+              ? wallAssets[t.wall]
+              : "Wall_" + t.wall + ".png",
           sx: gx * 36,
           sy: gy * 36,
           sw: 32,
@@ -345,7 +366,8 @@ export function planScene(region, options = {}) {
   const tilePassStart = commands.length;
   for (let x = 0; x < w; x++)
     for (let y = 0; y < h; y++) {
-      const t = cellAt(region, x, y);
+      const i = x * h + y,
+        t = cells[i];
       if (!t) continue;
       if (t.paint || t.wallPaint) support.paint++;
       if (t.liquid) support.liquid++;
@@ -366,6 +388,80 @@ export function planScene(region, options = {}) {
       // The numeric check preserves Set.has semantics for malformed/string IDs.
       const planners =
         typeof t.type === "number" ? staticPlannerMasks[t.type] || 0 : 0;
+      // The ordinary branch has no family-specific dependencies. Resolve it
+      // before setting up the rare object/tree/animation paths, while retaining
+      // their precedence if a future family starts handling an ordinary type.
+      const ordinaryAsset =
+        typeof t.type === "number" ? ordinaryAssets[t.type] : undefined;
+      if (
+        !planners &&
+        ordinaryAsset !== undefined &&
+        !(
+          Number.isInteger(t.frameX) &&
+          Number.isInteger(t.frameY) &&
+          t.frameX >= 0 &&
+          t.frameY >= 0
+        )
+      ) {
+        const north = y > 0 ? cells[i - 1] : null,
+          west = x > 0 ? cells[i - h] : null,
+          east = x + 1 < w ? cells[i + h] : null,
+          south = y + 1 < h ? cells[i + 1] : null,
+          type = t.type;
+        const mask =
+          (north?.active &&
+          north.type === type &&
+          (revealInvisible || !north.invisibleBlock)
+            ? 1
+            : 0) |
+          (west?.active &&
+          west.type === type &&
+          (revealInvisible || !west.invisibleBlock)
+            ? 2
+            : 0) |
+          (east?.active &&
+          east.type === type &&
+          (revealInvisible || !east.invisibleBlock)
+            ? 4
+            : 0) |
+          (south?.active &&
+          south.type === type &&
+          (revealInvisible || !south.invisibleBlock)
+            ? 8
+            : 0);
+        const frame = BLOCK_FRAME[mask];
+        const command = {
+          kind: "tile",
+          asset: ordinaryAsset,
+          sx: frame[0],
+          sy: frame[1],
+          sw: 16,
+          sh: 16,
+          dx: x * 16,
+          dy: y * 16,
+          dw: 16,
+          dh: 16,
+          x,
+          y,
+          type,
+          ownerType: type,
+          paintId: paintEnabled ? t.paint || 0 : 0,
+          fidelity: "approximate",
+        };
+        if (shape === 1) {
+          command.sh = 8;
+          command.dh = 8;
+          command.dy += 8;
+          support.shapes++;
+        } else if (shape >= 2) {
+          command.clip = slopePolygon(shape);
+          support.shapes++;
+        }
+        add(command);
+        support.tiles++;
+        support.approximateTiles++;
+        continue;
+      }
       const special =
         planners & PLAN_SPECIAL
           ? planStaticSpecialObject(region, x, y, t, {
@@ -644,11 +740,14 @@ export function planScene(region, options = {}) {
   }
   const ordinaryTileCommands = commands.splice(tilePassStart);
   // Preserve full-scene owner traversal when context bodies enter a cropped ROI.
-  // Stable sorting retains each owner's body/glow/flame command order.
-  const byOwner = (a, b) => a.x - b.x || a.y - b.y;
-  ordinaryTileCommands.sort(byOwner);
-  specialBehind.sort(byOwner);
-  specialAbove.sort(byOwner);
+  // Without appended context owners all three groups already follow the
+  // column-major tile traversal. A stable sort is needed only for the ROI path.
+  if (tiles && region.context) {
+    const byOwner = (a, b) => a.x - b.x || a.y - b.y;
+    ordinaryTileCommands.sort(byOwner);
+    specialBehind.sort(byOwner);
+    specialAbove.sort(byOwner);
+  }
   const tileGroups = [
     specialBehind,
     trunkCommands,
@@ -664,23 +763,29 @@ export function planScene(region, options = {}) {
       typeof registry.hasOrigin !== "function"
     )
       throw new Error("Invalid waterfall registry");
-    const drawLayer = (c) => classifyTileDrawLayer(c.ownerType ?? c.type);
-    for (const group of tileGroups)
-      for (const c of group) if (drawLayer(c) === "non-solid") emit(c);
-    const waterfalls = registry.commandsFor(region.rect);
-    for (const c of waterfalls) add(c);
-    for (const group of tileGroups)
-      for (const c of group)
-        if (drawLayer(c) !== "non-solid") {
-          if (drawLayer(c) === undefined)
+    // Classify each owner once. Compact the private groups in place to retain
+    // their solid pass without a second command array or repeated Set lookups.
+    for (const group of tileGroups) {
+      let retained = 0;
+      for (const c of group) {
+        const layer = classifyTileDrawLayer(c.ownerType ?? c.type);
+        if (layer === "non-solid") emit(c);
+        else {
+          group[retained++] = c;
+          if (layer === undefined)
             contextOmissions.push({
               x: region.rect.x + c.x,
               y: region.rect.y + c.y,
               type: c.ownerType ?? c.type,
               reason: "unknown-waterfall-tile-draw-layer",
             });
-          emit(c);
         }
+      }
+      group.length = retained;
+    }
+    const waterfalls = registry.commandsFor(region.rect);
+    for (const c of waterfalls) add(c);
+    for (const group of tileGroups) for (const c of group) emit(c);
     support.waterfalls = {
       commands: waterfalls.length,
       model: registry.model,

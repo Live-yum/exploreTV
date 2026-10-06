@@ -213,15 +213,55 @@ test("RLE row index handles records crossing multiple checkpoint boundaries", ()
       ],
     }).bytes,
   );
-  const index = buildRowIndex(world);
-  for (const rect of [
-    { x: 0, y: 0, width: 3, height: 1 },
-    { x: 0, y: 15, width: 3, height: 20 },
-    { x: 1, y: 31, width: 2, height: 36 },
+  for (const stride of [16, 32, 64]) {
+    const index = buildRowIndex(world, stride);
+    for (const rect of [
+      { x: 0, y: 0, width: 3, height: 1 },
+      { x: 0, y: 15, width: 3, height: 20 },
+      { x: 1, y: 31, width: 2, height: 36 },
+    ])
+      assert.deepEqual(
+        readIndexedRegion(world, index, rect).cells,
+        extractRegion(world, rect).cells,
+      );
+  }
+});
+
+test("indexed shimmer bounds include RLE endpoints and the full source-search halo", () => {
+  const world = openWorld(
+    fixtureWorld({
+      width: 5,
+      height: 50,
+      columns: Array.from({ length: 5 }, (_, x) =>
+        x === 2
+          ? [
+              record({ type: null, repeats: 9 }),
+              record({ type: null, liquid: 255, liquidKind: 4, repeats: 4 }),
+              record({ type: null, repeats: 34 }),
+            ]
+          : [record({ type: null, repeats: 49 })],
+      ),
+    }).bytes,
+  );
+  const index = buildRowIndex(world, 32);
+  assert.deepEqual(index.shimmerBounds, {
+    minX: 2,
+    maxX: 2,
+    minY: 10,
+    maxY: 14,
+  });
+  for (const [x, y, possible] of [
+    [1, 10, true],
+    [3, 25, true],
+    [3, 26, false],
+    [4, 10, false],
+    [2, 9, false],
   ])
-    assert.deepEqual(
-      readIndexedRegion(world, index, rect).cells,
-      extractRegion(world, rect).cells,
+    assert.equal(
+      readIndexedRegion(world, index, { x, y, width: 1, height: 1 })
+        .indexedShimmerPossible,
+      possible,
+      `${x},${y}`,
     );
 });
 

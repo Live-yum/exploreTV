@@ -15,6 +15,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { PNG } from "pngjs";
+import { createCanvas } from "@napi-rs/canvas";
 import { fixtureWorld, record } from "./fixture.mjs";
 import { parseExportCli, exportWorld } from "../scripts/export-world.mjs";
 import {
@@ -22,6 +23,7 @@ import {
   exportOverview,
 } from "../scripts/export-overview.mjs";
 import { boxDownsampleRgba } from "../scripts/downsample-rgba.mjs";
+import { nativeBlitterStatus } from "../scripts/native-blitter.mjs";
 
 function writeTexture(assetDir, name, width, height, pixel) {
   const png = new PNG({ width, height });
@@ -375,15 +377,34 @@ test("overview CLI accepts bounded defaults and supported flags but refuses inva
   const defaults = parseOverviewCli(["w", "a", "out"]);
   assert.equal(defaults.pixelsPerTile, 1);
   assert.equal(defaults.bandTiles, 48);
-  assert.equal(defaults.chunkTiles, 120);
+  assert.equal(defaults.chunkTiles, 128);
   assert.equal(defaults.compressionLevel, 6);
   assert.equal(defaults.inputEncoding, "tconvert-game-raw");
-  for (const scale of [1, 2, 4, 8])
-    assert.equal(
-      parseOverviewCli(["w", "a", "out", "--pixels-per-tile", String(scale)])
-        .pixelsPerTile,
-      scale,
-    );
+  for (const scale of [1, 2, 4, 8]) {
+    const scaled = parseOverviewCli([
+      "w",
+      "a",
+      "out",
+      "--pixels-per-tile",
+      String(scale),
+    ]);
+    assert.equal(scaled.pixelsPerTile, scale);
+    assert.equal(scaled.bandTiles, 48);
+    assert.equal(scaled.chunkTiles, scale === 1 ? 128 : 120);
+    const overridden = parseOverviewCli([
+      "w",
+      "a",
+      "out",
+      "--pixels-per-tile",
+      String(scale),
+      "--band-tiles",
+      "17",
+      "--chunk-tiles",
+      "51",
+    ]);
+    assert.equal(overridden.bandTiles, 17);
+    assert.equal(overridden.chunkTiles, 51);
+  }
   const configured = parseOverviewCli([
     "--pixels-per-tile",
     "4",
@@ -641,6 +662,15 @@ test("overview verifier rejects forged world scope and every recorded source or 
       /Source provenance: core\/paint\.mjs/,
     ],
     [
+      "native compositor source hash",
+      (value) => {
+        value.sourceHashes["scripts/native-blitter.c"] = fakeHash(
+          value.sourceHashes["scripts/native-blitter.c"],
+        );
+      },
+      /Source provenance: scripts\/native-blitter\.c/,
+    ],
+    [
       "rendered texture hash",
       (value) => {
         value.assetHashes[usedAsset] = fakeHash(value.assetHashes[usedAsset]);
@@ -704,5 +734,171 @@ test("blank overview cores skip native readback at every supported scale", async
         Array.from(image.data.subarray(i, i + 4)),
         [0, 0, 0, 255],
       );
+  }
+});
+
+test(
+  "overview major GC follows actual native or Canvas chunks and yields after collection",
+  { skip: !nativeBlitterStatus.available && nativeBlitterStatus.reason },
+  async (t) => {
+    const fixture = setup(t, {
+      width: 18,
+      height: 4,
+      cell: () => ({ type: 1 }),
+    });
+    const previousGc = Object.getOwnPropertyDescriptor(globalThis, "gc"),
+      calls = [],
+      events = [];
+    let pendingFinalizer = false;
+    Object.defineProperty(globalThis, "gc", {
+      configurable: true,
+      writable: true,
+      value(options) {
+        assert.equal(
+          pendingFinalizer,
+          false,
+          "the preceding collection must have reached its finalizer macrotask",
+        );
+        const id = events.length;
+        calls.push(options?.type ?? "band-or-setup");
+        events.push(["collect", id]);
+        pendingFinalizer = true;
+        setImmediate(() => {
+          pendingFinalizer = false;
+          events.push(["finalize", id]);
+        });
+      },
+    });
+    t.after(() => {
+      if (previousGc) Object.defineProperty(globalThis, "gc", previousGc);
+      else delete globalThis.gc;
+    });
+    for (const [scale, inputEncoding] of [
+      [1, "tconvert-game-raw"],
+      [2, "tconvert-game-raw"],
+      [4, "tconvert-game-raw"],
+      [8, "tconvert-game-raw"],
+      [1, "standard-straight"],
+    ]) {
+      calls.length = events.length = 0;
+      const config = overviewConfig(
+        fixture,
+        `gc-${scale}-${inputEncoding}.png`,
+        [
+          "--pixels-per-tile",
+          String(scale),
+          "--input-encoding",
+          inputEncoding,
+          "--chunk-tiles",
+          "2",
+          "--band-tiles",
+          "2",
+        ],
+      );
+      const report = await exportOverview(config),
+        native = scale === 1 && inputEncoding === "tconvert-game-raw",
+        perBand = native
+          ? [
+              "minor",
+              "minor",
+              "minor",
+              "major",
+              "minor",
+              "minor",
+              "minor",
+              "major",
+              "minor",
+            ]
+          : [
+              "minor",
+              "major",
+              "minor",
+              "major",
+              "minor",
+              "major",
+              "minor",
+              "major",
+              "minor",
+            ],
+        chunkCalls = calls.filter((type) => type !== "band-or-setup");
+      assert.deepEqual(chunkCalls, [...perBand, ...perBand]);
+      assert.equal(report.chunks, 18);
+      assert.equal(report.majorGcInterval, native ? 4 : 2);
+      assert.equal(report.overviewGc.nativeOverviewChunks, native ? 18 : 0);
+      assert.equal(report.overviewGc.canvasChunks, native ? 0 : 18);
+      assert.equal(report.overviewGc.chunkMajorCollections, native ? 4 : 8);
+      assert.equal(report.overviewGc.chunkMinorCollections, native ? 14 : 10);
+      assert.equal(report.overviewGc.bandMajorCollections, 2);
+      // Native availability alone used to select the larger interval for 2/4/8.
+      if (inputEncoding === "tconvert-game-raw")
+        assert.equal(report.nativeOverview.available, true);
+      assert.equal(pendingFinalizer, false);
+      assert.equal(events.length, calls.length * 2);
+      for (let i = 0; i < events.length; i += 2) {
+        assert.equal(events[i][0], "collect");
+        assert.deepEqual(events[i + 1], ["finalize", events[i][1]]);
+      }
+    }
+  },
+);
+
+test("overview readback and reduction timing includes full Canvas readback for every fallback", async (t) => {
+  const fixture = setup(t, {
+    width: 12,
+    height: 2,
+    cell: () => ({ type: 1 }),
+  });
+  // A translucent frame cannot use the final-opaque-mean shortcut, so the 1px
+  // straight-alpha case also exercises a real full-core Canvas readback.
+  writeTexture(fixture.assetDir, "Tiles_1.png", 288, 270, (x, y) => [
+    x % 128,
+    y % 128,
+    (x + y) % 128,
+    128,
+  ]);
+  const probe = createCanvas(1, 1),
+    prototype = Object.getPrototypeOf(probe.getContext("2d")),
+    readImageData = prototype.getImageData;
+  let clock = 0,
+    coreReadbacks = 0;
+  t.mock.method(performance, "now", () => clock);
+  t.mock.method(prototype, "getImageData", function (...args) {
+    const result = readImageData.apply(this, args);
+    // Prepared frames are at most 64 pixels wide. Only the 96x32 destination
+    // core contributes this controlled elapsed time; no busy-wait is needed.
+    if (this.canvas.width === 96 && this.canvas.height === 32) {
+      clock += 125;
+      coreReadbacks++;
+    }
+    return result;
+  });
+  for (const [scale, inputEncoding] of [
+    [2, "tconvert-game-raw"],
+    [4, "tconvert-game-raw"],
+    [8, "tconvert-game-raw"],
+    [1, "standard-straight"],
+  ]) {
+    clock = coreReadbacks = 0;
+    const report = await exportOverview(
+      overviewConfig(fixture, `readback-${scale}-${inputEncoding}.png`, [
+        "--pixels-per-tile",
+        String(scale),
+        "--input-encoding",
+        inputEncoding,
+        "--chunk-tiles",
+        "6",
+        "--band-tiles",
+        "2",
+      ]),
+    );
+    assert.equal(coreReadbacks, 2);
+    assert.equal(report.readbackAndReductionSeconds, 0.25);
+    assert.equal(report.downsampleSeconds, report.readbackAndReductionSeconds);
+    assert.equal(report.renderSeconds, 0.25);
+    assert.match(report.readbackAndReductionMeaning, /compatibility alias/);
+    assert.match(
+      report.readbackAndReductionMeaning,
+      /older reports.*not phase-comparable/,
+    );
   }
 });

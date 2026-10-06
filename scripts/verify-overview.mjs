@@ -80,7 +80,10 @@ for (const name of [
 ])
   assert.ok(report.sourceHashes[name], `Required source provenance: ${name}`);
 for (const [name, hash] of Object.entries(report.sourceHashes)) {
-  assert.match(name, /^(core|scripts)\/[a-z][a-z0-9-]*\.mjs$/);
+  assert.match(
+    name,
+    /^(?:(core|scripts)\/[a-z][a-z0-9-]*\.mjs|scripts\/native-(reducer|blitter)\.c)$/,
+  );
   assert.equal(
     createHash("sha256")
       .update(readFileSync(new URL("../" + name, import.meta.url)))
@@ -89,6 +92,32 @@ for (const [name, hash] of Object.entries(report.sourceHashes)) {
     `Source provenance: ${name}`,
   );
 }
+for (const [native, source] of [
+  [report.nativeReducer, "scripts/native-reducer.c"],
+  [report.nativeOverview, "scripts/native-blitter.c"],
+]) {
+  if (!native?.available) continue;
+  assert.match(
+    native.binarySha256,
+    /^[0-9a-f]{64}$/,
+    "Executed native binary provenance",
+  );
+  assert.equal(
+    native.sourceSha256,
+    report.sourceHashes[source],
+    "Executed native C source provenance",
+  );
+  assert.equal(native.build?.napiVersion, 8, "Prepared Node-API version");
+  assert.ok(
+    Array.isArray(native.build.flags) && native.build.flags.length > 0,
+    "Prepared compiler flags",
+  );
+}
+if (report.nativeOverview?.available)
+  assert.ok(
+    ["sse2", "scalar"].includes(report.nativeOverview.kernel),
+    "Executed compositor kernel",
+  );
 for (const [name, hash] of Object.entries(report.assetHashes)) {
   assert.match(name, /^[A-Za-z0-9_-]+\.png$/);
   assert.ok(

@@ -1,4 +1,8 @@
 import { getHeapStatistics } from "node:v8";
+import {
+  sampleProcessMemory,
+  getProcessMemorySamplingStatus,
+} from "./process-memory.mjs";
 import { applyOpaqueOverview } from "./overview-fast-path.mjs";
 import { createWorldWaterfallRegistry } from "./world-render-engine.mjs";
 import {
@@ -26,7 +30,12 @@ import {
   HALO_TILES,
 } from "./world-render-engine.mjs";
 import { createPngWriter } from "./png-stream.mjs";
-import { boxDownsampleRgba } from "./downsample-rgba.mjs";
+import {
+  boxDownsampleRgbaNative,
+  nativeReducerStatus,
+  trimNativeMemory,
+} from "./native-reducer.mjs";
+import { mergeCanvasOverviewRows } from "./reduce-overview-canvas.mjs";
 
 const USAGE = `Usage: node --expose-gc scripts/export-world.mjs <world.wld> <png-directory> <output.png> [options]
 
@@ -212,7 +221,7 @@ export async function exportWorld(
     rowBytes = pixelWidth * 4;
   setupStarted = performance.now();
   const band = Buffer.allocUnsafe(rowBytes * bandRows),
-    index = buildRowIndex(world);
+    index = buildRowIndex(world, overview ? 32 : 16);
   const rowIndexSeconds = (performance.now() - setupStarted) / 1000;
   const waterfallRegistry = createWorldWaterfallRegistry(world, {
     compact: overview,
@@ -233,6 +242,7 @@ export async function exportWorld(
   checkOverviewBudget();
   const renderer = createWorldRenderer({
     lowMemory: overview,
+    nativeOverview: overview,
     waterfallRegistry,
     assetDir: config.assetDir,
     inputEncoding: config.inputEncoding,
@@ -244,11 +254,21 @@ export async function exportWorld(
     "scripts/export-world.mjs",
     "scripts/export-overview.mjs",
     "scripts/downsample-rgba.mjs",
+    "scripts/reduce-overview-canvas.mjs",
     "scripts/overview-fast-path.mjs",
+    "scripts/raw-overview-frame.mjs",
+    "scripts/slope-overview-frame.mjs",
     "scripts/compact-waterfall-registry.mjs",
     "scripts/png-stream.mjs",
     "scripts/png-rgba-node.mjs",
     "scripts/raw-texture-cache.mjs",
+    "scripts/process-memory.mjs",
+    "scripts/native-reducer.mjs",
+    "scripts/native-reducer.c",
+    "scripts/native-blitter.mjs",
+    "scripts/native-blitter.c",
+    "scripts/software-overview.mjs",
+    "scripts/scene-frame-interner.mjs",
     "scripts/world-render-engine.mjs",
     "core/world.mjs",
     "core/utf8.mjs",
@@ -294,11 +314,42 @@ export async function exportWorld(
     peakRssBytes = 0,
     renderSeconds = 0,
     compressionSeconds = 0,
-    downsampleSeconds = 0,
+    readbackAndReductionSeconds = 0,
     skippedReadbackChunks = 0,
     regionDecodeSeconds = 0,
     garbageCollectionSeconds = 0,
-    nativeFinalizationSeconds = 0;
+    nativeFinalizationSeconds = 0,
+    chunksSinceMajorGc = 0,
+    canvasPendingMajorGc = false;
+  const overviewGc = {
+    nativeOverviewInterval: 4,
+    canvasInterval: 2,
+    nativeOverviewChunks: 0,
+    canvasChunks: 0,
+    chunkMajorCollections: 0,
+    chunkMinorCollections: 0,
+    bandMajorCollections: 0,
+  };
+  const nativeMemoryTrimming = {
+    ...nativeReducerStatus.nativeMemoryTrim,
+    calls: 0,
+    releasedCalls: 0,
+    seconds: 0,
+  };
+  const yieldForNativeFinalization = async (major = false) => {
+    // Keep this macrotask yield AFTER collection and BEFORE allocator trimming
+    // or budget checks, so N-API finalizers can release dead native surfaces.
+    const finalizeStarted = performance.now();
+    await new Promise(setImmediate);
+    nativeFinalizationSeconds += (performance.now() - finalizeStarted) / 1000;
+    if (major && nativeMemoryTrimming.available) {
+      const trimStarted = performance.now();
+      const result = trimNativeMemory();
+      nativeMemoryTrimming.calls++;
+      if (result.released) nativeMemoryTrimming.releasedCalls++;
+      nativeMemoryTrimming.seconds += (performance.now() - trimStarted) / 1000;
+    }
+  };
   const memorySamples = [];
   const tiles = [];
   try {
@@ -329,9 +380,41 @@ export async function exportWorld(
         coreSurface: overview,
       });
       let rgba;
-      let reduceStarted = performance.now();
+      const readbackAndReductionStarted = performance.now();
       let data;
-      if (overview && drawn.rasterizedCommands === 0) {
+      if (drawn.softwareOverview) {
+        const software = drawn.softwareOverview;
+        data = boxDownsampleRgbaNative(
+          software.pixels,
+          width * 16,
+          height * 16,
+          16,
+          drawn.opaqueOverview
+            ? {
+                safe: drawn.opaqueOverview.safe,
+                rgba: drawn.opaqueOverview.rgba,
+                widthTiles: drawn.opaqueOverview.widthTiles,
+                offsetX: core.x - region.rect.x,
+                offsetY: core.y - region.rect.y,
+              }
+            : null,
+        );
+        if (software.canvasCommands) {
+          // Native cells already contain the exact area mean. Only cells touched
+          // by a complex draw read the independently composited Canvas pixels.
+          // Each readback request is row-sized; GC/finalization controls when
+          // the resulting native allocations are actually released.
+          mergeCanvasOverviewRows(
+            canvas,
+            data,
+            software.unsafe,
+            width,
+            height,
+            drawn.readbackX,
+            drawn.readbackY,
+          );
+        } else skippedReadbackChunks++;
+      } else if (overview && drawn.rasterizedCommands === 0) {
         // No ordinary draw reached the core. Its compositor background is
         // opaque black; exact opaque-frame means are applied below as usual.
         // Avoid allocating and reading a full-detail native ImageData for it.
@@ -352,19 +435,26 @@ export async function exportWorld(
           rgba.data.byteOffset,
           rgba.data.byteLength,
         );
-        reduceStarted = performance.now();
         data = overview
-          ? boxDownsampleRgba(
+          ? boxDownsampleRgbaNative(
               fullData,
               width * 16,
               height * 16,
               16 / pixelsPerTile,
+              drawn.opaqueOverview
+                ? {
+                    ...drawn.opaqueOverview,
+                    offsetX: core.x - region.rect.x,
+                    offsetY: core.y - region.rect.y,
+                  }
+                : null,
             )
           : fullData;
       }
       if (drawn.opaqueOverview)
         applyOpaqueOverview(data, core, region, drawn.opaqueOverview);
-      downsampleSeconds += (performance.now() - reduceStarted) / 1000;
+      readbackAndReductionSeconds +=
+        (performance.now() - readbackAndReductionStarted) / 1000;
       const chunkRowBytes = width * pixelsPerTile * 4;
       for (let py = 0; py < currentRows; py++)
         data.copy(
@@ -391,7 +481,12 @@ export async function exportWorld(
           sha256: createHash("sha256").update(png).digest("hex"),
         });
       }
-      return (performance.now() - renderStarted) / 1000;
+      // Return only primitives: plans, frames and readbacks must not survive in
+      // the outer loop while it collects and waits for native finalization.
+      return {
+        seconds: (performance.now() - renderStarted) / 1000,
+        softwareOverview: pixelsPerTile === 1 && !!drawn.softwareOverview,
+      };
     };
     for (let y = rect.y; y < rect.y + rect.height; y += config.bandTiles) {
       throwIfAborted(signal);
@@ -401,19 +496,36 @@ export async function exportWorld(
       for (let x = rect.x; x < rect.x + rect.width; x += config.chunkTiles) {
         throwIfAborted(signal);
         const width = Math.min(config.chunkTiles, rect.x + rect.width - x);
-        renderSeconds += await renderChunk(x, y, width, height, currentRows);
+        const rendered = await renderChunk(x, y, width, height, currentRows);
+        renderSeconds += rendered.seconds;
         bandCells += width * height;
         chunks++;
         if (overview) {
-          // New chunk-local ImageData wrappers can be collected in the nursery.
-          // Alternate with a full collection for retired persistent frames.
+          if (rendered.softwareOverview) overviewGc.nativeOverviewChunks++;
+          else overviewGc.canvasChunks++;
+          chunksSinceMajorGc++;
+          // A full-Canvas chunk needs the original two-chunk collection bound.
+          // Keep that bound until the next major GC even if a following chunk
+          // returns to the native path; module availability alone proves none
+          // of these allocation lifetimes.
+          canvasPendingMajorGc ||= !rendered.softwareOverview;
+          const majorGcInterval = canvasPendingMajorGc
+              ? overviewGc.canvasInterval
+              : overviewGc.nativeOverviewInterval,
+            major = chunksSinceMajorGc >= majorGcInterval;
           const gcStarted = performance.now();
-          if (global.gc) global.gc({ type: chunks % 2 ? "minor" : "major" });
+          if (global.gc) {
+            global.gc({ type: major ? "major" : "minor" });
+            if (major) {
+              overviewGc.chunkMajorCollections++;
+              chunksSinceMajorGc = 0;
+              canvasPendingMajorGc = false;
+            } else overviewGc.chunkMinorCollections++;
+          }
           garbageCollectionSeconds += (performance.now() - gcStarted) / 1000;
-          const finalizeStarted = performance.now();
-          await new Promise(setImmediate);
-          nativeFinalizationSeconds +=
-            (performance.now() - finalizeStarted) / 1000;
+          await yieldForNativeFinalization(
+            major && typeof global.gc === "function",
+          );
           checkOverviewBudget();
         }
       }
@@ -432,7 +544,7 @@ export async function exportWorld(
       checkOverviewBudget();
       processedCells += bandCells;
       writtenRows += currentRows;
-      const memory = process.memoryUsage();
+      const memory = sampleProcessMemory();
       memorySamples.push({
         writtenRows,
         ...memory,
@@ -447,7 +559,9 @@ export async function exportWorld(
         totalRows: pixelHeight,
         chunks,
         elapsedSeconds: +((performance.now() - started) / 1000).toFixed(2),
-        rssMiB: Math.round(process.memoryUsage().rss / 1048576),
+        rssMiB: Math.round(memory.rss / 1048576),
+        rssCurrentAvailable: memory.rssCurrentAvailable,
+        rssSource: memory.rssSource,
       };
       writeFileSync(
         `${config.outputPath}.progress.json`,
@@ -456,8 +570,17 @@ export async function exportWorld(
       await onProgress(progress);
       checkOverviewBudget();
       const gcStarted = performance.now();
-      if (global.gc) global.gc();
+      if (global.gc) {
+        global.gc();
+        if (overview) {
+          overviewGc.bandMajorCollections++;
+          chunksSinceMajorGc = 0;
+          canvasPendingMajorGc = false;
+        }
+      }
       garbageCollectionSeconds += (performance.now() - gcStarted) / 1000;
+      if (overview)
+        await yieldForNativeFinalization(typeof global.gc === "function");
     }
     throwIfAborted(signal);
     assert.equal(processedCells, rect.width * rect.height);
@@ -542,17 +665,40 @@ export async function exportWorld(
       rowIndexBytes: index.bytes,
       rawRgbaBytes: pixelWidth * pixelHeight * 4,
       fullResolutionRgbaBytes: rect.width * rect.height * 16 * 16 * 4,
-      peakSampledRssBytes: Math.max(peakRssBytes, process.memoryUsage().rss),
+      peakSampledRssBytes: Math.max(peakRssBytes, sampleProcessMemory().rss),
+      memorySampling: getProcessMemorySamplingStatus(),
+      nativeReducer: nativeReducerStatus,
       osPeakRssBytes: process.resourceUsage().maxRSS * 1024,
       renderSeconds: +renderSeconds.toFixed(2),
       timingMeaning:
-        "Runtime is exporter wall time; render includes prepare/draw/reduction. Phase times exclude pauses for native finalization.",
+        "Runtime is exporter wall time; render includes prepare/draw/readback/reduction. Phase times exclude pauses for native finalization.",
       compressionSeconds: +compressionSeconds.toFixed(2),
-      downsampleSeconds: +downsampleSeconds.toFixed(2),
+      readbackAndReductionSeconds: +readbackAndReductionSeconds.toFixed(2),
+      downsampleSeconds: +readbackAndReductionSeconds.toFixed(2),
+      readbackAndReductionMeaning:
+        "Includes all Canvas readback, reduction, blank-output initialization and opaque-mean merging, for every backend. downsampleSeconds is a compatibility alias; older reports excluded full-Canvas readback and are not phase-comparable.",
       skippedReadbackChunks,
       regionDecodeSeconds: +regionDecodeSeconds.toFixed(3),
       garbageCollectionSeconds: +garbageCollectionSeconds.toFixed(3),
+      majorGcInterval: !overview
+        ? null
+        : overviewGc.canvasChunks === 0
+          ? overviewGc.nativeOverviewInterval
+          : overviewGc.nativeOverviewChunks === 0
+            ? overviewGc.canvasInterval
+            : null,
+      overviewGc: overview
+        ? {
+            ...overviewGc,
+            meaning:
+              "When GC is available, at most 4 chunks between major collections for actual 1px software-overview cores; any Canvas fallback lowers the pending interval to 2 until collection. A major collection also follows each output band. Collection counts include only GC calls actually made.",
+          }
+        : null,
       nativeFinalizationSeconds: +nativeFinalizationSeconds.toFixed(3),
+      nativeMemoryTrimming: {
+        ...nativeMemoryTrimming,
+        seconds: +nativeMemoryTrimming.seconds.toFixed(3),
+      },
       memorySamples,
       runtimeSeconds: +((performance.now() - started) / 1000).toFixed(2),
       inputEncoding: config.inputEncoding,
@@ -580,6 +726,21 @@ export async function exportWorld(
         logicalCpus: cpus().length,
         availableParallelism: availableParallelism(),
         rendererWorkers: 1,
+        nodeArguments: [...process.execArgv],
+        allocator: {
+          requestedArenaMax: process.env.MALLOC_ARENA_MAX ?? null,
+          requestedMmapThreshold: process.env.MALLOC_MMAP_THRESHOLD_ ?? null,
+          glibcArenaMaxTunable:
+            process.env.GLIBC_TUNABLES?.split(":")
+              .find((value) => value.startsWith("glibc.malloc.arena_max="))
+              ?.slice("glibc.malloc.arena_max=".length) ?? null,
+          glibcMmapThresholdTunable:
+            process.env.GLIBC_TUNABLES?.split(":")
+              .find((value) => value.startsWith("glibc.malloc.mmap_threshold="))
+              ?.slice("glibc.malloc.mmap_threshold=".length) ?? null,
+          scope: "startup environment; only applicable to the glibc allocator",
+          effectiveArenaCount: null,
+        },
         processCpuSeconds:
           (process.cpuUsage(cpuStarted).user +
             process.cpuUsage(cpuStarted).system) /
@@ -590,6 +751,11 @@ export async function exportWorld(
       storedFrameTileIds: [...STORED_FRAME_TILES],
       ...stats,
       frameCache: stats.frameCache ? { ...stats.frameCache } : null,
+      frameMetadataCache: stats.frameMetadataCache
+        ? { ...stats.frameMetadataCache }
+        : null,
+      frameKeyInterner: { ...stats.frameKeyInterner },
+      nativeOverview: stats.nativeOverview ? { ...stats.nativeOverview } : null,
       rawTextureCache: stats.rawTextureCache
         ? structuredClone(stats.rawTextureCache)
         : null,

@@ -1,4 +1,182 @@
 import { prepareSceneFrames, sceneFrameKey } from "../core/scene-frames.mjs";
+import { textureSource } from "../core/assets.mjs";
+import { prepareRawOverviewFrame } from "./raw-overview-frame.mjs";
+
+export const OVERVIEW_METADATA_LIMITS = Object.freeze({
+  entries: 8192,
+  bytes: 4 * 1024 * 1024,
+});
+
+// These failures depend only on the immutable source/command represented by
+// the cache key. Transient decoder/allocation failures and preparation budgets
+// must be retried; retaining them would change later omission accounting.
+const deterministicFailures = new Set([
+  "invalid-frame-bounds",
+  "source-crop-outside-texture",
+  "corner-input-encoding-mismatch",
+  "invalid-corner-frame-bounds",
+  "unsupported-corner-interpolation",
+  "invalid-corner-vertex-domain",
+  "invalid-corner-vertex-colors",
+  "unknown-paint-id",
+  "unknown-tile-type",
+  "tree-paint-style",
+]);
+
+/**
+ * Bounded reusable metadata, independent of the much larger native frame LRU.
+ * Entries contain only a validation result and (when requested) four mean bytes;
+ * they never retain a canvas, source atlas or decoded PNG. The full key includes
+ * source registration, dimensions, canvas factory and input encoding, matching
+ * prepared-frame invalidation. A view interns lookups once per unique frame.
+ */
+export function createOverviewFrameMetadataCache({
+  maxEntries = OVERVIEW_METADATA_LIMITS.entries,
+  maxBytes = OVERVIEW_METADATA_LIMITS.bytes,
+} = {}) {
+  if (
+    !Number.isSafeInteger(maxEntries) ||
+    maxEntries < 1 ||
+    maxEntries > OVERVIEW_METADATA_LIMITS.entries ||
+    !Number.isSafeInteger(maxBytes) ||
+    maxBytes < 1 ||
+    maxBytes > OVERVIEW_METADATA_LIMITS.bytes
+  )
+    throw new Error("Invalid overview frame metadata budget");
+  const entries = new Map(),
+    identities = new WeakMap();
+  let nextIdentity = 1,
+    disposed = false;
+  const stats = {
+    entries: 0,
+    estimatedBytes: 0,
+    peakEstimatedBytes: 0,
+    hits: 0,
+    misses: 0,
+    evictions: 0,
+    bypasses: 0,
+  };
+  const identity = (object) => {
+    if (!object) return 0;
+    let id = identities.get(object);
+    if (!id) {
+      id = nextIdentity++;
+      identities.set(object, id);
+    }
+    return id;
+  };
+  const assertActive = () => {
+    if (disposed) throw new Error("Overview frame metadata cache is disposed");
+  };
+  const remove = (key, entry) => {
+    entries.delete(key);
+    stats.entries--;
+    stats.estimatedBytes -= entry.bytes;
+  };
+  return {
+    stats,
+    view(assets, createCanvas, inputEncoding) {
+      assertActive();
+      const namespaces = new Map(),
+        local = new Map(),
+        factory = identity(createCanvas);
+      const keyFor = (c, key) => {
+        let prefix = namespaces.get(c.asset);
+        if (prefix === undefined) {
+          const source = assets.get(c.asset);
+          if (!source) return null;
+          prefix =
+            [
+              identity(source),
+              identity(textureSource(source)),
+              factory,
+              source.naturalWidth ?? source.width,
+              source.naturalHeight ?? source.height,
+              inputEncoding,
+            ].join(":") + ":";
+          namespaces.set(c.asset, prefix);
+        }
+        return prefix + key;
+      };
+      return {
+        get(c, key) {
+          assertActive();
+          if (local.has(key)) return local.get(key);
+          const fullKey = keyFor(c, key),
+            entry = fullKey === null ? null : entries.get(fullKey);
+          if (entry) {
+            stats.hits++;
+            entries.delete(fullKey);
+            entries.set(fullKey, entry);
+          } else stats.misses++;
+          const value = entry?.value;
+          local.set(key, value);
+          return value;
+        },
+        remember(c, key, frame, { mean = false, meanValue = undefined } = {}) {
+          assertActive();
+          const previous = local.get(key),
+            value = {
+              unsupported: frame?.unsupported ?? null,
+              mean:
+                meanValue !== undefined
+                  ? meanValue
+                  : mean
+                    ? frameMean(frame)
+                    : previous?.mean,
+            };
+          if (
+            value.unsupported &&
+            !deterministicFailures.has(value.unsupported)
+          ) {
+            // The ordinary compositor may retry the same frame in a later
+            // preparation, even within this scene. Do not make a transient
+            // failure sticky in either cache tier.
+            local.delete(key);
+            return value;
+          }
+          local.set(key, value);
+          const fullKey = keyFor(c, key);
+          if (fullKey === null) return value;
+          // This is a conservative retained-payload estimate, not a claim about
+          // a particular JS engine's object overhead. Count and byte caps both
+          // apply, including arbitrarily long corner-color/domain keys.
+          const bytes = fullKey.length * 2 + 192;
+          const old = entries.get(fullKey);
+          if (old) remove(fullKey, old);
+          if (bytes > maxBytes) {
+            stats.bypasses++;
+            return value;
+          }
+          for (const [oldKey, entry] of entries) {
+            if (
+              entries.size < maxEntries &&
+              stats.estimatedBytes + bytes <= maxBytes
+            )
+              break;
+            remove(oldKey, entry);
+            stats.evictions++;
+          }
+          entries.set(fullKey, { value, bytes });
+          stats.entries++;
+          stats.estimatedBytes += bytes;
+          stats.peakEstimatedBytes = Math.max(
+            stats.peakEstimatedBytes,
+            stats.estimatedBytes,
+          );
+          return value;
+        },
+      };
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      entries.clear();
+      stats.entries = 0;
+      stats.estimatedBytes = 0;
+    },
+  };
+}
 
 // Metadata follows a prepared frame's lifetime, including cache eviction. It
 // never retains a frame or its native canvas after the owning cache releases it.
@@ -51,7 +229,12 @@ export function prepareOpaqueOverview(
   plan,
   assets,
   createCanvas,
-  { frameCache = null, inputEncoding = "tconvert-game-raw", keyCache = null } = {},
+  {
+    frameCache = null,
+    inputEncoding = "tconvert-game-raw",
+    keyCache = null,
+    metadata = null,
+  } = {},
 ) {
   const widthTiles = plan.width / 16,
     heightTiles = plan.height / 16;
@@ -83,7 +266,10 @@ export function prepareOpaqueOverview(
   if (
     plan.commands.some(
       (c) =>
-        ![c.dx, c.dy, c.dw, c.dh].every(Number.isFinite) ||
+        !Number.isFinite(c.dx) ||
+        !Number.isFinite(c.dy) ||
+        !Number.isFinite(c.dw) ||
+        !Number.isFinite(c.dh) ||
         c.dw <= 0 ||
         c.dh <= 0,
     )
@@ -97,7 +283,13 @@ export function prepareOpaqueOverview(
     // Fractional and clipped draws are expanded conservatively by a pixel to
     // avoid making any assumption about rasterizer edge coverage.
     const pad =
-      c.clip || ![c.dx, c.dy, c.dw, c.dh].every(Number.isInteger) ? 1 : 0;
+      c.clip ||
+      !Number.isInteger(c.dx) ||
+      !Number.isInteger(c.dy) ||
+      !Number.isInteger(c.dw) ||
+      !Number.isInteger(c.dh)
+        ? 1
+        : 0;
     const x0 = Math.max(0, Math.floor((c.dx - pad) / 16)),
       y0 = Math.max(0, Math.floor((c.dy - pad) / 16)),
       x1 = Math.min(widthTiles, Math.ceil((c.dx + c.dw + pad) / 16)),
@@ -130,17 +322,46 @@ export function prepareOpaqueOverview(
     const key = keyCache?.get(c) ?? sceneFrameKey(c);
     let group = groups.get(key);
     if (!group) {
-      group = { command: c, indices: [] };
+      group = { command: c, key, indices: [] };
       groups.set(key, group);
     }
     group.indices.push(i);
   }
   const unique = [...groups.values()];
   result.uniqueCandidateFrames = unique.length;
+  const applyMean = (group, mean) => {
+    if (!mean) return;
+    for (const i of group.indices) {
+      safe[i] = 1;
+      rgba.set(mean, i * 4);
+      result.eligibleTiles++;
+    }
+  };
+  const unprepared = [];
+  for (const group of unique) {
+    const cached = metadata?.get(group.command, group.key);
+    if (cached && (cached.mean !== undefined || cached.unsupported))
+      applyMean(group, cached.mean);
+    else {
+      const source =
+        assets instanceof Map
+          ? assets.get(group.command.asset)
+          : assets?.[group.command.asset];
+      const raw = prepareRawOverviewFrame(group.command, source, {
+        inputEncoding,
+      });
+      if (raw && !raw.unsupported) {
+        metadata?.remember(group.command, group.key, raw, {
+          meanValue: raw.mean,
+        });
+        applyMean(group, raw.mean);
+      } else unprepared.push(group);
+    }
+  }
   // Candidate frames are exactly 16x16: 450 unique frames stay below both the
   // ordinary frame-count limit and the 8-MiB preparation byte limit.
-  for (let start = 0; start < unique.length; start += 450) {
-    const batch = unique.slice(start, start + 450),
+  for (let start = 0; start < unprepared.length; start += 450) {
+    const batch = unprepared.slice(start, start + 450),
       frames = prepareSceneFrames(
         { ...plan, commands: batch.map((g) => g.command) },
         assets,
@@ -149,13 +370,12 @@ export function prepareOpaqueOverview(
       );
     try {
       for (const group of batch) {
-        const mean = frameMean(frames.resolve(group.command));
-        if (!mean) continue;
-        for (const i of group.indices) {
-          safe[i] = 1;
-          rgba.set(mean, i * 4);
-          result.eligibleTiles++;
-        }
+        const frame = frames.resolve(group.command),
+          mean = metadata
+            ? metadata.remember(group.command, group.key, frame, { mean: true })
+                .mean
+            : frameMean(frame);
+        applyMean(group, mean);
       }
     } finally {
       frames.dispose();
@@ -194,11 +414,14 @@ export function applyOpaqueOverview(data, core, region, prepared) {
   for (let y = 0; y < core.height; y++)
     for (let x = 0; x < core.width; x++) {
       const i = (offsetY + y) * prepared.widthTiles + offsetX + x;
-      if (prepared.safe[i])
-        data.set(
-          prepared.rgba.subarray(i * 4, i * 4 + 4),
-          (y * core.width + x) * 4,
-        );
+      if (prepared.safe[i]) {
+        const source = i * 4,
+          destination = (y * core.width + x) * 4;
+        data[destination] = prepared.rgba[source];
+        data[destination + 1] = prepared.rgba[source + 1];
+        data[destination + 2] = prepared.rgba[source + 2];
+        data[destination + 3] = prepared.rgba[source + 3];
+      }
     }
   return data;
 }

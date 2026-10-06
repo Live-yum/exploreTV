@@ -2,6 +2,17 @@ import { planLiquids, liquidOmissionWarning } from "./liquid.mjs";
 import { planShimmerLiquids } from "./liquid-shimmer.mjs";
 
 function possibleShimmer(region, options) {
+  // The indexed exporter derives this conservative absence hint from the same
+  // immutable world records as its region. It covers the region plus the
+  // existing eleven-row source search above it. Selection contexts and caller
+  // reader overrides can introduce other records, so they always retain the
+  // complete check. Callers that modify indexed cells must discard the hint.
+  if (
+    region.indexedShimmerPossible === false &&
+    !region.context &&
+    options.getWorldTile == null
+  )
+    return false;
   const wet = (t) => t?.liquid > 0 && t.liquidKind === 4;
   if (region.cells.some(wet) || region.context?.cells?.some(wet)) return true;
   // A source above the extracted rectangle may produce a finite falling trail.
@@ -20,8 +31,12 @@ export function planSceneLiquids(region, options = {}) {
   if (!options.enabled || !possibleShimmer(region, options)) return plan;
   const shimmer = planShimmerLiquids(region, options),
     support = plan.support;
-  const oldOmission = support.unsupported ? liquidOmissionWarning(support) : null;
-  const failed = new Map(shimmer.support.unsupportedCoordinates.map(c => [`${c.x},${c.y}`, c]));
+  const oldOmission = support.unsupported
+    ? liquidOmissionWarning(support)
+    : null;
+  const failed = new Map(
+    shimmer.support.unsupportedCoordinates.map((c) => [`${c.x},${c.y}`, c]),
+  );
   const resolved = new Map(
     shimmer.resolvedCoordinates.map((c) => [`${c.x},${c.y}`, c]),
   );
@@ -34,7 +49,8 @@ export function planSceneLiquids(region, options = {}) {
     } else if (c.reason === "shimmer" && failed.has(`${c.x},${c.y}`)) {
       const replacement = failed.get(`${c.x},${c.y}`);
       support.unsupportedByReason.shimmer--;
-      support.unsupportedByReason[replacement.reason] = (support.unsupportedByReason[replacement.reason] || 0) + 1;
+      support.unsupportedByReason[replacement.reason] =
+        (support.unsupportedByReason[replacement.reason] || 0) + 1;
       retained.push(replacement);
     } else retained.push(c);
   }
@@ -59,7 +75,8 @@ export function planSceneLiquids(region, options = {}) {
     ...new Set([...plan.requiredAssets, ...shimmer.requiredAssets]),
   ].sort();
   support.commandCount = plan.commands.length;
-  if (oldOmission) plan.warnings = plan.warnings.filter(w => w !== oldOmission);
+  if (oldOmission)
+    plan.warnings = plan.warnings.filter((w) => w !== oldOmission);
   if (support.unsupported) plan.warnings.push(liquidOmissionWarning(support));
   plan.warnings.push(
     "Shimmer uses frozen modern base/glitter sprites, time 0 by default, with source corner colors. Runtime distortion, particles and a running-game pixel oracle are unavailable.",

@@ -11,6 +11,7 @@
     "test:real": "node scripts/verify-world.mjs",
     "dev:viewer": "node scripts/serve-viewer.mjs",
     "prepare:example": "node scripts/prepare-example.mjs",
+    "prepare:overview": "node scripts/prepare-overview.mjs",
     "render:full": "node scripts/render-full-world.mjs",
     "export:full": "node scripts/export-world.mjs",
     "export:overview": "node --expose-gc --max-old-space-size=48 --max-semi-space-size=4 scripts/export-overview.mjs"
@@ -27,6 +28,7 @@
     "@dcloudio/vite-plugin-uni": "3.0.0-alpha-5010220260604001",
     "@napi-rs/canvas": "^0.1.80",
     "@playwright/test": "^1.58.2",
+    "node-api-headers": "1.8.0",
     "pngjs": "^7.0.0",
     "prettier": "^3.6.2",
     "typescript": "5.9.3",

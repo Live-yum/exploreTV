@@ -114,7 +114,8 @@ test("core-only native draws retain translucent walls, slopes, liquids and overh
     assert.deepEqual(optimized.pixels, baseline.pixels);
     const coreOnly = await render(true, true);
     assert.deepEqual(coreOnly.pixels, baseline.pixels);
-    assert.ok(optimized.stats.culledOutsideCoreCommands > 0);
+    assert.ok(optimized.stats.earlyCulledHaloCommands > 0);
+    assert.equal(baseline.stats.earlyCulledHaloCommands, 0);
     assert.equal(baseline.stats.culledOutsideCoreCommands, 0);
     for (const name of [
       "plannedCommands",
