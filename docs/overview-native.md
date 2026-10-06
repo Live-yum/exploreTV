@@ -11,7 +11,7 @@
 ```sh
 npm ci --ignore-scripts
 npm run prepare:overview
-MALLOC_ARENA_MAX=2 npm run export:overview -- \
+MALLOC_ARENA_MAX=2 MALLOC_MMAP_THRESHOLD_=131072 npm run export:overview -- \
   fixtures/example-world.wld example/assets artifacts/world-overview.png \
   --expect-world-sha256 d551a6b360c7af49a07dadbb1e82223ac43ad398e2054c29f500ec5e8b5b1cab
 ```
@@ -20,7 +20,7 @@ MALLOC_ARENA_MAX=2 npm run export:overview -- \
 
 上述命令使用 Linux/glibc 的低内存启动配置 `MALLOC_ARENA_MAX=2`，减少多线程分配器保留的空闲内存；这个变量必须在 Node 启动前传入。它不限制渲染线程，也不是整个进程的内存上限。macOS、Windows 或其他分配器可以省略该变量，实际内存表现需要分别测量。如果 `GLIBC_TUNABLES` 中已配置 `glibc.malloc.arena_max`，该 tunable 优先于旧变量；请保持配置一致。依据：[GNU C Library 的内存分配 tunables](https://sourceware.org/glibc/manual/latest/html_node/Memory-Allocation-Tunables.html)。
 
-`run-overview-ci.mjs` 只给现有 exporter／C monitor 子进程设置默认 `MALLOC_ARENA_MAX=2`，保留调用方显式指定的值；例如 `MALLOC_ARENA_MAX=0` 可请求 glibc 默认 arena 策略。它不新增 Node 进程，不修改监测脚本自身的分配器，也不修改固定基线的启动配置。报告同时记录 Node 启动参数、两种 arena 配置的请求值；没有把请求上限当成实际创建的 arena 数量。
+`run-overview-ci.mjs` 只给现有 exporter／C monitor 子进程设置默认 `MALLOC_ARENA_MAX=2` 与 `MALLOC_MMAP_THRESHOLD_=131072`，保留调用方显式指定的值；例如 `MALLOC_ARENA_MAX=0` 可请求 glibc 默认 arena 策略。它不新增 Node 进程，不修改监测脚本自身的分配器，也不修改固定基线的启动配置。报告同时记录 Node 启动参数、arena 与 mmap threshold 两种环境机制的请求值；没有把请求上限当成实际创建的 arena 数量。
 
 `npm ci --ignore-scripts` 安装锁定依赖；`prepare:overview` 显式编译两个模块：
 
@@ -111,7 +111,7 @@ npm run export:overview -- world.wld textures artifacts/detail.png \
 
 原生帧的 8 MiB live 预算按仍被缓存或当前批次引用的像素联合去重计数。LRU 淘汰不能隐藏尚被使用的像素；需要准备或提交更多内容时先释放／提交有界批次，无法在预算内使用原生帧时保留 Canvas 路径。报告分别记录 retained、active 与 live 帧字节，以及各自峰值。
 
-这些局部缓冲预算不等于总 RSS。总内存还包括 WLD、索引、瀑布、纹理缓存、Canvas、PNG/zlib、V8 和原生分配器开销。npm 的 48 MiB 配置也只限定 V8 old-space。垃圾回收周期根据实际执行路径选择：使用原生概览的核心最多间隔 8 块执行 major GC；任何完整 Canvas 回退会将下一次 major GC 的等待间隔收紧到 2 块，直到完成回收。每条带结束也执行 major GC，中间块继续执行 minor GC，并让出事件循环供 N-API finalizer 释放原生对象。
+这些局部缓冲预算不等于总 RSS。总内存还包括 WLD、索引、瀑布、纹理缓存、Canvas、PNG/zlib、V8 和原生分配器开销。npm 的 48 MiB 配置也只限定 V8 old-space。垃圾回收周期根据实际执行路径选择：使用原生概览的核心最多间隔 4 块执行 major GC；任何完整 Canvas 回退会将下一次 major GC 的等待间隔收紧到 2 块，直到完成回收。每条带结束也执行 major GC，中间块继续执行 minor GC，并让出事件循环供 N-API finalizer 释放原生对象。
 
 在 Linux/glibc 且原生缩小模块可用时，major GC 之后先让出事件循环，再调用 `malloc_trim(0)`，请求分配器将已经空闲的页归还操作系统。这个操作不回收 JavaScript 对象，也不释放仍在使用的缓冲；成功返回不提供释放字节数或固定 RSS 降幅。其他平台／分配器或 `EXPLORETV_DISABLE_NATIVE_TRIM=1` 下该步骤不执行，面积缩小功能保持可用。`nativeMemoryTrimming` 报告可用性、调用／释放次数与耗时；GC、finalizer 和 trim 的时间全部计入导出。
 
@@ -159,9 +159,9 @@ node scripts/verify-overview.mjs \
 | --- | --- | --- | --- |
 | 历史远端基线 | 257.554 秒 | 302.17 MB | [GitHub Actions run 37395562331](https://github.com/Live-yum/exploreTV/actions/runs/37395562331) |
 | 本轮同机原版 `7fa7da3` | 200.136 秒 | 286.75 MB | [本地完整测量与验证记录](benchmarks/overview-native-20261006-local.json) |
-| 本轮最终默认配置 | **88.673 秒** | **286.31 MB** | 同上；48 MiB old-space、4 MiB semi-space、exporter arena 请求上限 2 |
+| 初版原生配置（本地） | **88.673 秒** | **286.31 MB** | 同上；48 MiB old-space、4 MiB semi-space、exporter arena 请求上限 2 |
 
-同机比较耗时下降 **55.69%（约 2.257 倍）**，保守总峰值略低于原版。**尚未达到 60 秒目标。** 历史远端与本地硬件、Node 版本不同，不能直接用 257.554／88.673 计算本轮加速倍数；草稿 PR 的 CI 会重新在同一个远端 runner 上顺序测量原版和候选。上述本地两次测量之间包含中间实验，操作系统文件缓存不受控制。
+同机比较耗时下降 **55.69%（约 2.257 倍）**，保守总峰值略低于原版。**尚未达到 60 秒目标。** 历史远端与本地硬件、Node 版本不同，不能直接用 257.554／88.673 计算本轮加速倍数；远端对照结果在下方单独记录。上述本地两次测量之间包含中间实验，操作系统文件缓存不受控制。
 
 64 MiB old-space 的完整对照是 86.959 秒／298.30 MB；只快约 1.7 秒却增加接近 12 MB 峰值，因此保留 48 MiB 默认配置。更早的源码状态曾测到 83.511 秒／283.78 MB；它早于当前块闭包释放及异常生命周期完善，不作为最终提交的性能数字。所有这几次整图都通过全像素哈希与 13 个细节窗口验证。
 
@@ -174,3 +174,11 @@ node scripts/verify-overview.mjs \
 缺失纹理、非法裁剪、未知对象和不支持的液体邻域仍记录在结构化报告中。示例世界的零遗漏结果不能外推到任意世界。黑色区域可能是空白，也可能关联报告中的未实现内容。
 
 1 px/Tile 将原先 16×16 的细节合为一个像素，细小边缘、文字与物件纹理会在面积均值中混合；全世界仍在图内。需要接近玩家观察尺度的纹理细节时，使用局部高比例导出或[完整细节查看器](world-viewer.md)。图片尺寸、真实纹理静态保真和运行时游戏等价性分别由不同约束决定。
+
+## 远端内存修正
+
+首轮远端同机对照 [run 37406287985](https://github.com/Live-yum/exploreTV/actions/runs/37406287985) 测得：原版 **199.600 秒／300.68 MB**，`f613e8e` **81.839 秒／328.49 MB**。全像素核验与平台测试通过，耗时下降 59.00%，但保守总峰值增加 9.25%，没有通过 300 MB 优先目标。[完整远端记录](benchmarks/overview-native-20261006-remote-v1.json) 保留这一结果。
+
+当前配置将原生核心 major GC 间隔由 8 改为 4，并在 Linux/glibc 启动时使用 `MALLOC_MMAP_THRESHOLD_=131072`，保持 160×64 分块和 arena 请求上限 2。这会关闭 glibc 对 mmap 阈值的动态上调，让大块临时缓冲使用可独立释放的映射；它不改变 PNG 分辨率或合成算法。对应 `GLIBC_TUNABLES` 设置依然优先，调用方显式环境值仍被保留。
+
+本地完整修正测试为 **96.944 秒／269.26 MB**，比初版默认配置少约 17.05 MB、增加约 8.27 秒；整图像素与 13 个窗口仍全部一致。见[内存修正本地记录](benchmarks/overview-native-20261006-memory-local.json)。新的远端对照尚待完成，60 秒目标仍未达到。

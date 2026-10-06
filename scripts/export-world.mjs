@@ -322,7 +322,7 @@ export async function exportWorld(
     chunksSinceMajorGc = 0,
     canvasPendingMajorGc = false;
   const overviewGc = {
-    nativeOverviewInterval: 8,
+    nativeOverviewInterval: 4,
     canvasInterval: 2,
     nativeOverviewChunks: 0,
     canvasChunks: 0,
@@ -691,7 +691,7 @@ export async function exportWorld(
         ? {
             ...overviewGc,
             meaning:
-              "When GC is available, at most 8 chunks between major collections for actual 1px software-overview cores; any Canvas fallback lowers the pending interval to 2 until collection. A major collection also follows each output band. Collection counts include only GC calls actually made.",
+              "When GC is available, at most 4 chunks between major collections for actual 1px software-overview cores; any Canvas fallback lowers the pending interval to 2 until collection. A major collection also follows each output band. Collection counts include only GC calls actually made.",
           }
         : null,
       nativeFinalizationSeconds: +nativeFinalizationSeconds.toFixed(3),
@@ -729,10 +729,15 @@ export async function exportWorld(
         nodeArguments: [...process.execArgv],
         allocator: {
           requestedArenaMax: process.env.MALLOC_ARENA_MAX ?? null,
+          requestedMmapThreshold: process.env.MALLOC_MMAP_THRESHOLD_ ?? null,
           glibcArenaMaxTunable:
             process.env.GLIBC_TUNABLES?.split(":")
               .find((value) => value.startsWith("glibc.malloc.arena_max="))
               ?.slice("glibc.malloc.arena_max=".length) ?? null,
+          glibcMmapThresholdTunable:
+            process.env.GLIBC_TUNABLES?.split(":")
+              .find((value) => value.startsWith("glibc.malloc.mmap_threshold="))
+              ?.slice("glibc.malloc.mmap_threshold=".length) ?? null,
           scope: "startup environment; only applicable to the glibc allocator",
           effectiveArenaCount: null,
         },

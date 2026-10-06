@@ -802,7 +802,7 @@ test(
               "minor",
               "minor",
               "minor",
-              "minor",
+              "major",
               "minor",
               "minor",
               "minor",
@@ -823,11 +823,11 @@ test(
         chunkCalls = calls.filter((type) => type !== "band-or-setup");
       assert.deepEqual(chunkCalls, [...perBand, ...perBand]);
       assert.equal(report.chunks, 18);
-      assert.equal(report.majorGcInterval, native ? 8 : 2);
+      assert.equal(report.majorGcInterval, native ? 4 : 2);
       assert.equal(report.overviewGc.nativeOverviewChunks, native ? 18 : 0);
       assert.equal(report.overviewGc.canvasChunks, native ? 0 : 18);
-      assert.equal(report.overviewGc.chunkMajorCollections, native ? 2 : 8);
-      assert.equal(report.overviewGc.chunkMinorCollections, native ? 16 : 10);
+      assert.equal(report.overviewGc.chunkMajorCollections, native ? 4 : 8);
+      assert.equal(report.overviewGc.chunkMinorCollections, native ? 14 : 10);
       assert.equal(report.overviewGc.bandMajorCollections, 2);
       // Native availability alone used to select the larger interval for 2/4/8.
       if (inputEncoding === "tconvert-game-raw")

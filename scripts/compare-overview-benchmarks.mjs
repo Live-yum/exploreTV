@@ -90,7 +90,7 @@ export function compareOverviewBenchmarks(
     baselineCommit: OVERVIEW_BASELINE_COMMIT,
     candidateCommit,
     method:
-      "CI runs the pinned baseline then candidate sequentially on the same runner with identical installed rendering dependencies. The candidate adds build-time Node-API headers, explicitly prepares its native kernels before timing, and defaults the exporter startup MALLOC_ARENA_MAX to 2 (an explicit caller value is preserved; a glibc arena_max tunable takes precedence). Its report records requested allocator and Node settings, not an assumed effective arena count. The baseline retains its original launch configuration. Both use fresh processes and complete-lifetime RSS monitors. No world is pre-rendered. OS file-cache state is uncontrolled.",
+      "CI runs the pinned baseline then candidate sequentially on the same runner with identical installed rendering dependencies. The candidate adds build-time Node-API headers, explicitly prepares its native kernels before timing, and defaults exporter startup MALLOC_ARENA_MAX to 2 and MALLOC_MMAP_THRESHOLD_ to 131072. Explicit caller values are preserved; corresponding glibc tunables take precedence. Its report records requested allocator and Node settings, not an assumed effective arena count. The baseline retains its original launch configuration. Both use fresh processes and complete-lifetime RSS monitors. No world is pre-rendered. OS file-cache state is uncontrolled.",
     worldSha256: WORLD_SHA,
     wholeImagePixelSha256: PIXEL_SHA,
     pixels: 20160000,

@@ -28,7 +28,7 @@ npm run export:full -- fixtures/example-world.wld example/assets artifacts/full-
 ```sh
 npm ci --ignore-scripts
 npm run prepare:overview
-MALLOC_ARENA_MAX=2 npm run export:overview -- fixtures/example-world.wld example/assets artifacts/world-overview.png
+MALLOC_ARENA_MAX=2 MALLOC_MMAP_THRESHOLD_=131072 npm run export:overview -- fixtures/example-world.wld example/assets artifacts/world-overview.png
 ```
 
 大世界默认输出完整范围的 **8400×2400 PNG（每 Tile 1 px）**；项目示例的既有精确输出约 **17 MB**，其他世界以实际压缩结果为准。`prepare:overview` 只提前编译与世界无关的原生合成及缩小模块，不读取世界或纹理；世界加载、索引、完整瀑布登记、PNG 解码、冷缓存建立、合成与最终 PNG 写入仍计入整图耗时。

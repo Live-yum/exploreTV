@@ -72,6 +72,9 @@ const child = spawn(
     env: {
       ...process.env,
       MALLOC_ARENA_MAX: process.env.MALLOC_ARENA_MAX ?? "2",
+      // Keep large, short-lived atlas/readback buffers independently releasable
+      // instead of allowing glibc to raise its mmap threshold dynamically.
+      MALLOC_MMAP_THRESHOLD_: process.env.MALLOC_MMAP_THRESHOLD_ ?? "131072",
     },
   },
 );
