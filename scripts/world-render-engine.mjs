@@ -1,5 +1,6 @@
 import { createRawTextureCache } from "./raw-texture-cache.mjs";
 import { createSoftwareOverview } from "./software-overview.mjs";
+import { createDirectTerrainOverview } from "./direct-terrain-overview.mjs";
 import { createSceneFrameInterner } from "./scene-frame-interner.mjs";
 import { createNodePngRgbaDecoder } from "./png-rgba-node.mjs";
 import { createCompactStaticWaterfallRegistry } from "./compact-waterfall-registry.mjs";
@@ -281,6 +282,8 @@ export function createWorldRenderer({
   cacheFrames = true,
   lowMemory = false,
   nativeOverview = false,
+  directTerrainOverview = false,
+  onNativeBatch = null,
 }) {
   const frameCache = cacheFrames
     ? createSceneFrameCache(
@@ -293,7 +296,13 @@ export function createWorldRenderer({
   const frameInterner = createSceneFrameInterner();
   const lazyRaw = lowMemory && inputEncoding === "tconvert-game-raw";
   const softwareRenderer =
-    lazyRaw && nativeOverview ? createSoftwareOverview() : null;
+    lazyRaw && nativeOverview
+      ? createSoftwareOverview({ onNativeBatch })
+      : null;
+  const directTerrainRenderer =
+    lazyRaw && nativeOverview && directTerrainOverview && !onNativeBatch
+      ? createDirectTerrainOverview()
+      : null;
   const pngDecoder = lowMemory && !lazyRaw ? createNodePngRgbaDecoder() : null;
   const stats = {
     pngDecodeCache: pngDecoder?.stats ?? null,
@@ -301,6 +310,7 @@ export function createWorldRenderer({
     frameMetadataCache: frameMetadataCache?.stats ?? null,
     frameKeyInterner: frameInterner.stats,
     nativeOverview: softwareRenderer?.stats ?? null,
+    directTerrainOverviewStats: directTerrainRenderer?.stats ?? null,
     skippedFramePreparationCommands: 0,
     stageMilliseconds: {
       plan: 0,
@@ -312,6 +322,7 @@ export function createWorldRenderer({
       opaqueOverview: 0,
       nativePartition: 0,
       keyGeneration: 0,
+      directTerrain: 0,
     },
     opaqueOverview: { eligibleTiles: 0, skippedCommands: 0, totalCommands: 0 },
     waterfalls: waterfallRegistry
@@ -332,6 +343,7 @@ export function createWorldRenderer({
     maxPlanCommands: 0,
     maxPreparedBytes: 0,
     renderedCommands: 0,
+    plannerCulledCommands: 0,
     earlyCulledHaloCommands: 0,
     culledOutsideCoreCommands: 0,
     plannedCommands: 0,
@@ -512,17 +524,47 @@ export function createWorldRenderer({
       top = (core.y - region.rect.y) * 16,
       right = left + core.width * 16,
       bottom = top + core.height * 16;
-    const plan = planScene(region, options);
+    const plan = planScene(
+      region,
+      overview
+        ? {
+            ...options,
+            outputBounds: {
+              x: left,
+              y: top,
+              width: right - left,
+              height: bottom - top,
+            },
+          }
+        : options,
+    );
+    const plannerCulledCommands = plan.culledCommands ?? 0;
+    stats.plannerCulledCommands += plannerCulledCommands;
     stats.stageMilliseconds.plan += performance.now() - stageStarted;
     stageStarted = performance.now();
     const assetView = await assetsFor(plan);
     const useCoreSurface = lowMemory && coreSurface;
-    const ctx = canvas.getContext("2d");
-    let contextSaved = false,
-      softwareOverview = null;
+    let ctx = null,
+      contextSaved = false,
+      softwareOverview = null,
+      directTerrain = null;
     try {
       const assets = assetView.assets;
       stats.stageMilliseconds.assets += performance.now() - stageStarted;
+      if (overview && directTerrainRenderer) {
+        stageStarted = performance.now();
+        // This bounded pass validates its handled commands against the same
+        // complete asset view. Failed or complex draws remain in the general
+        // pipeline, and its safe pixels include cross-boundary terrain draws.
+        directTerrain = directTerrainRenderer.render(
+          plan,
+          core,
+          region,
+          assets,
+        );
+        stats.stageMilliseconds.directTerrain +=
+          performance.now() - stageStarted;
+      }
       let coreCommandCount = 0;
       if (count) {
         stats.maxChunkCells = Math.max(
@@ -531,7 +573,7 @@ export function createWorldRenderer({
         );
         stats.maxPlanCommands = Math.max(
           stats.maxPlanCommands,
-          plan.commands.length,
+          plan.commands.length + plannerCulledCommands,
         );
         for (const c of plan.sourceHiddenCells || [])
           if (
@@ -574,24 +616,21 @@ export function createWorldRenderer({
           c.dy + c.dh + 1 <= top ||
           c.dx - 1 >= right ||
           c.dy - 1 >= bottom);
-      // Keep the complete halo plan for dependencies, assets and diagnostics.
-      // Only the working command list omits external owners whose complete draw
-      // cannot touch the core, with the same conservative antialiasing margin as
-      // the final draw cull. Core owners retain every original validation path.
+      // Planning retains complete halo dependencies, assets and diagnostics.
+      // Overview planning already drops safe external-owner draws; the working
+      // list applies the same conservative guard to the other low-memory paths.
+      // Core owners retain every original validation/counting path.
       // Fuse selection with key generation to avoid another whole-plan scan.
       stageStarted = performance.now();
       const keyCache = new Map(),
         renderCommands = lowMemory ? [] : plan.commands;
-      for (const c of plan.commands) {
+      for (let i = 0; i < plan.commands.length; i++) {
+        const c = plan.commands[i];
         const ownerInCore = inCore(c, region, core);
-        if (lowMemory) {
-          if (!ownerInCore && outsideCore(c)) {
-            stats.earlyCulledHaloCommands++;
-            continue;
-          }
-          renderCommands.push(c);
+        if (lowMemory && !ownerInCore && outsideCore(c)) {
+          stats.earlyCulledHaloCommands++;
+          continue;
         }
-        keyCache.set(c, frameInterner.key(c));
         if (ownerInCore) {
           coreCommandCount++;
           if (count) {
@@ -599,11 +638,32 @@ export function createWorldRenderer({
             add(commandCounts, c.kind);
           }
         }
+        if (directTerrain?.handled[i]) {
+          // The direct pass proved the full source/crop/effect valid. Preserve
+          // logical owner counts while skipping all repeated frame-key work.
+          if (count && ownerInCore) stats.renderedCommands++;
+          continue;
+        }
+        if (lowMemory) renderCommands.push(c);
+        keyCache.set(c, frameInterner.key(c));
       }
       const renderPlan = lowMemory
         ? { ...plan, commands: renderCommands }
         : plan;
       stats.stageMilliseconds.keyGeneration += performance.now() - stageStarted;
+      if (directTerrain && renderCommands.length === 0)
+        return {
+          plan,
+          coreCommands: coreCommandCount,
+          opaqueOverview: null,
+          softwareOverview: null,
+          directTerrainOverview: directTerrain,
+          // No draw reached the general backing surface. The caller starts
+          // with opaque black and applies the proven direct 1px cells below.
+          rasterizedCommands: 0,
+          readbackX: useCoreSurface ? 0 : left,
+          readbackY: useCoreSurface ? 0 : top,
+        };
       const metadata = frameMetadataCache?.view(
         assets,
         createCanvas,
@@ -637,6 +697,7 @@ export function createWorldRenderer({
         const surfaceHeight = useCoreSurface ? core.height * 16 : plan.height;
         if (canvas.width !== surfaceWidth) canvas.width = surfaceWidth;
         if (canvas.height !== surfaceHeight) canvas.height = surfaceHeight;
+        ctx = canvas.getContext("2d");
         ctx.fillStyle = "#000000";
         ctx.fillRect(0, 0, surfaceWidth, surfaceHeight);
         if (useCoreSurface) {
@@ -836,6 +897,7 @@ export function createWorldRenderer({
         coreCommands: coreCommandCount,
         opaqueOverview,
         softwareOverview,
+        directTerrainOverview: directTerrain,
         rasterizedCommands,
         readbackX: useCoreSurface ? 0 : left,
         readbackY: useCoreSurface ? 0 : top,
@@ -859,6 +921,7 @@ export function createWorldRenderer({
       frameMetadataCache?.dispose();
       frameInterner.dispose();
       softwareRenderer?.dispose();
+      directTerrainRenderer?.dispose();
       pngDecoder?.clear();
       rawTextures?.dispose();
       assetCache.clear();

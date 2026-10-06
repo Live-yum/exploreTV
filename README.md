@@ -17,7 +17,8 @@ npm run dev:viewer
 - [示例资源与集成步骤](docs/example-setup.md)
 - [原分辨率整图导出](docs/full-resolution-export.md)
 - [分块缩小全景工具](docs/full-world.md)
-- [低内存原生整图概览：架构、预处理与计时边界](docs/overview-native.md)
+- [前一轮 PR #2 原生整图概览：架构与远端验收](docs/overview-native.md)
+- [本分支大世界优化：首次渲染、世界命令回放与小体积分享图](docs/overview-60s.md)
 
 ```sh
 npm run export:full -- fixtures/example-world.wld example/assets artifacts/full-resolution.png --tiles artifacts/full-resolution-tiles
@@ -33,9 +34,24 @@ MALLOC_ARENA_MAX=2 MALLOC_MMAP_THRESHOLD_=131072 npm run export:overview -- fixt
 
 大世界默认输出完整范围的 **8400×2400 PNG（每 Tile 1 px）**；项目示例的既有精确输出约 **17 MB**，其他世界以实际压缩结果为准。`prepare:overview` 只提前编译与世界无关的原生合成及缩小模块，不读取世界或纹理；世界加载、索引、完整瀑布登记、PNG 解码、冷缓存建立、合成与最终 PNG 写入仍计入整图耗时。
 
-当前采用单渲染进程、**128×48 Tile** 分块、每 **32 行**一个稀疏 RLE 检查点；npm 命令将 V8 old-space 限为 **48 MiB**，原生帧像素的保留与活动引用合并计数后限为 **8 MiB**。1 px/Tile 使用精确整数像素合成，并对复杂几何保留 Canvas 路径；2/4/8 px/Tile 保留原有完整合成后面积缩小的画质路径。模块加载会核对源码及二进制 SHA-256，缺失、过期或不兼容时自动退回 Canvas／JavaScript。全景保持现有 **fullbright 静态纹理渲染**范围，实时光照、动态实体和运行时效果仍受限制；适合全世界概览与结构检查。
+当前采用单渲染进程、**128×48 Tile** 分块、每 **32 行**一个稀疏 RLE 检查点；npm 命令将 V8 old-space 限为 **48 MiB**。原 generic 原生帧缓存的保留与活动引用合并上限为 **8 MiB**；本分支 direct 帧及其活动引用、扩展 key 另有 **4 MiB** 上限，局部预算不等于整个进程 RSS。1 px/Tile 使用精确整数像素合成，并对复杂几何保留 Canvas 路径；2/4/8 px/Tile 保留原有完整合成后面积缩小的画质路径。模块加载会核对源码及二进制 SHA-256，缺失、过期或不兼容时自动退回 Canvas／JavaScript。全景保持现有 **fullbright 静态纹理渲染**范围，实时光照、动态实体和运行时效果仍受限制；适合全世界概览与结构检查。
 
-最终默认配置在[远端同机对照](https://github.com/Live-yum/exploreTV/actions/runs/37408281055)中为 **125.064 秒 / 291.48 MB 保守总峰值**，同机原版为 **240.309 秒 / 297.81 MB**，耗时下降 **47.96%**、峰值减少 **6.33 MB**。整图全部像素与 13 个细节窗口保持一致。**300 MB 内存目标通过，60 秒时间目标尚未达到。** 本轮 runner 为 AMD EPYC 7763，不能与其他 CPU 上的历史时间直接计算加速比。[完整实测记录](docs/benchmarks/overview-native-20261006-final.json)保留输入、源码、原生二进制、平台及计时口径。历史远端 **257.554 秒 / 302.17 MB** 见 [run 37395562331](https://github.com/Live-yum/exploreTV/actions/runs/37395562331)；当前架构与复现见[原生概览文档](docs/overview-native.md)。
+**前一轮 [PR #2](https://github.com/Live-yum/exploreTV/pull/2) 的已有远端结果**为 **125.064 秒 / 291.48 MB 保守总峰值**，同机原版为 **240.309 秒 / 297.81 MB**，耗时下降 **47.96%**。这些原生合成、raw 帧与低内存收益归于该 PR；见[远端同机对照](https://github.com/Live-yum/exploreTV/actions/runs/37408281055)和[固定证据](docs/benchmarks/overview-native-20261006-final.json)。历史远端 **257.554 秒 / 302.17 MB** 则来自 [run 37395562331](https://github.com/Live-yum/exploreTV/actions/runs/37395562331)。
+
+**本分支已验收阶段的本地首次渲染为 86.673 秒 / 273.76 MB**，在同一环境的已有原生基线 **97.588 秒 / 251.95 MB** 上，耗时再减少 **11.18%**，保守峰值增加 **21.81 MB**。完整 20,160,000 个像素、13 个独立窗口、384 张纹理和逻辑命令计数通过对照。**该阶段 300 MB 内存目标通过；首次世界仍未达到 60 秒。** 后续减少重复归约、调整缓存淘汰的最终候选尚待完整复测。上述是本地 Node 24.19.0 的结果，新分支尚未做对应的远端同机复测，不能与前一轮远端时间直接计算加速比。[详细使用与验收说明](docs/overview-60s.md)记录两遍不透明覆盖证明、通用 raw 矩形、精确标准坡块，以及成功与未通过产物验收的诊断运行的区别。
+
+本分支另提供固定世界的预处理/回放，以及 PNG 完成后的 WebP 分享图。它们分别计时；完整世界命令包的首次准备和回放性能仍待实测：
+
+```sh
+# 可选：为固定世界准备命令包，同时生成 example-world-tape/preview.png
+npm run prepare:world -- fixtures/example-world.wld example/assets artifacts/example-world-tape
+# 输入和源码保持匹配时，再执行一次命令回放；不是首次世界渲染时间
+npm run export:prepared -- fixtures/example-world.wld example/assets artifacts/example-world-tape artifacts/world-replayed.png
+# 原 PNG 导出进程退出后，在独立进程中生成分享图
+npm run encode:overview -- artifacts/world-overview.png artifacts/world-share.webp
+```
+
+默认分享图为 **4200×1200、quality 85 的有损 WebP**。本轮已有 PNG 的独立后处理实测为 **1,503,034 字节（约 1.50 MB）、1.523 秒、263.67 MB 保守峰值**；保留原 PNG 作为静态像素的精确参考。渲染与后处理顺序运行时耗时相加、峰值取较大者。世界命令包的失效规则、首次准备成本和分享图尺寸限制见[新文档](docs/overview-60s.md)。
 
 原分辨率导出采用流式PNG，不创建整张巨型Canvas。超大PNG不保证普通浏览器可打开，兼容分块输出可按清单重建完整细节。命令选项与实际内存/文件限制以导出文档为准。普通缩小全景只作overview，不等同于原分辨率全图。
 

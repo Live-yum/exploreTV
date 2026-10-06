@@ -1,0 +1,172 @@
+name: Measure cold and prepared panoramas
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  requested:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.request.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - id: request
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          message=$(git log -1 --format=%B)
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          else
+            case "$message" in
+              *'[benchmark-prepared]'*) echo 'run=true' >> "$GITHUB_OUTPUT" ;;
+              *) echo 'run=false' >> "$GITHUB_OUTPUT" ;;
+            esac
+          fi
+  benchmark:
+    needs: requested
+    if: needs.requested.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BASELINE_COMMIT: b9b0fdd6adc25484a021f9850bd4c81e0d725071
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run prepare:overview
+      - run: node scripts/check-overview-native.mjs
+      - run: node scripts/prepare-example.mjs example/assets --check
+      - name: Test preparation, direct terrain, diagnostics and sharing encoder
+        run: |
+          node --test \
+            test/prepared-world.test.mjs \
+            test/prepared-world-tape.test.mjs \
+            test/prepared-ci.test.mjs \
+            test/renderer-output-bounds.test.mjs \
+            test/renderer-planner-hot-path.test.mjs \
+            test/overview-early-halo-cull.test.mjs \
+            test/direct-terrain-overview.test.mjs \
+            test/direct-terrain-engine.test.mjs \
+            test/direct-slope-overview-frame.test.mjs \
+            test/direct-overview-reduction.test.mjs \
+            test/encode-overview.test.mjs
+      - name: Measure existing native PR on the same runner
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASELINE_COMMIT"
+          git diff --exit-code "$BASELINE_COMMIT" HEAD -- package-lock.json
+          baseline="$RUNNER_TEMP/exploretv-native-baseline"
+          git worktree add --detach "$baseline" "$BASELINE_COMMIT"
+          test "$(git -C "$baseline" rev-parse HEAD)" = "$BASELINE_COMMIT"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$baseline/node_modules"
+          cd "$baseline"
+          npm run prepare:overview
+          node scripts/run-overview-ci.mjs "$GITHUB_WORKSPACE/artifacts/native-baseline"
+          node scripts/verify-overview.mjs fixtures/example-world.wld example/assets "$GITHUB_WORKSPACE/artifacts/native-baseline/world-1px.png" --example
+      - name: Measure current first-seen world without persistent world cache
+        run: node scripts/run-overview-ci.mjs artifacts/current-cold
+      - run: node scripts/verify-overview.mjs fixtures/example-world.wld example/assets artifacts/current-cold/world-1px.png --example
+      - name: Compare complete sequential runs against the pinned native commit
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          import { compareOverviewBenchmarks } from './scripts/compare-overview-benchmarks.mjs';
+          const load = (directory) => {
+            const read = (name) => JSON.parse(readFileSync(join(directory, name), 'utf8'));
+            return {
+              timing: read('cold-benchmark.json'),
+              render: read('world-1px.png.json'),
+              fidelity: read('world-1px.png.fidelity.json'),
+            };
+          };
+          const candidateCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          const checkedBaseline = execFileSync('git', ['-C', join(process.env.RUNNER_TEMP, 'exploretv-native-baseline'), 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          if (checkedBaseline !== process.env.BASELINE_COMMIT) throw new Error('Pinned native baseline changed');
+          // Keep the existing pixel, diagnostic, dependency and same-runner
+          // assertions, then identify this workflow's newer native baseline.
+          const comparison = compareOverviewBenchmarks(
+            load('artifacts/native-baseline'), load('artifacts/current-cold'), candidateCommit,
+          );
+          comparison.baselineCommit = checkedBaseline;
+          comparison.method = 'Pinned native baseline then current cold-world export, sequentially in one CI job on the same runner with identical package-lock.json and installed dependencies. Each checkout builds its own native modules before timing. Both exports use fresh processes and complete-lifetime RSS monitors, with no persistent world tape. OS file caches are uncontrolled. World-specific preparation/replay and sharing-image encoding are separate later measurements.';
+          writeFileSync('artifacts/current-cold/sequential-comparison.json', JSON.stringify(comparison, null, 2), { flag: 'wx' });
+          console.log(JSON.stringify(comparison));
+          NODE
+      - name: Separately measure first world preparation and prepared replay
+        run: node scripts/run-prepared-ci.mjs artifacts/prepared
+      - run: node scripts/verify-overview.mjs fixtures/example-world.wld example/assets artifacts/prepared/prepared-world/preview.png --example
+      - run: node scripts/verify-overview.mjs fixtures/example-world.wld example/assets artifacts/prepared/replay.png --example
+      - name: Separately time 4200-pixel WebP sharing copy after all generation measurements
+        env:
+          MALLOC_ARENA_MAX: "2"
+          MALLOC_MMAP_THRESHOLD_: "131072"
+          DISABLE_SYSTEM_FONTS_LOAD: "1"
+        run: |
+          mkdir -p artifacts/sharing
+          artifacts/prepared/measure-process artifacts/sharing/webp-lifetime.json \
+            node --expose-gc --max-old-space-size=48 --max-semi-space-size=4 \
+            scripts/encode-overview.mjs artifacts/prepared/replay.png \
+            artifacts/sharing/world-4200.webp --max-width 4200 --quality 85
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+          const read = (path) => JSON.parse(readFileSync(path, 'utf8'));
+          const lifetime = read('artifacts/sharing/webp-lifetime.json');
+          const encoded = read('artifacts/sharing/world-4200.webp.json');
+          assert.equal(lifetime.exitCode, 0);
+          assert.equal(encoded.webp.width, 4200);
+          assert.equal(encoded.webp.height, 1200);
+          const report = {
+            schema: 'exploretv-overview-sharing-benchmark-v1',
+            phase: 'post-generation-webp',
+            includedInWorldGenerationTiming: false,
+            includedInPreparationTiming: false,
+            includedInReplayTiming: false,
+            endToEndSeconds: lifetime.elapsedSeconds,
+            encoderSeconds: encoded.runtimeSeconds,
+            encoderOsPeakRssBytes: lifetime.exporterOsPeakRssBytes,
+            monitorOsPeakRssBytes: lifetime.monitorOsPeakRssBytes,
+            source: encoded.source,
+            webp: encoded.webp,
+            measurement: 'Independent Node process after both renderers and prepared replay have exited. wait4 includes encoder startup, PNG validation/decoding/resizing, WebP encoding, output/report writes and shutdown. This is a lossy sharing copy; replay.png remains the exact reference. Its time and memory are separate from world generation and are not added to or substituted for the earlier generation/replay measurements.',
+          };
+          writeFileSync('artifacts/sharing/webp-runtime.json', JSON.stringify(report, null, 2), { flag: 'wx' });
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+            '## Separate sharing-image postprocess\n\n' +
+            'The 4200 × 1200 WebP is a quality-85 sharing copy. Its encoding runs after all world-generation and prepared-replay measurements; the original PNG remains the exact reference.\n\n' +
+            '| Measurement | Value |\n|---|---:|\n' +
+            `| Complete WebP-process time | ${report.endToEndSeconds.toFixed(3)} s |\n` +
+            `| Encoder process lifetime peak (not aggregate generation RSS) | ${(report.encoderOsPeakRssBytes / 1e6).toFixed(2)} MB |\n` +
+            `| WebP size | ${(report.webp.bytes / 1e6).toFixed(3)} MB |\n`,
+          );
+          console.log(JSON.stringify(report));
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prepared-panorama-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            artifacts/native-baseline/*.json
+            artifacts/current-cold/*.json
+            artifacts/current-cold/world-1px.png
+            artifacts/prepared/*.json
+            artifacts/prepared/prepared-world/manifest.json
+            artifacts/prepared/prepared-world/preparation.json
+            artifacts/prepared/prepared-world/preview.png.json
+            artifacts/prepared/prepared-world/preview.png.verification.json
+            artifacts/prepared/prepared-world/preview.png.fidelity.json
+            artifacts/sharing/*.json
+            artifacts/sharing/world-4200.webp
+          compression-level: 0
+          retention-days: 7

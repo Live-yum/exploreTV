@@ -199,7 +199,10 @@ export function createSoftwareOverview({
   maxFrames = 4096,
   maxLiveFrameBytes = Math.max(maxFrameBytes, MAX_FRAME_PIXEL_BYTES),
   createCanvas = defaultCreateCanvas,
+  onNativeBatch = null,
 } = {}) {
+  if (onNativeBatch !== null && typeof onNativeBatch !== "function")
+    throw new TypeError("Invalid native overview recording callback");
   if (
     !Number.isSafeInteger(maxFrameBytes) ||
     maxFrameBytes < 1 ||
@@ -605,6 +608,15 @@ export function createSoftwareOverview({
               );
               stats.nativeComposeMilliseconds +=
                 performance.now() - composeStarted;
+              // Recording is opt-in and synchronous: the batch's borrowed
+              // frame buffers remain pinned until this callback returns.
+              if (onNativeBatch)
+                onNativeBatch({
+                  descriptors: descriptors.subarray(0, n),
+                  sources,
+                  width,
+                  height,
+                });
               result.nativeCommands += n / 8;
               stats.nativeCommands += n / 8;
               stats.nativeBatches++;
