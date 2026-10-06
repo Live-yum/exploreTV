@@ -29,6 +29,10 @@ import {
   STATIC_MISC_TILES,
 } from "../core/renderer.mjs";
 import { createCanvas } from "@napi-rs/canvas";
+import {
+  sampleProcessMemory,
+  getProcessMemorySamplingStatus,
+} from "./process-memory.mjs";
 import { createWorldRenderer } from "./world-render-engine.mjs";
 
 const USAGE = `Usage: node --expose-gc scripts/render-full-world.mjs <world.wld> <png-directory> <output-directory> [options]
@@ -463,7 +467,7 @@ async function main(argv) {
       overviewContext.drawImage(down, x, y);
       processedCells += cw * ch;
       chunkCount++;
-      peakRssBytes = Math.max(peakRssBytes, process.memoryUsage().rss);
+      peakRssBytes = Math.max(peakRssBytes, sampleProcessMemory().rss);
     }
     strip = null;
     if (global.gc) global.gc();
@@ -475,7 +479,7 @@ async function main(argv) {
       chunkCount,
       renderedCommands,
       elapsedSeconds: +((performance.now() - started) / 1000).toFixed(1),
-      rssMiB: Math.round(process.memoryUsage().rss / 1048576),
+      rssMiB: Math.round(sampleProcessMemory().rss / 1048576),
     };
     writeFileSync(
       join(outDir, "full-world-progress.json"),
@@ -679,10 +683,11 @@ async function main(argv) {
   };
   report.peakRssBytes = Math.max(
     report.peakRssBytes,
-    process.memoryUsage().rss,
+    sampleProcessMemory().rss,
   );
   report.memoryMeasurement =
-    "peakRssBytes is the largest sampled RSS after a chunk or at completion; logical canvas, frame and asset bounds are reported separately.";
+    "peakRssBytes is the largest RSS observation after a chunk or at completion. If current RSS is unavailable, the OS lifetime peak is used conservatively; memorySampling records this fallback. Logical canvas, frame and asset bounds are reported separately.";
+  report.memorySampling = getProcessMemorySamplingStatus();
   writeFileSync(
     join(outDir, "full-world-coverage.json"),
     JSON.stringify(report, null, 2),

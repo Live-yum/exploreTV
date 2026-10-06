@@ -10,6 +10,10 @@ import {
   existsSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import {
+  sampleProcessMemory,
+  getProcessMemorySamplingStatus,
+} from "./process-memory.mjs";
 if (process.platform !== "linux")
   throw new Error(
     "The full-lifetime RSS acceptance harness requires Linux wait4",
@@ -59,7 +63,17 @@ const child = spawn(
     "--expect-world-sha256",
     "d551a6b360c7af49a07dadbb1e82223ac43ad398e2054c29f500ec5e8b5b1cab",
   ],
-  { stdio: "inherit", detached: true },
+  {
+    stdio: "inherit",
+    detached: true,
+    // Apply before the monitor execs Node: glibc reads allocator tunables at
+    // process startup. Preserve an explicit caller choice (including 0), and
+    // leave this harness and the pinned baseline's environment unchanged.
+    env: {
+      ...process.env,
+      MALLOC_ARENA_MAX: process.env.MALLOC_ARENA_MAX ?? "2",
+    },
+  },
 );
 let stopped = false,
   killTimer,
@@ -98,8 +112,11 @@ function treeRss(pid, parent, seen = new Set()) {
     // attribute an unrelated process to this benchmark on a numeric PID alone.
     if (Number(status.match(/^PPid:\s+(\d+)/m)?.[1]) !== parent)
       return { bytes: 0, count: 0, complete: false };
+    const rssKiB = Number(status.match(/^VmRSS:\s+(\d+)/m)?.[1]);
+    if (!Number.isSafeInteger(rssKiB) || rssKiB <= 0)
+      return { bytes: 0, count: 0, complete: false };
     const value = {
-      bytes: Number(status.match(/^VmRSS:\s+(\d+)/m)?.[1] ?? 0) * 1024,
+      bytes: rssKiB * 1024,
       count: 1,
       complete: true,
     };
@@ -146,8 +163,9 @@ function stop(reason) {
 const timer = setInterval(() => {
   try {
     const tree = treeRss(child.pid, process.pid);
-    const aggregate = process.memoryUsage().rss + tree.bytes;
-    if (tree.complete && tree.count >= 2) {
+    const ownMemory = sampleProcessMemory();
+    const aggregate = ownMemory.rss + tree.bytes;
+    if (ownMemory.rssCurrentAvailable && tree.complete && tree.count >= 2) {
       completeTreeSamples++;
       peakCompleteAggregateRssBytes = Math.max(
         peakCompleteAggregateRssBytes,
@@ -209,6 +227,8 @@ child.once("exit", (code, signal) => {
     endToEndSeconds,
     exporterSeconds: report?.runtimeSeconds ?? null,
     targetSeconds: 600,
+    preferredRuntimeSeconds: 60,
+    preferredRuntimePassed: endToEndSeconds < 60 && targetPassed,
     targetRssBytes: 500000000,
     preferredRssBytes: 300000000,
     preferredMemoryPassed:
@@ -221,6 +241,7 @@ child.once("exit", (code, signal) => {
     sampledAggregatePeakRssBytes:
       completeTreeSamples > 0 ? peakCompleteAggregateRssBytes : null,
     partialTreeObservedPeakBytes: peakAggregateRssBytes,
+    harnessMemorySampling: getProcessMemorySamplingStatus(),
     harnessOsPeakRssBytes,
     monitoringTailReserveBytes,
     lifetime,
@@ -238,13 +259,13 @@ child.once("exit", (code, signal) => {
       "exporter shutdown",
     ],
     excludes: [
-      "dependencies and benchmark-helper compilation",
+      "dependencies, native-renderer and benchmark-helper compilation",
       "separate correctness verification",
     ],
     cacheState:
       "Fresh process/application caches; OS file cache uncontrolled; no persistent reduced-texture cache.",
     memoryMeasurement:
-      "Linux wait4 measures the entire exporter lifetime. getrusage measures the small native monitor and Node harness. Acceptance uses their conservative peak sum plus 1 MiB tail reserve, and samples their contemporaneous process-tree RSS every second. Native threads are included. If /proc sampling is unavailable or namespace-inconsistent, the exact lifetime conservative peak sum remains the acceptance measurement.",
+      "Linux wait4 measures the entire exporter lifetime. getrusage measures the small native monitor and Node harness. Acceptance uses their conservative peak sum plus 1 MiB tail reserve, and samples their contemporaneous process-tree RSS every second when available. Native threads are included. If /proc sampling is unavailable or namespace-inconsistent, the exact lifetime conservative peak sum remains the acceptance measurement. A failed current-RSS call uses the harness OS lifetime peak conservatively and is excluded from contemporaneous sampling; V8 heap/external values remain measured and unavailable ArrayBuffer bytes are null.",
     environment: report?.environment ?? null,
   };
   writeFileSync(

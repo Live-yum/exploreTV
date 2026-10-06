@@ -41,14 +41,26 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npm run prepare:overview
+      - run: node scripts/check-overview-native.mjs
       - run: node scripts/prepare-example.mjs example/assets --check
       - run: node --test test/png-stream.test.mjs test/export-world.test.mjs test/overview-export.test.mjs test/overview-fast-path.test.mjs test/scene-frame-cache.test.mjs test/compact-waterfall-registry.test.mjs test/overview-budget.test.mjs test/png-rgba.test.mjs test/png-rgba-node.test.mjs test/overview-core-cull.test.mjs test/static-planner-dispatch.test.mjs test/raw-texture-cache.test.mjs test/overview-comparison.test.mjs
+      - run: node --test test/native-reducer.test.mjs test/native-blitter.test.mjs test/software-overview-partition.test.mjs test/software-overview-composite.test.mjs test/overview-frame-metadata.test.mjs test/scene-frame-interner.test.mjs test/ordinary-planner-fast-path.test.mjs test/indexed-shimmer-hint.test.mjs test/process-memory.test.mjs test/raw-overview-frame.test.mjs test/raw-identity-preparation.test.mjs test/slope-overview-frame.test.mjs test/reduce-overview-canvas.test.mjs test/native-provenance.test.mjs test/overview-early-halo-cull.test.mjs
+      - run: node --test test/world-validation-memo.test.mjs test/renderer-slope-polygons.test.mjs
       - name: Measure pinned baseline on this runner
         env:
-          BASELINE_COMMIT: 18f8a8d65cd2af5f3b823ebaf1fcd41a718559a8
+          BASELINE_COMMIT: 7fa7da3daf37e01d0bd3569edbdf46cdeb54529e
         run: |
           git fetch --no-tags --depth=1 origin "$BASELINE_COMMIT"
-          git diff --exit-code "$BASELINE_COMMIT" HEAD -- package-lock.json
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { execFileSync } from 'node:child_process';
+          import { readFileSync } from 'node:fs';
+          const base = JSON.parse(execFileSync('git', ['show', process.env.BASELINE_COMMIT + ':package-lock.json'], { encoding: 'utf8' }));
+          const current = JSON.parse(readFileSync('package-lock.json', 'utf8'));
+          for (const [path, entry] of Object.entries(base.packages))
+            if (path) assert.deepEqual(current.packages[path], entry, 'Unchanged rendering dependency: ' + path);
+          NODE
           baseline="$RUNNER_TEMP/exploretv-overview-baseline"
           git worktree add --detach "$baseline" "$BASELINE_COMMIT"
           test "$(git -C "$baseline" rev-parse HEAD)" = "$BASELINE_COMMIT"

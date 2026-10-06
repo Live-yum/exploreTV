@@ -1,7 +1,12 @@
 import { createRawTextureCache } from "./raw-texture-cache.mjs";
+import { createSoftwareOverview } from "./software-overview.mjs";
+import { createSceneFrameInterner } from "./scene-frame-interner.mjs";
 import { createNodePngRgbaDecoder } from "./png-rgba-node.mjs";
 import { createCompactStaticWaterfallRegistry } from "./compact-waterfall-registry.mjs";
-import { prepareOpaqueOverview } from "./overview-fast-path.mjs";
+import {
+  prepareOpaqueOverview,
+  createOverviewFrameMetadataCache,
+} from "./overview-fast-path.mjs";
 import { createStaticWaterfallRegistry } from "../core/static-waterfalls.mjs";
 import { sceneFrameReservedBytes } from "../core/scene-batches.mjs";
 import { readFileSync, existsSync, statSync } from "node:fs";
@@ -24,6 +29,9 @@ import {
 } from "../core/scene-frames.mjs";
 
 export const HALO_TILES = 10;
+const TRACKED_COMMAND = 1;
+const HIDDEN_COMMAND = 2;
+const OUTSIDE_CORE_COMMAND = 4;
 export function paddedWorldRect(world, rect, padding = HALO_TILES) {
   validateRect(rect, world.width, world.height);
   const x = Math.max(0, rect.x - padding),
@@ -45,6 +53,10 @@ export function buildRowIndex(world, stride = 16) {
     offsets = new Uint32Array(world.width * bands),
     starts = new Uint16Array(world.width * bands);
   const r = new Reader(world.bytes, world.sections[2]);
+  let shimmerMinX = world.width,
+    shimmerMaxX = -1;
+  let shimmerMinY = world.height,
+    shimmerMaxY = -1;
   for (let x = 0; x < world.width; x++) {
     r.pos = world.columns[x];
     let next = 0;
@@ -52,6 +64,12 @@ export function buildRowIndex(world, stride = 16) {
       const offset = r.pos,
         rec = decodeRecord(r, world.important, false),
         end = y + rec.repeats + 1;
+      if (rec.tile.liquid > 0 && rec.tile.liquidKind === 4) {
+        shimmerMinX = Math.min(shimmerMinX, x);
+        shimmerMaxX = Math.max(shimmerMaxX, x);
+        shimmerMinY = Math.min(shimmerMinY, y);
+        shimmerMaxY = Math.max(shimmerMaxY, end - 1);
+      }
       while (next < end) {
         const i = x * bands + Math.floor(next / stride);
         offsets[i] = offset;
@@ -67,6 +85,15 @@ export function buildRowIndex(world, stride = 16) {
     offsets,
     starts,
     bytes: offsets.byteLength + starts.byteLength,
+    shimmerBounds:
+      shimmerMaxX < 0
+        ? null
+        : Object.freeze({
+            minX: shimmerMinX,
+            maxX: shimmerMaxX,
+            minY: shimmerMinY,
+            maxY: shimmerMaxY,
+          }),
   };
 }
 /** Random read using the same validated sparse index, never a whole-column decode. */
@@ -152,6 +179,16 @@ export function readIndexedRegion(world, index, rect) {
   return {
     rect,
     cells,
+    ...(index.shimmerBounds !== undefined
+      ? {
+          indexedShimmerPossible:
+            index.shimmerBounds !== null &&
+            index.shimmerBounds.maxX >= rect.x - 1 &&
+            index.shimmerBounds.minX <= rect.x + rect.width &&
+            index.shimmerBounds.maxY >= rect.y - 11 &&
+            index.shimmerBounds.minY < rect.y + rect.height,
+        }
+      : {}),
     version: world.version,
     important: world.important,
     treeContext: world.treeContext,
@@ -243,17 +280,28 @@ export function createWorldRenderer({
   onOmission = () => {},
   cacheFrames = true,
   lowMemory = false,
+  nativeOverview = false,
 }) {
   const frameCache = cacheFrames
     ? createSceneFrameCache(
         lowMemory ? { maxFrames: 2048, maxBytes: 2 * 1024 * 1024 } : {},
       )
     : null;
+  const frameMetadataCache = lowMemory
+    ? createOverviewFrameMetadataCache()
+    : null;
+  const frameInterner = createSceneFrameInterner();
   const lazyRaw = lowMemory && inputEncoding === "tconvert-game-raw";
+  const softwareRenderer =
+    lazyRaw && nativeOverview ? createSoftwareOverview() : null;
   const pngDecoder = lowMemory && !lazyRaw ? createNodePngRgbaDecoder() : null;
   const stats = {
     pngDecodeCache: pngDecoder?.stats ?? null,
     frameCache: frameCache?.stats ?? null,
+    frameMetadataCache: frameMetadataCache?.stats ?? null,
+    frameKeyInterner: frameInterner.stats,
+    nativeOverview: softwareRenderer?.stats ?? null,
+    skippedFramePreparationCommands: 0,
     stageMilliseconds: {
       plan: 0,
       assets: 0,
@@ -262,6 +310,8 @@ export function createWorldRenderer({
       validate: 0,
       draw: 0,
       opaqueOverview: 0,
+      nativePartition: 0,
+      keyGeneration: 0,
     },
     opaqueOverview: { eligibleTiles: 0, skippedCommands: 0, totalCommands: 0 },
     waterfalls: waterfallRegistry
@@ -282,6 +332,7 @@ export function createWorldRenderer({
     maxPlanCommands: 0,
     maxPreparedBytes: 0,
     renderedCommands: 0,
+    earlyCulledHaloCommands: 0,
     culledOutsideCoreCommands: 0,
     plannedCommands: 0,
     assetHashes: {},
@@ -467,26 +518,12 @@ export function createWorldRenderer({
     const assetView = await assetsFor(plan);
     const useCoreSurface = lowMemory && coreSurface;
     const ctx = canvas.getContext("2d");
-    let contextSaved = false;
+    let contextSaved = false,
+      softwareOverview = null;
     try {
       const assets = assetView.assets;
       stats.stageMilliseconds.assets += performance.now() - stageStarted;
-      // A same-size resize discards the backing store even when dimensions do
-      // not change. Reuse it; the opaque fill below replaces every scene pixel.
-      const surfaceWidth = useCoreSurface ? core.width * 16 : plan.width;
-      const surfaceHeight = useCoreSurface ? core.height * 16 : plan.height;
-      if (canvas.width !== surfaceWidth) canvas.width = surfaceWidth;
-      if (canvas.height !== surfaceHeight) canvas.height = surfaceHeight;
-      ctx.fillStyle = "#000000";
-      ctx.fillRect(0, 0, surfaceWidth, surfaceHeight);
-      if (useCoreSurface) {
-        // Planning keeps the complete halo. Translate the same ordered draws
-        // onto a core-sized surface; its device clip replaces the later crop.
-        ctx.save();
-        contextSaved = true;
-        ctx.translate(-left, -top);
-      }
-      const coreCommands = plan.commands.filter((c) => inCore(c, region, core));
+      let coreCommandCount = 0;
       if (count) {
         stats.maxChunkCells = Math.max(
           stats.maxChunkCells,
@@ -496,10 +533,6 @@ export function createWorldRenderer({
           stats.maxPlanCommands,
           plan.commands.length,
         );
-        for (const c of coreCommands) {
-          stats.plannedCommands++;
-          add(commandCounts, c.kind);
-        }
         for (const c of plan.sourceHiddenCells || [])
           if (
             c.x >= core.x &&
@@ -529,21 +562,60 @@ export function createWorldRenderer({
             onOmission(c.x, c.y, 2);
           }
       }
-      // A private, immutable plan is used only during this draw. Intern each full
-      // frame key once instead of rebuilding it at batching, validation and draw.
+      const outsideCore = (c) =>
+        lowMemory &&
+        Number.isFinite(c.dx) &&
+        Number.isFinite(c.dy) &&
+        Number.isFinite(c.dw) &&
+        Number.isFinite(c.dh) &&
+        c.dw > 0 &&
+        c.dh > 0 &&
+        (c.dx + c.dw + 1 <= left ||
+          c.dy + c.dh + 1 <= top ||
+          c.dx - 1 >= right ||
+          c.dy - 1 >= bottom);
+      // Keep the complete halo plan for dependencies, assets and diagnostics.
+      // Only the working command list omits external owners whose complete draw
+      // cannot touch the core, with the same conservative antialiasing margin as
+      // the final draw cull. Core owners retain every original validation path.
+      // Fuse selection with key generation to avoid another whole-plan scan.
+      stageStarted = performance.now();
       const keyCache = new Map(),
-        internedKeys = new Map();
+        renderCommands = lowMemory ? [] : plan.commands;
       for (const c of plan.commands) {
-        const key = sceneFrameKey(c);
-        if (!internedKeys.has(key)) internedKeys.set(key, key);
-        keyCache.set(c, internedKeys.get(key));
+        const ownerInCore = inCore(c, region, core);
+        if (lowMemory) {
+          if (!ownerInCore && outsideCore(c)) {
+            stats.earlyCulledHaloCommands++;
+            continue;
+          }
+          renderCommands.push(c);
+        }
+        keyCache.set(c, frameInterner.key(c));
+        if (ownerInCore) {
+          coreCommandCount++;
+          if (count) {
+            stats.plannedCommands++;
+            add(commandCounts, c.kind);
+          }
+        }
       }
+      const renderPlan = lowMemory
+        ? { ...plan, commands: renderCommands }
+        : plan;
+      stats.stageMilliseconds.keyGeneration += performance.now() - stageStarted;
+      const metadata = frameMetadataCache?.view(
+        assets,
+        createCanvas,
+        inputEncoding,
+      );
       stageStarted = performance.now();
       const opaqueOverview = overview
-        ? prepareOpaqueOverview(plan, assets, createCanvas, {
+        ? prepareOpaqueOverview(renderPlan, assets, createCanvas, {
             frameCache,
             inputEncoding,
             keyCache,
+            metadata,
           })
         : null;
       stats.stageMilliseconds.opaqueOverview +=
@@ -552,13 +624,127 @@ export function createWorldRenderer({
         for (const key of Object.keys(stats.opaqueOverview))
           stats.opaqueOverview[key] += opaqueOverview[key];
       stageStarted = performance.now();
-      const batches = commandBatches(plan, keyCache);
-      let rasterizedCommands = 0;
+      softwareOverview =
+        overview && softwareRenderer
+          ? softwareRenderer.begin(renderPlan, core, region, assets, keyCache)
+          : null;
+      stats.stageMilliseconds.nativePartition +=
+        performance.now() - stageStarted;
+      // Fully native cores require no Canvas backing allocation or clear.
+      // Mixed cores retain the original translated-core Canvas semantics.
+      if (!softwareOverview || softwareOverview.unsafe.includes(1)) {
+        const surfaceWidth = useCoreSurface ? core.width * 16 : plan.width;
+        const surfaceHeight = useCoreSurface ? core.height * 16 : plan.height;
+        if (canvas.width !== surfaceWidth) canvas.width = surfaceWidth;
+        if (canvas.height !== surfaceHeight) canvas.height = surfaceHeight;
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(0, 0, surfaceWidth, surfaceHeight);
+        if (useCoreSurface) {
+          ctx.save();
+          contextSaved = true;
+          ctx.translate(-left, -top);
+        }
+      }
+      let preparationCommands = renderPlan.commands;
+      let preparationFlags = null;
+      const rememberKeys = metadata ? new Set() : null;
+      if (metadata) {
+        stageStarted = performance.now();
+        preparationCommands = [];
+        preparationFlags = new Uint8Array(renderPlan.commands.length);
+        const validations = new Map();
+        for (const c of renderPlan.commands) {
+          const tracked = count && inCore(c, region, core),
+            key = keyCache.get(c);
+          let validation = validations.get(key);
+          // One key normally identifies one exact source crop. Compare the
+          // original fields as well, so unusual key-string collisions retain
+          // the old per-command source/crop checks and failure precedence.
+          const previous = validation?.command;
+          if (
+            !previous ||
+            previous.asset !== c.asset ||
+            previous.sx !== c.sx ||
+            previous.sy !== c.sy ||
+            previous.sw !== c.sw ||
+            previous.sh !== c.sh
+          ) {
+            const asset = assets.get(c.asset),
+              missing = !asset,
+              invalid = !missing && invalidCrop(c, asset);
+            validation = {
+              command: c,
+              missing,
+              invalid,
+              known: missing || invalid ? null : metadata.get(c, key),
+            };
+            validations.set(key, validation);
+          }
+          if (validation.missing) {
+            if (tracked) {
+              add(missingCommands, c.asset);
+              onOmission(c.x + region.rect.x, c.y + region.rect.y, 4);
+            }
+            continue;
+          }
+          if (validation.invalid) {
+            if (tracked) {
+              add(invalidCommands, c.asset);
+              onOmission(c.x + region.rect.x, c.y + region.rect.y, 8);
+            }
+            continue;
+          }
+          const known = validation.known;
+          if (known?.unsupported) {
+            if (tracked) {
+              add(effectFailures, known.unsupported);
+              onOmission(c.x + region.rect.x, c.y + region.rect.y, 16);
+            }
+            continue;
+          }
+          const hidden = opaqueOverview?.skip.has(c),
+            outside = !hidden && outsideCore(c);
+          if (known && (hidden || outside)) {
+            // Cached validation remains authoritative after native surfaces
+            // have been evicted. Hidden/halo commands keep logical accounting
+            // without materializing a surface that will never be drawn.
+            if (outside) stats.culledOutsideCoreCommands++;
+            if (tracked) stats.renderedCommands++;
+            stats.skippedFramePreparationCommands++;
+            continue;
+          }
+          // Never-seen hidden frames still pass through the original preparer
+          // once, so an omitted effect cannot disappear from the report.
+          if (!known) rememberKeys.add(key);
+          preparationFlags[preparationCommands.length] =
+            (tracked ? TRACKED_COMMAND : 0) |
+            (hidden ? HIDDEN_COMMAND : 0) |
+            (outside ? OUTSIDE_CORE_COMMAND : 0);
+          preparationCommands.push(c);
+        }
+        // No command needs these records after preflight. The compact flags
+        // below retain only the owner/visibility decisions for each batch.
+        validations.clear();
+        stats.stageMilliseconds.validate += performance.now() - stageStarted;
+      }
+      stageStarted = performance.now();
+      const batches = commandBatches(
+        { ...renderPlan, commands: preparationCommands },
+        keyCache,
+      );
+      let rasterizedCommands = 0,
+        validationOffset = 0;
       stats.stageMilliseconds.batches += performance.now() - stageStarted;
       for (const commands of batches) {
         stageStarted = performance.now();
-        const part = { ...plan, commands };
-        const frames = prepareSceneFrames(part, assets, createCanvas, {
+        const part = { ...renderPlan, commands };
+        const preparedPart = softwareOverview
+          ? {
+              ...part,
+              commands: softwareOverview.preparationCommands(commands),
+            }
+          : part;
+        const frames = prepareSceneFrames(preparedPart, assets, createCanvas, {
           frameCache,
           keyCache,
           inputEncoding: inputEncoding,
@@ -573,23 +759,39 @@ export function createWorldRenderer({
         // invalid commands explicitly and report each instead of losing valid ones.
         const valid = [];
         for (const c of commands) {
-          const tracked = count && inCore(c, region, core),
-            asset = assets.get(c.asset);
-          if (!asset) {
-            if (tracked) {
-              add(missingCommands, c.asset);
-              onOmission(c.x + region.rect.x, c.y + region.rect.y, 4);
+          const flags = preparationFlags
+              ? preparationFlags[validationOffset++]
+              : 0,
+            tracked = preparationFlags
+              ? !!(flags & TRACKED_COMMAND)
+              : count && inCore(c, region, core);
+          // The metadata path already preflighted every source/crop before
+          // deciding which commands require native preparation.
+          if (!metadata) {
+            const asset = assets.get(c.asset);
+            if (!asset) {
+              if (tracked) {
+                add(missingCommands, c.asset);
+                onOmission(c.x + region.rect.x, c.y + region.rect.y, 4);
+              }
+              continue;
             }
-            continue;
-          }
-          if (invalidCrop(c, asset)) {
-            if (tracked) {
-              add(invalidCommands, c.asset);
-              onOmission(c.x + region.rect.x, c.y + region.rect.y, 8);
+            if (invalidCrop(c, asset)) {
+              if (tracked) {
+                add(invalidCommands, c.asset);
+                onOmission(c.x + region.rect.x, c.y + region.rect.y, 8);
+              }
+              continue;
             }
-            continue;
           }
-          const resolved = frames.resolve(c);
+          const resolved =
+            softwareOverview?.resolveCached(c) ?? frames.resolve(c);
+          if (rememberKeys?.size) {
+            const key = keyCache.get(c);
+            if (rememberKeys.delete(key)) {
+              metadata.remember(c, key, resolved);
+            }
+          }
           if (resolved?.unsupported) {
             if (tracked) {
               add(effectFailures, resolved.unsupported);
@@ -597,19 +799,15 @@ export function createWorldRenderer({
             }
             continue;
           }
-          if (!opaqueOverview?.skip.has(c)) {
-            // Neighbor tiles still participate in planning and validation. Only
-            // native draws whose destination cannot touch the exported core are
-            // omitted; overhanging sprites and boundary antialiasing stay intact.
-            const outside =
-              lowMemory &&
-              [c.dx, c.dy, c.dw, c.dh].every(Number.isFinite) &&
-              c.dw > 0 &&
-              c.dh > 0 &&
-              (c.dx + c.dw + 1 <= left ||
-                c.dy + c.dh + 1 <= top ||
-                c.dx - 1 >= right ||
-                c.dy - 1 >= bottom);
+          const hidden = preparationFlags
+            ? !!(flags & HIDDEN_COMMAND)
+            : opaqueOverview?.skip.has(c);
+          if (!hidden) {
+            // Retained neighbor overhangs and every core owner preserve their
+            // validated draw decision, including boundary antialiasing margins.
+            const outside = preparationFlags
+              ? !!(flags & OUTSIDE_CORE_COMMAND)
+              : outsideCore(c);
             if (outside) stats.culledOutsideCoreCommands++;
             else valid.push(c);
           }
@@ -618,10 +816,14 @@ export function createWorldRenderer({
         stats.stageMilliseconds.validate += performance.now() - stageStarted;
         stageStarted = performance.now();
         rasterizedCommands += valid.length;
-        renderScene(ctx, { ...part, commands: valid }, assets, {
-          strict: true,
-          sceneFrames: frameView,
-        });
+        const canvasCommands = softwareOverview
+          ? softwareOverview.drawBatch(valid, frames)
+          : valid;
+        if (canvasCommands.length)
+          renderScene(ctx, { ...part, commands: canvasCommands }, assets, {
+            strict: true,
+            sceneFrames: frameView,
+          });
         stats.stageMilliseconds.draw += performance.now() - stageStarted;
         stats.maxPreparedBytes = Math.max(
           stats.maxPreparedBytes,
@@ -631,13 +833,15 @@ export function createWorldRenderer({
       }
       return {
         plan,
-        coreCommands: coreCommands.length,
+        coreCommands: coreCommandCount,
         opaqueOverview,
+        softwareOverview,
         rasterizedCommands,
         readbackX: useCoreSurface ? 0 : left,
         readbackY: useCoreSurface ? 0 : top,
       };
     } finally {
+      softwareOverview?.finish();
       if (contextSaved) ctx.restore();
       assetView.dispose();
       if (rawTextures) {
@@ -652,6 +856,9 @@ export function createWorldRenderer({
     stats,
     dispose() {
       frameCache?.dispose();
+      frameMetadataCache?.dispose();
+      frameInterner.dispose();
+      softwareRenderer?.dispose();
       pngDecoder?.clear();
       rawTextures?.dispose();
       assetCache.clear();

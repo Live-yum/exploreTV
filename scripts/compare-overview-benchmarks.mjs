@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const OVERVIEW_BASELINE_COMMIT =
-  "18f8a8d65cd2af5f3b823ebaf1fcd41a718559a8";
+  "7fa7da3daf37e01d0bd3569edbdf46cdeb54529e";
 const WORLD_SHA =
   "d551a6b360c7af49a07dadbb1e82223ac43ad398e2054c29f500ec5e8b5b1cab";
 const PIXEL_SHA =
@@ -90,7 +90,7 @@ export function compareOverviewBenchmarks(
     baselineCommit: OVERVIEW_BASELINE_COMMIT,
     candidateCommit,
     method:
-      "CI runs the pinned baseline then candidate sequentially on the same runner, with the identical lockfile and installed dependencies. Both use fresh processes and complete-lifetime RSS monitors. OS file-cache state is uncontrolled.",
+      "CI runs the pinned baseline then candidate sequentially on the same runner with identical installed rendering dependencies. The candidate adds build-time Node-API headers, explicitly prepares its native kernels before timing, and defaults the exporter startup MALLOC_ARENA_MAX to 2 (an explicit caller value is preserved; a glibc arena_max tunable takes precedence). Its report records requested allocator and Node settings, not an assumed effective arena count. The baseline retains its original launch configuration. Both use fresh processes and complete-lifetime RSS monitors. No world is pre-rendered. OS file-cache state is uncontrolled.",
     worldSha256: WORLD_SHA,
     wholeImagePixelSha256: PIXEL_SHA,
     pixels: 20160000,
@@ -116,6 +116,8 @@ export function compareOverviewBenchmarks(
     ).toFixed(2),
     preferredRssBytes: 300000000,
     preferredMemoryPassed: candidateBytes < 300000000,
+    preferredRuntimeSeconds: 60,
+    preferredRuntimePassed: candidateSeconds < 60,
     environment: candidate.timing.environment,
   };
 }

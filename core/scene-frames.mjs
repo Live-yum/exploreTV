@@ -410,42 +410,81 @@ export function prepareSceneFrames(
         inputEncoding === "tconvert-game-raw" &&
         (!c.paintId || c.paintId === 31);
       let hasAdditive = false;
-      for (let i = 0; i < base.length; i += 4) {
-        const x = (i / 4) % width,
-          y = Math.floor(i / 4 / width);
-        let sourceOffset = i;
-        if (corner) {
-          let sx = Math.floor(((x + 0.5) * c.sw) / width),
-            sy = Math.floor(((y + 0.5) * c.sh) / height);
-          if (c.flipX) sx = c.sw - 1 - sx;
-          if (c.flipY) sy = c.sh - 1 - sy;
-          sourceOffset = (sy * c.sw + sx) * 4;
+      if (rawIdentity && !corner && !c.vertexColor) {
+        // Equivalent to splitPremultipliedRGBA, but the common raw identity
+        // path needs no per-pixel views, arrays, objects, or coordinate math.
+        // Preserve multiply-then-divide rounding and alpha-zero additive RGB.
+        const data = pixels.data;
+        for (let i = 0; i < base.length; i += 4) {
+          const r = data[i],
+            g = data[i + 1],
+            b = data[i + 2],
+            a = data[i + 3];
+          if (a === 255) {
+            base[i] = r;
+            base[i + 1] = g;
+            base[i + 2] = b;
+            base[i + 3] = a;
+            continue;
+          }
+          const er = Math.max(0, r - a),
+            eg = Math.max(0, g - a),
+            eb = Math.max(0, b - a),
+            e = Math.max(er, eg, eb);
+          if (e && !opaqueScene)
+            throw new UnsupportedPaintError(
+              "premultiplied-excess-needs-opaque-scene",
+            );
+          base[i] = a ? Math.round((Math.min(r, a) * 255) / a) : 0;
+          base[i + 1] = a ? Math.round((Math.min(g, a) * 255) / a) : 0;
+          base[i + 2] = a ? Math.round((Math.min(b, a) * 255) / a) : 0;
+          base[i + 3] = a;
+          if (e) {
+            additive[i] = Math.round((er * 255) / e);
+            additive[i + 1] = Math.round((eg * 255) / e);
+            additive[i + 2] = Math.round((eb * 255) / e);
+            additive[i + 3] = e;
+            hasAdditive = true;
+          }
         }
-        const sample = pixels.data.subarray(sourceOffset, sourceOffset + 4);
-        const painted = rawIdentity
-          ? sample
-          : paintPixelRGBA(sample, c.paintId || 0, {
-              wall: c.kind === "wall",
-              specialSettings: settings.specialSettings,
-              inputEncoding,
-              alphaMode: "scene-premultiplied",
-            });
-        let tinted = c.vertexColor
-          ? multiplyStaticVertexColor(painted, c.vertexColor)
-          : painted;
-        if (corner) {
-          const vertex = interpolateShimmerVertexColors(
-            c.vertexColors,
-            (domain.offsetX + x + 0.5) / domain.width,
-            (domain.offsetY + y + 0.5) / domain.height,
-          );
-          tinted = multiplyStaticVertexColor(tinted, vertex);
-        }
-        const split = splitPremultipliedRGBA(tinted, { opaqueScene });
-        base.set(split.base, i);
-        if (split.additive) {
-          additive.set(split.additive, i);
-          hasAdditive = true;
+      } else {
+        for (let i = 0; i < base.length; i += 4) {
+          const x = (i / 4) % width,
+            y = Math.floor(i / 4 / width);
+          let sourceOffset = i;
+          if (corner) {
+            let sx = Math.floor(((x + 0.5) * c.sw) / width),
+              sy = Math.floor(((y + 0.5) * c.sh) / height);
+            if (c.flipX) sx = c.sw - 1 - sx;
+            if (c.flipY) sy = c.sh - 1 - sy;
+            sourceOffset = (sy * c.sw + sx) * 4;
+          }
+          const sample = pixels.data.subarray(sourceOffset, sourceOffset + 4);
+          const painted = rawIdentity
+            ? sample
+            : paintPixelRGBA(sample, c.paintId || 0, {
+                wall: c.kind === "wall",
+                specialSettings: settings.specialSettings,
+                inputEncoding,
+                alphaMode: "scene-premultiplied",
+              });
+          let tinted = c.vertexColor
+            ? multiplyStaticVertexColor(painted, c.vertexColor)
+            : painted;
+          if (corner) {
+            const vertex = interpolateShimmerVertexColors(
+              c.vertexColors,
+              (domain.offsetX + x + 0.5) / domain.width,
+              (domain.offsetY + y + 0.5) / domain.height,
+            );
+            tinted = multiplyStaticVertexColor(tinted, vertex);
+          }
+          const split = splitPremultipliedRGBA(tinted, { opaqueScene });
+          base.set(split.base, i);
+          if (split.additive) {
+            additive.set(split.additive, i);
+            hasAdditive = true;
+          }
         }
       }
       const materialize = (data) => {

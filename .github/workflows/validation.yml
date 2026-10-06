@@ -26,6 +26,8 @@ jobs:
         working-directory: wasm-core
         run: cargo test --locked
       - run: npm ci --ignore-scripts
+      - run: npm run prepare:overview
+      - run: node scripts/check-overview-native.mjs
       - run: npm test
       - run: node scripts/prepare-example.mjs example/assets --check
       - run: node scripts/audit-world.mjs fixtures/example-world.wld example/assets artifacts/current-coverage.json
