@@ -55,6 +55,11 @@ export function compareFramePackBenchmarks(
     assert.equal(wasm.binarySha256, base.render.terrainWasm.binarySha256);
     assert.equal(direct?.available, true);
     assert.equal(
+      direct.framePackCopyPixels,
+      true,
+      "All modes use the same fine-grained frame cache policy",
+    );
+    assert.equal(
       direct.binarySha256,
       base.render.directTerrainOverviewStats.binarySha256,
     );
@@ -108,6 +113,8 @@ export function compareFramePackBenchmarks(
     } else {
       assert.equal(direct.packFrameHits, 0);
       assert.equal(direct.peakPackPageBytes, 0);
+      assert.equal(direct.packCopiedFrames, 0);
+      assert.equal(direct.peakPackStagingBytes, 0);
     }
     const provenance = checkout
       ? verifyOverviewSourceProvenance(run.render, checkout, commit)
@@ -118,6 +125,7 @@ export function compareFramePackBenchmarks(
         wasmFrameStream: mode.stream,
         neighbourhoodWasm: true,
         resolvedCellMask: false,
+        preparedPixelStorage: "exact-frame-copies-and-one-staging-page",
       },
       endToEndSeconds: checked.candidate.endToEndSeconds,
       conservativeAggregatePeakRssBytes:
@@ -194,7 +202,7 @@ export function compareFramePackBenchmarks(
     schema: "exploretv-frame-pack-comparison-v1",
     candidateCommit: commit,
     method:
-      "Pinned main, default prepared frames plus WASM command stream, dynamic frames plus the same stream, then prepared frames plus legacy command planning run sequentially in one job. All candidate modes use one exact source commit, the same native/WASM binaries, fresh complete processes, unchanged heap/allocator settings and no mask. Neighbourhood/liquid WASM stays enabled in all three candidate modes. The world-independent resource build is measured separately; pack loading, texture identity checks and page reads remain inside cold export time. Each run checks all 20,160,000 pixels, 13 regions, source textures and omission diagnostics. One sample per mode; OS file-cache state and ordering effects are uncontrolled.",
+      "Pinned main, default prepared frames plus WASM command stream, dynamic frames plus the same stream, then prepared frames plus legacy command planning run sequentially in one job. All candidate modes use one exact source commit, the same native/WASM binaries, fresh complete processes, unchanged heap/allocator settings and no mask. Prepared pixels use exact frame copies and one staging page inside the unchanged joint frame budget. Neighbourhood/liquid WASM stays enabled in all three candidate modes. The world-independent resource build is measured separately; pack loading, texture identity checks and page reads remain inside cold export time. Each run checks all 20,160,000 pixels, 13 regions, source textures and omission diagnostics. One sample per mode; OS file-cache state and ordering effects are uncontrolled.",
     deltaMeaning:
       "Positive deltaFromDefaultSeconds means that mode was slower in this sample. Nested phase timings are not additive. Single-run differences do not establish a stable speedup.",
     preferredRuntimeSeconds: 60,

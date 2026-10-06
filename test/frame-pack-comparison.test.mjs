@@ -84,10 +84,15 @@ function fixture(seconds, { pack, stream, peak = 280000000 }) {
       available: true,
       binarySha256: hash("5"),
       resolvedCellMask: false,
+      framePackCopyPixels: true,
       commandStreamCommands: stream ? 110 : 0,
       packFrameHits: pack ? 90 : 0,
       packFailures: 0,
       peakPackPageBytes: pack ? 25000 : 0,
+      peakPackStagingBytes: pack ? 25000 : 0,
+      packResidentPages: pack ? 1 : 0,
+      packCopiedFrames: pack ? 90 : 0,
+      packBudgetFallbacks: 0,
       peakLiveFrameBytes: 50000,
       frameByteLimit: 4 * 1024 * 1024,
     },
@@ -290,6 +295,20 @@ test("resource preparation counters and memory are bound to the executed pack", 
   })) {
     const preparation = { ...preparationFor(r), [key]: value };
     assert.throws(() => compareFramePackBenchmarks(r, commit, { preparation }));
+  }
+});
+
+test("frame-copy execution and its single staging page are part of the measured policy", () => {
+  for (const [key, value] of Object.entries({
+    framePackCopyPixels: false,
+    packCopiedFrames: 0,
+    packBudgetFallbacks: 1,
+    peakPackStagingBytes: 300000,
+    packResidentPages: 2,
+  })) {
+    const r = runs();
+    r.default.render.directTerrainOverviewStats[key] = value;
+    assert.throws(() => compareFramePackBenchmarks(r, commit));
   }
 });
 

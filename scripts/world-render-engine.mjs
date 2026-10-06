@@ -292,6 +292,7 @@ export function createWorldRenderer({
   compactTerrainOverview = false,
   precompiledTerrainFrames = true,
   framePackDir = process.env.EXPLORETV_FRAME_PACK_DIR ?? null,
+  framePackCopyPixels = process.env.EXPLORETV_FRAME_PACK_COPY_PIXELS !== "0",
   wasmFrameStream = true,
   onNativeBatch = null,
 }) {
@@ -355,6 +356,7 @@ export function createWorldRenderer({
     ? createDirectTerrainOverview({
         detailedRgbaArena,
         framePack,
+        framePackCopyPixels,
         resolvedCellMask:
           process.env.EXPLORETV_ENABLE_RESOLVED_CELL_MASK === "1" &&
           process.env.EXPLORETV_DISABLE_RESOLVED_CELL_MASK !== "1",

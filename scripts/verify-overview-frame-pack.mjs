@@ -90,6 +90,33 @@ export function verifyOverviewFramePack(render, { assetDir } = {}) {
     direct.peakPackPageBytes <= direct.frameByteLimit,
     "Whole resident pages remain bounded",
   );
+  if (direct.framePackCopyPixels) {
+    assert.ok(
+      direct.packCopiedFrames > 0,
+      "Prepared frame copies must execute",
+    );
+    assert.equal(
+      direct.packBudgetFallbacks,
+      0,
+      "No unexpected copy budget fallback",
+    );
+    assert.ok(
+      Number.isSafeInteger(direct.peakPackStagingBytes) &&
+        direct.peakPackStagingBytes > 0 &&
+        direct.peakPackStagingBytes <= 256 * 1024,
+      "One bounded staging page",
+    );
+    assert.equal(
+      direct.peakPackPageBytes,
+      direct.peakPackStagingBytes,
+      "No second pixel page cache",
+    );
+    assert.ok(
+      Number.isSafeInteger(direct.packResidentPages) &&
+        direct.packResidentPages >= 0 &&
+        direct.packResidentPages <= 1,
+    );
+  }
   return {
     manifestSha256: pack.manifestSha256,
     indexSha256: pack.indexSha256,

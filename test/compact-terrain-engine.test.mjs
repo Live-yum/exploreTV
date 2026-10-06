@@ -504,11 +504,16 @@ test(
       precompiledTerrainFrames: false,
     });
     const packed = await draw(assetDir, region, core, options);
+    const copied = await draw(assetDir, region, core, {
+      ...options,
+      framePackCopyPixels: true,
+    });
     const legacy = await draw(assetDir, region, core, {
       ...options,
       wasmFrameStream: false,
     });
     equivalent(packed, dynamic);
+    equivalent(copied, dynamic);
     equivalent(legacy, dynamic);
     assert.equal(packed.stats.framePack.available, true);
     assert.ok(packed.stats.directTerrainOverviewStats.packFrameHits > 0);
@@ -528,6 +533,21 @@ test(
         4 * 1024 * 1024,
     );
     assert.equal(packed.stats.sharedDetailedRgba.allocations, 1);
+    assert.equal(
+      copied.stats.directTerrainOverviewStats.framePackCopyPixels,
+      true,
+    );
+    assert.ok(copied.stats.directTerrainOverviewStats.packCopiedFrames > 0);
+    assert.equal(copied.stats.directTerrainOverviewStats.packFailures, 0);
+    assert.equal(copied.stats.framePack.validationFailures, 0);
+    assert.equal(copied.stats.rawTextureCache.rawDecodes, 0);
+    assert.ok(
+      copied.stats.directTerrainOverviewStats.peakPackStagingBytes <= 8192,
+    );
+    assert.ok(
+      copied.stats.directTerrainOverviewStats.peakLiveFrameBytes <=
+        4 * 1024 * 1024,
+    );
     // A changed source invalidates only its package binding. The complete
     // diagnostic/resource identity result must still equal dynamic rendering.
     const changed = new PNG({ width: 288, height: 270 });

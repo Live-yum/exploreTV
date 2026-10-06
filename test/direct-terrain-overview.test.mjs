@@ -1877,3 +1877,223 @@ test(
     }
   },
 );
+
+test(
+  "copied additive frames, one staging page and pinned batches share the frame budget",
+  nativeTest,
+  () => {
+    const s = scene(16, 8),
+      imageAssets = assets(),
+      commands = [];
+    for (let i = 0; i < 240; i++) {
+      commands.push(
+        s.make({
+          asset: "excess",
+          sx: (i % 4) * 16,
+          sy: (Math.floor(i / 4) % 4) * 16,
+          dx: 32 + (i % 16) * 16,
+          dy: 32 + (Math.floor(i / 16) % 8) * 16,
+        }),
+      );
+      if (i % 11 === 0)
+        commands.push(
+          s.make({ kind: "liquid", asset: "plain", opacity: 0.37 }),
+        );
+    }
+    const full = s.plan(commands),
+      stream = streamPlan(full),
+      framePack = testFramePack(stream.compactTerrain.frames, imageAssets),
+      renderer = createDirectTerrainOverview({
+        framePack,
+        framePackCopyPixels: true,
+        maxFrameBytes: 8192,
+      });
+    const readPage = framePack.readPage;
+    let previousPage;
+    framePack.readPage = (descriptor) => {
+      // Retired staging bytes must never remain a native batch source. Poison
+      // the prior page while other copied frames may still be batch-pinned.
+      previousPage?.fill(0);
+      previousPage = readPage(descriptor);
+      assert.ok(
+        renderer.stats.frameBytes + descriptor.pageBytes + 2048 <= 8192,
+      );
+      return previousPage;
+    };
+    try {
+      equalPixels(
+        composePartition(renderer, stream, imageAssets, s.core, s.region)
+          .result,
+        reference(full, imageAssets, s.core, s.region),
+      );
+      assert.ok(renderer.stats.packCopiedFrames > 100);
+      assert.equal(
+        renderer.stats.packCopiedFrames,
+        renderer.stats.packFrameHits,
+      );
+      assert.equal(
+        renderer.stats.packCopiedPixelBytes,
+        renderer.stats.packCopiedFrames * 2048,
+        "every packed excess frame has exact base and additive planes",
+      );
+      assert.ok(renderer.stats.rawPreparedFrames > 0);
+      assert.ok(renderer.stats.compactSecondPassReloads > 100);
+      assert.ok(renderer.stats.nativeBatches > 1);
+      assert.ok(renderer.stats.packPageEvictions > 20);
+      assert.equal(renderer.stats.peakPackStagingBytes, 4096);
+      assert.equal(renderer.stats.peakPackPageBytes, 4096);
+      assert.ok(renderer.stats.packResidentPages <= 1);
+      assert.ok(renderer.stats.peakLiveFrameBytes <= 8192);
+      assert.ok(renderer.stats.peakActiveFrameBytes <= 8192);
+      assert.equal(renderer.stats.activeFrameBytes, 0);
+      assert.equal(renderer.stats.packFailures, 0);
+      renderer.dispose();
+      assert.equal(renderer.stats.frameBytes, 0);
+      assert.equal(renderer.stats.packStagingBytes, 0);
+      assert.equal(renderer.stats.packPageBytes, 0);
+      assert.equal(renderer.stats.packResidentPages, 0);
+    } finally {
+      renderer.dispose();
+    }
+  },
+);
+
+test(
+  "copied frames own exact pixel buffers after staging reuse and release under raw pressure",
+  nativeTest,
+  () => {
+    const s = scene(),
+      imageAssets = assets(),
+      full = s.plan([
+        s.make({ asset: "excess", sx: 0 }),
+        s.make({ asset: "excess", sx: 16, dx: 48 }),
+      ]),
+      stream = streamPlan(full),
+      framePack = testFramePack(stream.compactTerrain.frames, imageAssets),
+      renderer = createDirectTerrainOverview({
+        framePack,
+        framePackCopyPixels: true,
+        maxFrameBytes: 8200,
+      });
+    let stage;
+    const readPage = framePack.readPage,
+      frame = framePack.frame;
+    framePack.readPage = (descriptor) => (stage = readPage(descriptor));
+    framePack.frame = (descriptor, data) => {
+      const result = frame(descriptor, data);
+      for (const name of ["base", "additive"]) {
+        const plane = result[name];
+        result[name] = Buffer.from(
+          plane.buffer,
+          plane.byteOffset,
+          plane.byteLength,
+        );
+        result[name].slice = () => {
+          throw new Error("must not dispatch a custom slice");
+        };
+      }
+      return result;
+    };
+    try {
+      const expected = reference(full, imageAssets, s.core, s.region);
+      equalPixels(
+        composePartition(renderer, stream, imageAssets, s.core, s.region)
+          .result,
+        expected,
+      );
+      assert.equal(renderer.stats.packStageHits, 1);
+      assert.equal(renderer.stats.packPageReads, 1);
+      assert.equal(renderer.stats.frameBytes, 8192);
+      assert.equal(renderer.stats.packStagingBytes, 4096);
+      stage.fill(0);
+      equalPixels(
+        composePartition(renderer, stream, imageAssets, s.core, s.region)
+          .result,
+        expected,
+      );
+      assert.equal(
+        renderer.stats.packPageReads,
+        1,
+        "cached frames own their pixels",
+      );
+      const raw = s.plan([
+        s.make({
+          kind: "sprite",
+          asset: "plain",
+          sw: 32,
+          sh: 16,
+          dw: 32,
+          dh: 16,
+          opacity: 0.73,
+        }),
+      ]);
+      equalPixels(
+        composePartition(renderer, raw, imageAssets, s.core, s.region).result,
+        reference(raw, imageAssets, s.core, s.region),
+      );
+      assert.equal(renderer.stats.packStagingBytes, 0);
+      assert.equal(renderer.stats.packPageBytes, 0);
+      assert.equal(renderer.stats.packResidentPages, 0);
+      assert.equal(renderer.stats.rawPreparedFrames, 1);
+      assert.ok(renderer.stats.peakLiveFrameBytes <= 8200);
+      assert.equal(renderer.stats.budgetFallbacks, 0);
+    } finally {
+      renderer.dispose();
+    }
+  },
+);
+
+test(
+  "copy mode rejects a page plus copy that cannot jointly fit and falls back on invalid pages",
+  nativeTest,
+  () => {
+    const s = scene(),
+      imageAssets = assets(),
+      full = s.plan([s.make({ asset: "excess" })]),
+      stream = streamPlan(full);
+    for (const mode of ["joint-budget", "read", "view"]) {
+      const framePack = testFramePack(
+        stream.compactTerrain.frames,
+        imageAssets,
+        {
+          pageBytes: mode === "joint-budget" ? 8192 : 4096,
+        },
+      );
+      if (mode === "read")
+        framePack.readPage = () => {
+          throw new Error("page hash mismatch");
+        };
+      if (mode === "view")
+        framePack.frame = () => ({
+          width: 16,
+          height: 16,
+          base: new Uint8Array(1024),
+        });
+      const renderer = createDirectTerrainOverview({
+        framePack,
+        framePackCopyPixels: true,
+        maxFrameBytes: 8192,
+      });
+      try {
+        equalPixels(
+          composePartition(renderer, stream, imageAssets, s.core, s.region)
+            .result,
+          reference(full, imageAssets, s.core, s.region),
+        );
+        assert.equal(renderer.stats.rawPreparedFrames, 1);
+        assert.equal(renderer.stats.packCopiedFrames, 0);
+        assert.equal(renderer.stats.packStagingBytes, 0);
+        assert.equal(renderer.stats.packPageBytes, 0);
+        assert.equal(renderer.stats.packResidentPages, 0);
+        assert.ok(renderer.stats.peakLiveFrameBytes <= 8192);
+        if (mode === "joint-budget") {
+          assert.equal(renderer.stats.packPageReads, 0);
+          assert.equal(renderer.stats.packBudgetFallbacks, 1);
+          assert.equal(renderer.stats.packFailures, 0);
+        } else assert.equal(renderer.stats.packFailures, 1);
+      } finally {
+        renderer.dispose();
+      }
+    }
+  },
+);

@@ -213,7 +213,6 @@ export function openOverviewFramePack({
   );
   requireCondition(sha256(index) === manifest.index.sha256, "index hash");
   const view = new DataView(index.buffer),
-    offsets = new Map(),
     sourceCounts = new Uint32Array(manifest.sources.length);
   let previous = -1,
     logicalPixelBytes = 0;
@@ -274,7 +273,6 @@ export function openOverviewFramePack({
         : mean === 0,
       "opaque mean",
     );
-    offsets.set(id, p);
     logicalPixelBytes += planeBytes * (additive === 0xffffffff ? 1 : 2);
     sourceCounts[sourceIndex]++;
     previous = id;
@@ -287,10 +285,13 @@ export function openOverviewFramePack({
     manifest.logicalPixelBytes === logicalPixelBytes,
     "logical pixel byte count",
   );
-  const descriptors = new Map(),
-    ownedDescriptors = new WeakSet(),
+  const ownedDescriptors = new WeakSet(),
     verifiedPages = new WeakMap();
-  let bindings = new WeakMap(),
+  // The strictly ordered binary index is already the complete ID lookup.
+  // Cache metadata by bounded row number instead of retaining two Map entries
+  // per recipe; pixel ownership remains exclusively with the direct renderer.
+  let descriptors = new Array(manifest.frames),
+    bindings = new WeakMap(),
     disposed = false;
   const stats = {
     available: true,
@@ -370,13 +371,21 @@ export function openOverviewFramePack({
       } catch {
         return null;
       }
-      const p = offsets.get(id);
+      let low = 0,
+        high = manifest.frames;
+      while (low < high) {
+        const middle = low + Math.floor((high - low) / 2);
+        if (view.getUint32(middle * RECORD_BYTES, true) < id) low = middle + 1;
+        else high = middle;
+      }
+      if (low === manifest.frames) return null;
+      const p = low * RECORD_BYTES;
       if (
-        p === undefined ||
+        view.getUint32(p, true) !== id ||
         view.getUint16(p + 4, true) !== binding.info.sourceIndex
       )
         return null;
-      let descriptor = descriptors.get(id);
+      let descriptor = descriptors[low];
       if (!descriptor) {
         const pageId = view.getUint16(p + 6, true),
           flags = view.getUint32(p + 20, true);
@@ -392,7 +401,7 @@ export function openOverviewFramePack({
           clipShape: flags >> 8,
           uvFlipApplied: !!(flags & 1),
         });
-        descriptors.set(id, descriptor);
+        descriptors[low] = descriptor;
         ownedDescriptors.add(descriptor);
       }
       stats.lookupHits++;
@@ -450,8 +459,7 @@ export function openOverviewFramePack({
     dispose() {
       disposed = true;
       bindings = new WeakMap();
-      descriptors.clear();
-      offsets.clear();
+      descriptors = [];
     },
   };
 }

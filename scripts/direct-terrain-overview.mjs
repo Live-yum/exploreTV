@@ -169,12 +169,14 @@ export function createDirectTerrainOverview({
   inputEncoding = "tconvert-game-raw",
   detailedRgbaArena = null,
   framePack = null,
+  framePackCopyPixels = false,
   // Fewer pixel operations did not beat unmasked composition in the complete
   // CI export. Keep this kernel available for measured A/B, explicitly opt-in.
   resolvedCellMask = false,
 } = {}) {
   if (
     typeof resolvedCellMask !== "boolean" ||
+    typeof framePackCopyPixels !== "boolean" ||
     !Number.isSafeInteger(maxFrameBytes) ||
     maxFrameBytes < 8192 ||
     maxFrameBytes > 4 * 1024 * 1024 ||
@@ -219,6 +221,7 @@ export function createDirectTerrainOverview({
     nextIdentity = 1,
     backing = null,
     descriptors = null,
+    packStage = null,
     disposed = false,
     rendering = false;
   const stats = {
@@ -240,6 +243,13 @@ export function createDirectTerrainOverview({
     packPageBytes: 0,
     peakPackPageBytes: 0,
     packResidentPages: 0,
+    framePackCopyPixels,
+    packStagingBytes: 0,
+    peakPackStagingBytes: 0,
+    packStageHits: 0,
+    packCopiedFrames: 0,
+    packCopiedPixelBytes: 0,
+    packBudgetFallbacks: 0,
     packFrameHits: 0,
     packFrameMisses: 0,
     packPageReads: 0,
@@ -315,11 +325,22 @@ export function createDirectTerrainOverview({
   const clearEntries = () => {
     entries.clear();
     packPages.clear();
+    packStage = null;
     cacheSlots.fill(undefined);
     cacheGenerations.fill(0);
     freeCacheSlots.length = nextCacheSlot = 0;
     stats.frameBytes = stats.liveFrameBytes = stats.frameEntries = 0;
-    stats.packPageBytes = stats.packResidentPages = 0;
+    stats.packPageBytes = stats.packResidentPages = stats.packStagingBytes = 0;
+  };
+  const releasePackStage = () => {
+    if (!packStage) return;
+    stats.frameBytes -= packStage.bytes;
+    stats.liveFrameBytes = stats.frameBytes;
+    stats.packPageBytes -= packStage.bytes;
+    stats.packResidentPages = packPages.size;
+    stats.packStagingBytes = 0;
+    stats.packPageEvictions++;
+    packStage = null;
   };
   const retire = (key, entry, protectedPage = null) => {
     entries.delete(key);
@@ -591,7 +612,12 @@ export function createDirectTerrainOverview({
           clearBatch();
         }
       };
-      const makeRoom = (bytes, protectedPage = null) => {
+      const makeRoom = (bytes, protectedPage = null, protectStage = false) => {
+        // A copied frame owns its exact planes; no batch or cache entry points
+        // back into the staging page. Under byte pressure discard that page
+        // before retiring useful frames, unless a copy is currently reserved.
+        if (!protectStage && stats.frameBytes + bytes > maxFrameBytes)
+          releasePackStage();
         if (
           stats.frameBytes + bytes <= maxFrameBytes &&
           entries.size < maxFrames
@@ -720,8 +746,15 @@ export function createDirectTerrainOverview({
         if (secondPass) stats.secondPassMisses++;
         if (typeof key === "number" && failedKeys.has(key)) return null;
         stats.misses++;
+        // Reserve both complete planes, the optional four-byte opaque mean,
+        // and the conservative string-key storage before allocating pixels.
+        const reservation =
+          c.sw * c.sh * 8 +
+          (c.sw === 16 && c.sh === 16 && kind >= -1 ? 4 : 0) +
+          keyBytes;
         let frame = null,
-          page = null;
+          page = null,
+          fromPack = false;
         // Only this cache owns page pixels. Views into a page do not turn its
         // allocation into several independently evictable tiny frame buffers.
         // Hold an existing page through makeRoom; otherwise evicting its last
@@ -734,7 +767,93 @@ export function createDirectTerrainOverview({
               recipeId ?? c,
               c,
             );
-            if (descriptor) {
+            if (descriptor && framePackCopyPixels) {
+              if (packStage && packStage.id !== descriptor.pageId)
+                releasePackStage();
+              const pageBytes = descriptor.pageBytes,
+                extra = reservation + (packStage ? 0 : pageBytes);
+              // The page and both possible copied planes must fit together.
+              // Reserve BEFORE readPage/slice, so allocation does not briefly
+              // escape the same limit used by cached and batch-pinned frames.
+              if (
+                Number.isSafeInteger(pageBytes) &&
+                pageBytes > 0 &&
+                extra <= maxFrameBytes
+              ) {
+                if (!makeRoom(extra, null, true)) flush();
+                if (makeRoom(extra, null, true)) {
+                  if (!packStage) {
+                    const data = framePack.readPage(descriptor);
+                    if (
+                      !(data instanceof Uint8Array) ||
+                      !(data.buffer instanceof ArrayBuffer) ||
+                      data.byteLength !== pageBytes ||
+                      data.buffer.byteLength !== pageBytes
+                    )
+                      throw new Error(
+                        "Frame pack page does not have exact bounded backing",
+                      );
+                    packStage = {
+                      id: descriptor.pageId,
+                      data,
+                      bytes: pageBytes,
+                    };
+                    stats.frameBytes += pageBytes;
+                    stats.liveFrameBytes = stats.frameBytes;
+                    stats.peakFrameBytes = Math.max(
+                      stats.peakFrameBytes,
+                      stats.frameBytes,
+                    );
+                    stats.peakLiveFrameBytes = Math.max(
+                      stats.peakLiveFrameBytes,
+                      stats.frameBytes,
+                    );
+                    stats.packPageBytes = stats.packStagingBytes = pageBytes;
+                    stats.packResidentPages = 1;
+                    stats.packPageReads++;
+                    stats.peakPackPageBytes = Math.max(
+                      stats.peakPackPageBytes,
+                      pageBytes,
+                    );
+                    stats.peakPackStagingBytes = Math.max(
+                      stats.peakPackStagingBytes,
+                      pageBytes,
+                    );
+                  } else stats.packStageHits++;
+                  frame = framePack.frame(descriptor, packStage.data);
+                  if (
+                    !frame ||
+                    frame.unsupported ||
+                    frame.width !== c.sw ||
+                    frame.height !== c.sh ||
+                    !(frame.base instanceof Uint8Array) ||
+                    frame.base?.buffer !== packStage.data.buffer ||
+                    frame.base.byteLength !== c.sw * c.sh * 4 ||
+                    (frame.additive &&
+                      (!(frame.additive instanceof Uint8Array) ||
+                        frame.additive.buffer !== packStage.data.buffer ||
+                        frame.additive.byteLength !== frame.base.byteLength)) ||
+                    (frame.mean && frame.mean.byteLength !== 4)
+                  )
+                    throw new Error("Frame pack returned invalid page views");
+                  frame = {
+                    ...frame,
+                    // Buffer.slice and a user-supplied slice can return views.
+                    // This typed-array constructor always copies exact planes.
+                    base: new Uint8Array(frame.base),
+                    additive: frame.additive
+                      ? new Uint8Array(frame.additive)
+                      : null,
+                    mean: frame.mean ? new Uint8Array(frame.mean) : null,
+                  };
+                  fromPack = true;
+                  stats.packFrameHits++;
+                  stats.packCopiedFrames++;
+                  stats.packCopiedPixelBytes +=
+                    frame.base.byteLength + (frame.additive?.byteLength ?? 0);
+                } else stats.packBudgetFallbacks++;
+              } else stats.packBudgetFallbacks++;
+            } else if (descriptor) {
               page = packPages.get(descriptor.pageId) ?? null;
               const pageBytes = descriptor.pageBytes,
                 extra =
@@ -788,12 +907,14 @@ export function createDirectTerrainOverview({
                     (frame.mean && frame.mean.byteLength !== 4)
                   )
                     throw new Error("Frame pack returned invalid page views");
+                  fromPack = true;
                   stats.packFrameHits++;
                 }
               }
             }
           } catch {
             frame = null;
+            if (framePackCopyPixels) releasePackStage();
             stats.packFailures++;
           } finally {
             stats.phaseMilliseconds.prepare += performance.now() - started;
@@ -809,12 +930,6 @@ export function createDirectTerrainOverview({
             page = null;
           }
         }
-        // Reserve both complete planes, the optional four-byte opaque mean,
-        // and the conservative string-key storage before preparing a frame.
-        const reservation =
-          c.sw * c.sh * 8 +
-          (c.sw === 16 && c.sh === 16 && kind >= -1 ? 4 : 0) +
-          keyBytes;
         if (!frame && reservation > maxFrameBytes) {
           stats.budgetFallbacks++;
           if (typeof key === "number" && failedKeys.size < 8192)
@@ -892,7 +1007,7 @@ export function createDirectTerrainOverview({
           stats.frameBytes,
         );
         stats.peakFrameEntries = Math.max(stats.peakFrameEntries, entries.size);
-        if (!page) {
+        if (!fromPack) {
           if (kind < -1) stats.slopePreparedFrames++;
           else stats.rawPreparedFrames++;
         }

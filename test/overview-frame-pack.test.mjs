@@ -160,6 +160,64 @@ test("opaque means and duplicate content are exact; runtime never owns a second 
   assert.throws(() => pack.readPage(descriptor), /disposed/);
 });
 
+test("ordered index lookup hits first and last rows and rejects missing IDs across every boundary", (t) => {
+  const { open, sources } = fixture(t),
+    pack = open();
+  const all = [...ids()].sort((a, b) => a - b);
+  const seen = new Map();
+  // Reverse and forward passes exercise both ends and the tile/wall gap while
+  // requiring stable descriptors regardless of lookup order or paint alias.
+  for (const id of [...all].reverse().concat(all)) {
+    const command = overviewFrameRecipe(id),
+      source = sources.get(command.asset).image;
+    const descriptor = pack.lookup(source, id, command);
+    assert.ok(descriptor);
+    if (seen.has(id)) assert.equal(descriptor, seen.get(id));
+    else seen.set(id, descriptor);
+    assert.equal(
+      pack.lookup(source, id + 1, { ...command, paintId: 31 }),
+      descriptor,
+    );
+  }
+  const source = sources.get("Tiles_1.png").image;
+  for (const absent of [
+    overviewFrameRecipeId("tile", 0, 0), // Before the first row.
+    overviewFrameRecipeId("tile", 2, 0), // Valid recipe inside the tile/wall gap.
+    overviewFrameRecipeId("wall", 1, 19), // Immediately before the wall rows.
+    overviewFrameRecipeId("wall", 3, 0), // Immediately after the last row.
+    overviewFrameRecipeId("wall", 65535, 19),
+    0,
+    -1,
+    NaN,
+    Number.MAX_SAFE_INTEGER,
+  ])
+    assert.equal(pack.lookup(source, absent), null, `missing ${absent}`);
+  pack.dispose();
+  assert.throws(() => pack.lookup(source, all[0]), /disposed/);
+});
+
+test("index duplicates or descending rows are rejected even after updating the content hash", (t) => {
+  const { outputDir } = fixture(t),
+    indexPath = join(outputDir, "index.bin");
+  const original = readFileSync(indexPath);
+  for (const duplicate of [false, true]) {
+    const changed = Buffer.from(original);
+    if (duplicate) changed.set(original.subarray(0, 32), 32);
+    else {
+      changed.set(original.subarray(32, 64), 0);
+      changed.set(original.subarray(0, 32), 32);
+    }
+    writeFileSync(indexPath, changed);
+    updateManifest(outputDir, (m) => {
+      m.index.sha256 = sha256(changed);
+    });
+    assert.throws(
+      () => openOverviewFramePack({ packDir: outputDir }),
+      /index ordering\/references/,
+    );
+  }
+});
+
 test("recipe lookup rejects changed shader, crop, shape, asset, registration and source identity", (t) => {
   const { open, sources } = fixture(t),
     pack = open(),

@@ -49,9 +49,13 @@ direct 的第一遍覆盖分析、第二遍帧 slot 定位和原生批次编译�
 
 ## 内存与退化路径
 
-帧包读取器本身不缓存像素页。direct 是唯一页持有者，整页 backing、动态 fallback 帧、均值 metadata、扩展 key 和活动批次 pin 共用原 **4 MiB** 上限。多个帧引用同一页时只计一次页面字节；最后一个引用淘汰后才释放页面。过大页、失效 slot、受 pin 保护的帧和有界 flush 都有针对性测试。`packPageBytes` 是 `liveFrameBytes` 的子集，不能额外相加。
+帧包读取器本身不缓存像素页。direct 默认最多保留一个临时读取页，从已校验的页中原生复制当前所需的 base/additive/mean 到精确大小的独立缓冲，再按原帧粒度缓存及固定批次引用。读取和复制前，先为整页、可能的双平面、mean 与 key 联合预留空间；临时页、复制帧、动态 fallback 帧和活动批次 pin 共用原 **4 MiB** 上限。空间不足时有界 flush/淘汰，动态帧有内存压力时可以先释放临时页。缓存帧不引用临时页，换页不影响已有批次。
 
-帧索引及其有界查找 metadata 不属于像素页预算。`indexBytes` 只记录二进制索引的 backing，未包含索引 Map 和 descriptor 的 JavaScript 堆开销；这些仍计入完整进程 RSS。
+首次实现让缓存帧直接持有整页视图；完整消融发现，无关帧像素持续占据预算，增加了动态帧重建。因此改为上述细粒度缓存，并保留 `EXPLORETV_FRAME_PACK_COPY_PIXELS=0` 作为旧页面视图策略的实验开关。默认策略额外付出一次有界的原生字节复制，省去的是 atlas 裁剪和像素准备。两种策略都必须满足相同联合预算，不能把不复制视为必然更快。
+
+过大页、失效 slot、受 pin 保护的帧、有界 flush、additive、Buffer 切片别名和换页后存活批次都有针对性测试。`packStagingBytes` 属于 `packPageBytes`，后者又属于 `liveFrameBytes`，不能相加。默认路径的 `packCopiedFrames` 必须大于零、`packBudgetFallbacks` 为零，验收还检查只有一个有界临时页。
+
+帧索引及其有界 metadata 不属于像素页预算。运行时直接在已排序的二进制索引中二分查找，以按行编号的数组缓存 descriptor，减少常驻 Map 条目。`indexBytes` 只记录二进制索引的 backing，未包含 descriptor 等 JavaScript 堆开销；这些仍计入完整进程 RSS。
 
 原有 **6 MiB** 详细 RGBA arena 继续由 direct/generic 共用。新的 WASM 24 MiB 工作区上限针对最坏允许区域，以真实 Rust `Vec` 容量计量；它不是每块固定分配量，也不是整进程 RSS 上限。默认仍为 128×48 核心、各边 10 Tile halo，没有整世界展开，也没有新增滚动条带缓存。
 
@@ -70,6 +74,8 @@ EXPLORETV_FRAME_PACK_DIR=artifacts/overview-frame-pack EXPLORETV_DISABLE_WASM_FR
 ```
 
 第二项仅关闭帧包，仍由 WASM 输出普通命令；第三项仅恢复旧 compact writer，仍使用预编译帧。原有邻域/液体 WASM 在三项中都启用。`EXPLORETV_DISABLE_TERRAIN_WASM=1` 可以关闭全部 terrain WASM；它不是上述仅命令流消融的替代。实验性 resolved-cell mask 在本轮所有对照中关闭。
+
+工作流为三候选都固定 `EXPLORETV_FRAME_PACK_COPY_PIXELS=1`。关闭帧包的一项不会读取临时页或复制包帧；另外两项必须报告实际执行了精确帧复制，避免测到未生效的配置。
 
 带 `[export-overview]` 标记的 PR 使用[整图 workflow](../.github/workflows/export-overview.yml) 在同一 runner 顺序执行固定 `fae6f52`、默认候选、动态帧候选、旧命令规划候选。每项比较 8400×2400 全部 RGBA、13 个独立原路径区域、384 个源纹理、完整范围、owner/逻辑计数和遗漏诊断；同时绑定真实被测 Git commit、源码、原生/WASM 二进制，以及帧包来源/索引/页面哈希。编译报告与被实际执行的 manifest、规则及纹理必须一致。
 
