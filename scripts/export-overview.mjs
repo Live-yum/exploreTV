@@ -14,8 +14,8 @@ Directly export a small full-extent panorama from the world and real textures.
 Each bounded region is composited at 16 px/tile, area-reduced immediately, and
 streamed to the final PNG. No giant full-resolution PNG or tile files are made.
   --pixels-per-tile <1|2|4|8>    Output scale; default 1 (8400x2400 for a large world)
-  --band-tiles <1..128>         Stripe height; default 64 at 1 px/tile, otherwise 48
-  --chunk-tiles <1..252>        Render width; default 160 at 1 px/tile, otherwise 120
+  --band-tiles <1..128>         Stripe height; default 48
+  --chunk-tiles <1..252>        Render width; default 128 at 1 px/tile, otherwise 120
   --region <x,y,width,height>   Optional world-tile crop; default entire world
   --expect-world-sha256 <hash>  Refuse a different input world
   --input-encoding <encoding>  tconvert-game-raw (default) or standard-straight
@@ -43,10 +43,9 @@ export function parseOverviewCli(argv) {
     } else rest.push(argv[i]);
   }
   const config = parseExportCli(rest, { pixelsPerTile });
-  if (!rest.includes("--band-tiles"))
-    config.bandTiles = pixelsPerTile === 1 ? 64 : 48;
+  if (!rest.includes("--band-tiles")) config.bandTiles = 48;
   if (!rest.includes("--chunk-tiles"))
-    config.chunkTiles = pixelsPerTile === 1 ? 160 : 120;
+    config.chunkTiles = pixelsPerTile === 1 ? 128 : 120;
   return { ...config, pixelsPerTile };
 }
 

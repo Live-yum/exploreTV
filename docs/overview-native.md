@@ -40,8 +40,8 @@ MALLOC_ARENA_MAX=2 MALLOC_MMAP_THRESHOLD_=131072 npm run export:overview -- \
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
 | `--pixels-per-tile` | `1` | 大世界输出 8400×2400 |
-| `--chunk-tiles` | 1 px 时 `160`；2/4/8 px 时 `120` | 核心块的 Tile 宽度 |
-| `--band-tiles` | 1 px 时 `64`；2/4/8 px 时 `48` | 条带的 Tile 高度 |
+| `--chunk-tiles` | 1 px 时 `128`；2/4/8 px 时 `120` | 核心块的 Tile 宽度 |
+| `--band-tiles` | `48` | 条带的 Tile 高度 |
 | RLE 行检查点间隔 | `32` | 内部世界索引参数，限制邻域访问的重复解码 |
 | `--input-encoding` | `tconvert-game-raw` | 保留原始游戏预乘通道及 RGB 超出 alpha 的发光分量 |
 | `--compression-level` | `6` | PNG 压缩级别 |
@@ -105,9 +105,9 @@ npm run export:overview -- world.wld textures artifacts/detail.png \
 
 导出采用单个渲染进程，不建立整世界 Tile 对象矩阵、完整 134400×38400 像素 Canvas 或完整细节中间 PNG。世界索引、完整静态瀑布登记、压缩纹理快照、按需 raw 解码和帧缓存分别有界。
 
-1 px/Tile 默认 160×64 核心块在 16 px/Tile 下，一份 RGBA 缓冲是 **10,485,760 字节（10 MiB）**。全原生核心不为当前块额外初始化或清空 Canvas 核心；混合路径可能同时持有原生核心缓冲与 Canvas 核心。缩小后的整条输出带为 8400×64×4 = **2,150,400 字节**，写入流式 PNG 后复用。
+1 px/Tile 默认 128×48 核心块在 16 px/Tile 下，一份 RGBA 缓冲是 **6,291,456 字节（6 MiB）**。全原生核心不为当前块额外初始化或清空 Canvas 核心；混合路径可能同时持有原生核心缓冲与 Canvas 核心。缩小后的整条输出带为 8400×48×4 = **1,612,800 字节**，写入流式 PNG 后复用。
 
-混合路径按输出 Tile 行读取 Canvas，只读取该行首个到末个 Canvas 格子之间的范围，每次 `getImageData` 高度固定为 **16 个原始像素**。默认 160 Tile 宽时，一次最宽请求的 RGBA 数据为 **163,840 字节**。这是单次读回请求的大小；之前读回的对象与原生分配可能等待垃圾回收和 finalizer，不能把它视为累计常驻读回内存的上限。完整 Canvas 路径仍保留原有核心读回方式。
+混合路径按输出 Tile 行读取 Canvas，只读取该行首个到末个 Canvas 格子之间的范围，每次 `getImageData` 高度固定为 **16 个原始像素**。默认 128 Tile 宽时，一次最宽请求的 RGBA 数据为 **131,072 字节**。这是单次读回请求的大小；之前读回的对象与原生分配可能等待垃圾回收和 finalizer，不能把它视为累计常驻读回内存的上限。完整 Canvas 路径仍保留原有核心读回方式。
 
 原生帧的 8 MiB live 预算按仍被缓存或当前批次引用的像素联合去重计数。LRU 淘汰不能隐藏尚被使用的像素；需要准备或提交更多内容时先释放／提交有界批次，无法在预算内使用原生帧时保留 Canvas 路径。报告分别记录 retained、active 与 live 帧字节，以及各自峰值。
 
@@ -179,6 +179,11 @@ node scripts/verify-overview.mjs \
 
 首轮远端同机对照 [run 37406287985](https://github.com/Live-yum/exploreTV/actions/runs/37406287985) 测得：原版 **199.600 秒／300.68 MB**，`f613e8e` **81.839 秒／328.49 MB**。全像素核验与平台测试通过，耗时下降 59.00%，但保守总峰值增加 9.25%，没有通过 300 MB 优先目标。[完整远端记录](benchmarks/overview-native-20261006-remote-v1.json) 保留这一结果。
 
-当前配置将原生核心 major GC 间隔由 8 改为 4，并在 Linux/glibc 启动时使用 `MALLOC_MMAP_THRESHOLD_=131072`，保持 160×64 分块和 arena 请求上限 2。这会关闭 glibc 对 mmap 阈值的动态上调，让大块临时缓冲使用可独立释放的映射；它不改变 PNG 分辨率或合成算法。对应 `GLIBC_TUNABLES` 设置依然优先，调用方显式环境值仍被保留。
+第二版配置将原生核心 major GC 间隔由 8 改为 4，并在 Linux/glibc 启动时使用 `MALLOC_MMAP_THRESHOLD_=131072`，保持 160×64 分块和 arena 请求上限 2。这会关闭 glibc 对 mmap 阈值的动态上调，让大块临时缓冲使用可独立释放的映射；它不改变 PNG 分辨率或合成算法。对应 `GLIBC_TUNABLES` 设置依然优先，调用方显式环境值仍被保留。
 
-本地完整修正测试为 **96.944 秒／269.26 MB**，比初版默认配置少约 17.05 MB、增加约 8.27 秒；整图像素与 13 个窗口仍全部一致。见[内存修正本地记录](benchmarks/overview-native-20261006-memory-local.json)。新的远端对照尚待完成，60 秒目标仍未达到。
+本地完整修正测试为 **96.944 秒／269.26 MB**，比初版默认配置少约 17.05 MB、增加约 8.27 秒；整图像素与 13 个窗口仍全部一致。见[内存修正本地记录](benchmarks/overview-native-20261006-memory-local.json)。对应远端结果见下方，60 秒目标仍未达到。
+
+
+第二轮远端 [run 37407771112](https://github.com/Live-yum/exploreTV/actions/runs/37407771112) 使用 AMD EPYC 9V45 runner，原版 **129.263 秒／311.27 MB**，`5ee44c9` **61.507 秒／312.30 MB**。同机耗时下降 52.42%，但保守峰值仍比原版高 1.02 MB，300 MB 和 60 秒优先目标均未通过。同期采样总峰值为 293.86 MB，不能替代保守完整寿命口径。该轮 CPU 与首轮 Intel 不同，不能用 81.839／61.507 归因这次参数修改的加速。[第二轮远端记录](benchmarks/overview-native-20261006-remote-v2.json) 保留完整计时。
+
+当前默认核心进一步收紧至 **128×48 Tile**，将一份详细 RGBA 工作缓冲由 10 MiB 降为 6 MiB，同时缩小每块的规划对象和读回范围；保持输出 8400×2400、GC4、arena 2 与 mmap 128 KiB。此配置正在进行本地与远端完整像素／性能验收，尚未声称达到目标。
