@@ -95,7 +95,11 @@ function behindShape(
 }
 
 export function liquidOmissionWarning(support) {
-  return `${support.unsupported} liquid cells skipped: ${Object.entries(support.unsupportedByReason).map(([key,count]) => `${key}=${count}`).join(", ")}.`;
+  return `${support.unsupported} liquid cells skipped: ${Object.entries(
+    support.unsupportedByReason,
+  )
+    .map(([key, count]) => `${key}=${count}`)
+    .join(", ")}.`;
 }
 
 export function planLiquids(region, options = {}) {
@@ -238,50 +242,87 @@ export function planLiquids(region, options = {}) {
     else reject(x, y, reason);
   };
   const { x: ox, y: oy, width, height } = region.rect;
-  for (let x = 0; x < width; x++)
-    for (let y = 0; y < height; y++) {
-      const wx = ox + x,
-        wy = oy + y,
-        tile = get(wx, wy);
-      if (!tile) continue;
-      // Behind-tile liquid can come from wet neighbors while the solid slope
-      // stores zero liquid. Preserve that raw record and count it separately.
-      const dryShape = !tile.liquid && tile.shape && solid(tile);
-      let liquidKind = tile.liquidKind;
-      if (!tile.liquid) {
-        if (!dryShape) continue;
-        const wetNeighbors = [
-          get(wx, wy - 1),
-          get(wx - 1, wy),
-          get(wx + 1, wy),
-          get(wx, wy + 1),
-        ].filter((neighbor) => neighbor?.liquid);
-        if (!wetNeighbors.length) continue;
-        liquidKind = wetNeighbors[0].liquidKind;
-        support.shapeCandidateCells++;
-      } else support.liquidCells++;
-      support.evaluatedCells++;
+  // Only the internal overview planner supplies this borrowed WASM result.
+  // Public callers retain the complete reference scan and all complex rules.
+  const candidates = options.overviewCandidates;
+  if (candidates !== undefined) {
+    if (
+      !(candidates instanceof Uint32Array) ||
+      region.context ||
+      candidates.length > width * height
+    )
+      throw new RangeError("Invalid overview liquid candidates");
+    let previous = -1;
+    for (const record of candidates) {
+      const index = record >>> 5,
+        code = record & 31;
       if (
-        !Number.isInteger(tile.liquid) ||
-        tile.liquid < (dryShape ? 0 : 1) ||
-        tile.liquid > 255
-      ) {
-        reject(wx, wy, "invalid-liquid-level");
-        continue;
-      }
-      // World parser stores 1..4; Terraria LiquidID uses 0..3.
-      const kind = liquidKind - 1;
-      if (kind === 3) {
-        reject(wx, wy, "shimmer");
-        continue;
-      }
-      if (![0, 1, 2].includes(kind)) {
-        reject(wx, wy, "unknown-liquid-kind");
-        continue;
-      }
-      let reason = null,
-        missing = false,
-        nearShape = false;
+        index <= previous ||
+        index >= width * height ||
+        (code !== 1 && code !== 2 && (code < 16 || code > 23))
+      )
+        throw new RangeError("Invalid overview liquid candidate record");
+      previous = index;
+    }
+  }
+  for (
+    let entry = 0, count = candidates ? candidates.length : width * height;
+    entry < count;
+    entry++
+  ) {
+    const record = candidates ? candidates[entry] : 0,
+      index = candidates ? record >>> 5 : entry,
+      code = record & 31,
+      quick = code >= 16,
+      x = Math.floor(index / height),
+      y = index % height;
+    const wx = ox + x,
+      wy = oy + y,
+      tile = candidates ? region.cells[index] : get(wx, wy);
+    if (!tile) continue;
+    // Behind-tile liquid can come from wet neighbors while the solid slope
+    // stores zero liquid. Preserve that raw record and count it separately.
+    const dryShape = !tile.liquid && tile.shape && solid(tile);
+    let liquidKind = tile.liquidKind;
+    if (!tile.liquid) {
+      if (!dryShape) continue;
+      const wetNeighbors = [
+        get(wx, wy - 1),
+        get(wx - 1, wy),
+        get(wx + 1, wy),
+        get(wx, wy + 1),
+      ].filter((neighbor) => neighbor?.liquid);
+      if (!wetNeighbors.length) continue;
+      liquidKind = wetNeighbors[0].liquidKind;
+      support.shapeCandidateCells++;
+    } else support.liquidCells++;
+    support.evaluatedCells++;
+    if (
+      !Number.isInteger(tile.liquid) ||
+      tile.liquid < (dryShape ? 0 : 1) ||
+      tile.liquid > 255
+    ) {
+      reject(wx, wy, "invalid-liquid-level");
+      continue;
+    }
+    // World parser stores 1..4; Terraria LiquidID uses 0..3.
+    const kind = liquidKind - 1;
+    if (kind === 3) {
+      reject(wx, wy, "shimmer");
+      continue;
+    }
+    if (![0, 1, 2].includes(kind)) {
+      reject(wx, wy, "unknown-liquid-kind");
+      continue;
+    }
+    if (code === 2) {
+      support.skippedSolid++;
+      continue;
+    }
+    let reason = null,
+      missing = false,
+      nearShape = false;
+    if (!quick)
       for (let nx = wx - 1; nx <= wx + 1; nx++)
         for (let ny = wy - 1; ny <= wy + 1; ny++) {
           const n = get(nx, ny);
@@ -308,226 +349,81 @@ export function planLiquids(region, options = {}) {
           if (n.liquid && n.liquidKind !== liquidKind)
             reason ??= "mixed-liquid-neighborhood";
         }
-      if (missing) support.missingContextCells++;
-      if (reason) {
-        if (
-          !missing &&
-          (reason === "special-tile-neighborhood" ||
-            reason === "mixed-liquid-neighborhood")
-        )
-          resolveSpecial(wx, wy);
-        else reject(wx, wy, reason);
-        continue;
-      }
-      const texture = kind === 0 ? waterStyle : kind === 1 ? 1 : 11;
-      const frontOpacity = FRONT_ALPHA[kind] * (kind === 1 ? lavaOpacity : 1);
-      const alpha =
-        support.layer === "foreground"
-          ? frontOpacity
-          : kind === 1
-            ? lavaOpacity
-            : 1;
-      const ownShape = tile.active && !tile.inactive && tile.shape;
-      const surrounding = [];
-      if (nearShape)
-        for (let nx = wx - 1; nx <= wx + 1; nx++)
-          for (let ny = wy - 1; ny <= wy + 1; ny++)
-            if (nx !== wx || ny !== wy) surrounding.push(get(nx, ny));
-      // When every surrounding site is fully wet with this liquid or a known
-      // solid, the modern visible-level equations reduce to a full 16px cell:
-      // all four walls are 0/1, edges are absent, smoothing/corners are identity.
-      // This is a bounded, proven subset, not a dry-neighbor/falling guess.
-      const stableFull =
-        nearShape &&
-        (tile.liquid === 255 ||
-          (dryShape && tile.shape === 1 && get(wx, wy - 1)?.liquid === 255)) &&
+    if (missing) support.missingContextCells++;
+    if (reason) {
+      if (
         !missing &&
-        surrounding.every(
-          (n) => solid(n) || (n?.liquid === 255 && n.liquidKind === liquidKind),
-        );
-      if (ownShape) {
-        if (!solid(tile)) {
-          if (!missing) resolveSpecial(wx, wy);
-          else reject(wx, wy, "shape-non-solid");
-          continue;
-        }
-        if (missing) {
-          reject(wx, wy, "shape-missing-context");
-          continue;
-        }
-        const neighbors = [
-          get(wx, wy - 1),
-          get(wx - 1, wy),
-          get(wx + 1, wy),
-          get(wx, wy + 1),
-        ];
-        // A wet halfbrick below full liquid uses the normal renderer's upper
-        // half. With a wall its separate behind-tile pass is suppressed, so
-        // this subset needs neither a second alpha layer nor a waterfall guess.
-        if (
-          tile.shape === 1 &&
-          stableFull &&
-          tile.wall > 0 &&
-          neighbors[0].liquid === 255
-        ) {
-          const asset = `water_${texture}.png`;
-          result.commands.push({
-            kind: "liquid",
-            asset,
-            sourceAsset: `Images/Misc/${asset}`,
-            sx: 16,
-            sy: 56 + waterfallFrame * 80,
-            sw: 16,
-            sh: 8,
-            dx: x * 16,
-            dy: y * 16,
-            dw: 16,
-            dh: 8,
-            opacity: alpha,
-            frontOpacity,
-            layer: support.layer,
-            liquidType: kind,
-            liquidLevel: tile.liquid,
-            x,
-            y,
-            worldX: wx,
-            worldY: wy,
-            fidelity: "static-wet-halfbrick-top",
-          });
-          assets.add(asset);
-          support.drawn++;
-          support.shapeDrawn++;
-          support.sourceGeometryDrawn++;
-          continue;
-        }
-        const shape = behindShape(tile, neighbors, {
-          texture,
-          worldY: wy,
-          worldSurface,
-          lavaOpacity,
-          solid,
-        });
-        if (shape.reason) {
-          if (
-            shape.reason === "halfbrick-overlap-neighborhood" &&
-            tile.wall > 0
-          ) {
-            const visible = visibleAt(wx, wy);
-            // Only this proven wall/halfbrick case suppresses the separate
-            // behind pass. Normal-pass occlusion alone is insufficient.
-            if (visible.supported && visible.behindTileSuppressed) {
-              addVisible(visible, true);
-              continue;
-            }
-            if (!visible.supported) {
-              rejectVisible(wx, wy, visible.reason);
-              continue;
-            }
-          }
-          if (
-            shape.reason === "halfbrick-overlap-neighborhood" ||
-            shape.reason === "halfbrick-waterfall-neighborhood"
-          ) {
-            sampleHalfbrick ??= createHalfbrickLiquidSampler(region, {
-              ...options,
-              worldSurface,
-            });
-            const half = sampleHalfbrick(wx, wy);
-            if (half.supported) {
-              for (const command of half.commands) {
-                result.commands.push(command);
-                assets.add(command.asset);
-              }
-              if (half.commands.length) {
-                support.drawn++;
-                support.shapeDrawn++;
-                support.sourceGeometryDrawn++;
-              } else support.skippedOccluded++;
-              if (half.normalDrawn) support.visibleLevelDrawn++;
-              if (half.clampedRows) support.clampedShapeCells++;
-              if (half.gradientRows) {
-                support.gradientShapeCells++;
-                support.gradientRows += half.gradientRows;
-              }
-              continue;
-            }
-            rejectVisible(wx, wy, half.reason);
-            continue;
-          }
-          reject(wx, wy, shape.reason);
-          continue;
-        }
-        if (shape.occluded) {
-          support.skippedOccluded++;
-          continue;
-        }
-        const common = {
-          kind: "liquid",
-          ...shape,
-          sourceAsset: `Images/${shape.asset}`,
-          dx: x * 16,
-          dy: y * 16 + shape.offsetY,
-          dw: shape.sw,
-          dh: shape.sh,
-          frontOpacity,
-          liquidType: kind,
-          liquidLevel: tile.liquid,
-          x,
-          y,
-          worldX: wx,
-          worldY: wy,
-        };
-        const bodyRows = Math.min(shape.sh, 16 - shape.sy);
-        result.commands.push({ ...common, sh: bodyRows, dh: bodyRows });
-        const clampRows = shape.sh - bodyRows;
-        if (clampRows > 0) {
-          // TileBatch fixes PointClamp. Sample the real last row and repeat it
-          // only outside the texture boundary instead of performing an invalid
-          // source read or substituting a triangle/solid color.
-          result.commands.push({
-            ...common,
-            sy: 15,
-            sh: 1,
-            dy: common.dy + bodyRows,
-            dh: clampRows,
-            sourceSampling: "point-clamp-bottom",
-          });
-          support.clampedShapeCells++;
-        }
-        assets.add(shape.asset);
-        support.drawn++;
-        support.shapeDrawn++;
-        support.sourceGeometryDrawn++;
+        (reason === "special-tile-neighborhood" ||
+          reason === "mixed-liquid-neighborhood")
+      )
+        resolveSpecial(wx, wy);
+      else reject(wx, wy, reason);
+      continue;
+    }
+    const texture = kind === 0 ? waterStyle : kind === 1 ? 1 : 11;
+    const frontOpacity = FRONT_ALPHA[kind] * (kind === 1 ? lavaOpacity : 1);
+    const alpha =
+      support.layer === "foreground"
+        ? frontOpacity
+        : kind === 1
+          ? lavaOpacity
+          : 1;
+    const ownShape = tile.active && !tile.inactive && tile.shape;
+    const surrounding = [];
+    if (nearShape)
+      for (let nx = wx - 1; nx <= wx + 1; nx++)
+        for (let ny = wy - 1; ny <= wy + 1; ny++)
+          if (nx !== wx || ny !== wy) surrounding.push(get(nx, ny));
+    // When every surrounding site is fully wet with this liquid or a known
+    // solid, the modern visible-level equations reduce to a full 16px cell:
+    // all four walls are 0/1, edges are absent, smoothing/corners are identity.
+    // This is a bounded, proven subset, not a dry-neighbor/falling guess.
+    const stableFull =
+      nearShape &&
+      (tile.liquid === 255 ||
+        (dryShape && tile.shape === 1 && get(wx, wy - 1)?.liquid === 255)) &&
+      !missing &&
+      surrounding.every(
+        (n) => solid(n) || (n?.liquid === 255 && n.liquidKind === liquidKind),
+      );
+    if (ownShape) {
+      if (!solid(tile)) {
+        if (!missing) resolveSpecial(wx, wy);
+        else reject(wx, wy, "shape-non-solid");
         continue;
       }
-      if (solid(tile)) {
-        support.skippedSolid++;
+      if (missing) {
+        reject(wx, wy, "shape-missing-context");
         continue;
       }
-      if (nearShape) {
-        if (!stableFull) {
-          if (missing) {
-            reject(wx, wy, "shape-missing-context");
-            continue;
-          }
-          const visible = visibleAt(wx, wy);
-          if (visible.supported) addVisible(visible, false);
-          else rejectVisible(wx, wy, visible.reason);
-          continue;
-        }
+      const neighbors = [
+        get(wx, wy - 1),
+        get(wx - 1, wy),
+        get(wx + 1, wy),
+        get(wx, wy + 1),
+      ];
+      // A wet halfbrick below full liquid uses the normal renderer's upper
+      // half. With a wall its separate behind-tile pass is suppressed, so
+      // this subset needs neither a second alpha layer nor a waterfall guess.
+      if (
+        tile.shape === 1 &&
+        stableFull &&
+        tile.wall > 0 &&
+        neighbors[0].liquid === 255
+      ) {
         const asset = `water_${texture}.png`;
         result.commands.push({
           kind: "liquid",
           asset,
           sourceAsset: `Images/Misc/${asset}`,
           sx: 16,
-          sy: 48 + waterfallFrame * 80,
+          sy: 56 + waterfallFrame * 80,
           sw: 16,
-          sh: 16,
+          sh: 8,
           dx: x * 16,
           dy: y * 16,
           dw: 16,
-          dh: 16,
+          dh: 8,
           opacity: alpha,
           frontOpacity,
           layer: support.layer,
@@ -537,52 +433,142 @@ export function planLiquids(region, options = {}) {
           y,
           worldX: wx,
           worldY: wy,
-          fidelity: "static-full-liquid-near-shape",
+          fidelity: "static-wet-halfbrick-top",
         });
         assets.add(asset);
         support.drawn++;
+        support.shapeDrawn++;
         support.sourceGeometryDrawn++;
         continue;
       }
-      const occupied = (dx, dy) => {
-        const n = get(wx + dx, wy + dy);
-        return (
-          solid(n) || Boolean(n?.liquid && n.liquidKind === tile.liquidKind)
-        );
-      };
-      // Raw-cell adjacency chooses an atlas family. No visible-level propagation or smoothing.
-      const left = !occupied(-1, 0),
-        right = !occupied(1, 0),
-        top = !occupied(0, -1);
-      let sx = left ? 0 : right ? 32 : 16;
-      let baseY = top ? 0 : left || right ? (wy % 2 === 0 ? 32 : 16) : 48;
-      if (left && right) {
-        sx = 16;
-        baseY = top ? 16 : 32;
+      const shape = behindShape(tile, neighbors, {
+        texture,
+        worldY: wy,
+        worldSurface,
+        lavaOpacity,
+        solid,
+      });
+      if (shape.reason) {
+        if (
+          shape.reason === "halfbrick-overlap-neighborhood" &&
+          tile.wall > 0
+        ) {
+          const visible = visibleAt(wx, wy);
+          // Only this proven wall/halfbrick case suppresses the separate
+          // behind pass. Normal-pass occlusion alone is insufficient.
+          if (visible.supported && visible.behindTileSuppressed) {
+            addVisible(visible, true);
+            continue;
+          }
+          if (!visible.supported) {
+            rejectVisible(wx, wy, visible.reason);
+            continue;
+          }
+        }
+        if (
+          shape.reason === "halfbrick-overlap-neighborhood" ||
+          shape.reason === "halfbrick-waterfall-neighborhood"
+        ) {
+          sampleHalfbrick ??= createHalfbrickLiquidSampler(region, {
+            ...options,
+            worldSurface,
+          });
+          const half = sampleHalfbrick(wx, wy);
+          if (half.supported) {
+            for (const command of half.commands) {
+              result.commands.push(command);
+              assets.add(command.asset);
+            }
+            if (half.commands.length) {
+              support.drawn++;
+              support.shapeDrawn++;
+              support.sourceGeometryDrawn++;
+            } else support.skippedOccluded++;
+            if (half.normalDrawn) support.visibleLevelDrawn++;
+            if (half.clampedRows) support.clampedShapeCells++;
+            if (half.gradientRows) {
+              support.gradientShapeCells++;
+              support.gradientRows += half.gradientRows;
+            }
+            continue;
+          }
+          rejectVisible(wx, wy, half.reason);
+          continue;
+        }
+        reject(wx, wy, shape.reason);
+        continue;
       }
-      const surface =
-        sx === 16 &&
-        baseY === 0 &&
-        support.worldSurfaceKnown &&
-        wy > worldSurface - 40;
-      const fillHeight = Math.ceil((tile.liquid / 255) * 16);
-      const topInset = 16 - fillHeight;
-      const sy = surface
-        ? 1280
-        : baseY + (sx === 16 ? waterfallFrame : frame) * 80 + topInset;
+      if (shape.occluded) {
+        support.skippedOccluded++;
+        continue;
+      }
+      const common = {
+        kind: "liquid",
+        ...shape,
+        sourceAsset: `Images/${shape.asset}`,
+        dx: x * 16,
+        dy: y * 16 + shape.offsetY,
+        dw: shape.sw,
+        dh: shape.sh,
+        frontOpacity,
+        liquidType: kind,
+        liquidLevel: tile.liquid,
+        x,
+        y,
+        worldX: wx,
+        worldY: wy,
+      };
+      const bodyRows = Math.min(shape.sh, 16 - shape.sy);
+      result.commands.push({ ...common, sh: bodyRows, dh: bodyRows });
+      const clampRows = shape.sh - bodyRows;
+      if (clampRows > 0) {
+        // TileBatch fixes PointClamp. Sample the real last row and repeat it
+        // only outside the texture boundary instead of performing an invalid
+        // source read or substituting a triangle/solid color.
+        result.commands.push({
+          ...common,
+          sy: 15,
+          sh: 1,
+          dy: common.dy + bodyRows,
+          dh: clampRows,
+          sourceSampling: "point-clamp-bottom",
+        });
+        support.clampedShapeCells++;
+      }
+      assets.add(shape.asset);
+      support.drawn++;
+      support.shapeDrawn++;
+      support.sourceGeometryDrawn++;
+      continue;
+    }
+    if (!quick && solid(tile)) {
+      support.skippedSolid++;
+      continue;
+    }
+    if (nearShape) {
+      if (!stableFull) {
+        if (missing) {
+          reject(wx, wy, "shape-missing-context");
+          continue;
+        }
+        const visible = visibleAt(wx, wy);
+        if (visible.supported) addVisible(visible, false);
+        else rejectVisible(wx, wy, visible.reason);
+        continue;
+      }
       const asset = `water_${texture}.png`;
       result.commands.push({
         kind: "liquid",
         asset,
         sourceAsset: `Images/Misc/${asset}`,
-        sx,
-        sy,
+        sx: 16,
+        sy: 48 + waterfallFrame * 80,
         sw: 16,
-        sh: fillHeight,
+        sh: 16,
         dx: x * 16,
-        dy: y * 16 + topInset,
+        dy: y * 16,
         dw: 16,
-        dh: fillHeight,
+        dh: 16,
         opacity: alpha,
         frontOpacity,
         layer: support.layer,
@@ -592,11 +578,64 @@ export function planLiquids(region, options = {}) {
         y,
         worldX: wx,
         worldY: wy,
-        fidelity: "flat-fill-approximation",
+        fidelity: "static-full-liquid-near-shape",
       });
       assets.add(asset);
       support.drawn++;
+      support.sourceGeometryDrawn++;
+      continue;
     }
+    const occupied = (dx, dy) => {
+      const n = get(wx + dx, wy + dy);
+      return solid(n) || Boolean(n?.liquid && n.liquidKind === tile.liquidKind);
+    };
+    // Raw-cell adjacency chooses an atlas family. No visible-level propagation or smoothing.
+    const left = quick ? !(code & 2) : !occupied(-1, 0),
+      right = quick ? !(code & 4) : !occupied(1, 0),
+      top = quick ? !(code & 1) : !occupied(0, -1);
+    let sx = left ? 0 : right ? 32 : 16;
+    let baseY = top ? 0 : left || right ? (wy % 2 === 0 ? 32 : 16) : 48;
+    if (left && right) {
+      sx = 16;
+      baseY = top ? 16 : 32;
+    }
+    const surface =
+      sx === 16 &&
+      baseY === 0 &&
+      support.worldSurfaceKnown &&
+      wy > worldSurface - 40;
+    const fillHeight = Math.ceil((tile.liquid / 255) * 16);
+    const topInset = 16 - fillHeight;
+    const sy = surface
+      ? 1280
+      : baseY + (sx === 16 ? waterfallFrame : frame) * 80 + topInset;
+    const asset = `water_${texture}.png`;
+    result.commands.push({
+      kind: "liquid",
+      asset,
+      sourceAsset: `Images/Misc/${asset}`,
+      sx,
+      sy,
+      sw: 16,
+      sh: fillHeight,
+      dx: x * 16,
+      dy: y * 16 + topInset,
+      dw: 16,
+      dh: fillHeight,
+      opacity: alpha,
+      frontOpacity,
+      layer: support.layer,
+      liquidType: kind,
+      liquidLevel: tile.liquid,
+      x,
+      y,
+      worldX: wx,
+      worldY: wy,
+      fidelity: "flat-fill-approximation",
+    });
+    assets.add(asset);
+    support.drawn++;
+  }
   result.requiredAssets = [...assets].sort();
   support.commandCount = result.commands.length;
   result.warnings.push(

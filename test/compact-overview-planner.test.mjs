@@ -120,6 +120,21 @@ test("compact planning preserves crop guards, emission owners, full dependencies
       }
 });
 
+test("compact backing capacity follows the guarded output owners without dropping dependencies", () => {
+  const r = region(148, 68),
+    p = equivalent(r, {
+      outputBounds: { x: 160, y: 160, width: 128 * 16, height: 48 * 16 },
+    });
+  // Both ordinary planes keep one owner on each side of the 128x48 core.
+  // The surrounding read halo remains present in r, not in unused records.
+  assert.equal(p.compactTerrain.records.buffer.byteLength, 130 * 50 * 2 * 20);
+  assert.equal(p.compactTerrain.records.length / 5, 130 * 50 * 2);
+  assert.ok(
+    p.compactTerrain.records.buffer.byteLength < r.cells.length * 2 * 20,
+  );
+  assert.deepEqual(p.requiredAssets, ["Tiles_1.png", "Wall_2.png"]);
+});
+
 test("every tile family, saved frame and canonical shape retains its full reference plan", () => {
   for (const saved of [false, true])
     for (const shape of [-1, 0, 1, 2, 3, 4, 5, 6]) {
@@ -226,6 +241,19 @@ function waterfallOptions(layer) {
     },
   };
 }
+
+test("large compact groups retain sparse non-solid owners and exact waterfall ordering", () => {
+  const r = region(128, 128, { wall: 0 });
+  for (const i of [0, 511, 4096, 8192, r.cells.length - 1])
+    r.cells[i] = tile({ wall: 0, type: 4, frameX: 0, frameY: 0 });
+  const p = equivalent(r, waterfallOptions("foreground")),
+    commands = referenceView(p).commands,
+    waterfall = commands.findIndex((c) => c.kind === "waterfall");
+  assert.ok(p.commands.length > 8192);
+  assert.equal(commands.filter((c) => c.type === 4).length, 5);
+  assert.ok(commands.slice(0, waterfall).every((c) => c.type === 4));
+  assert.ok(commands.slice(waterfall + 1).every((c) => c.type === 1));
+});
 
 test("special overhangs, tree layers, liquids and waterfalls stay interleaved in reference order", () => {
   const r = mixedScene();

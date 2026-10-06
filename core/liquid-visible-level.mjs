@@ -68,9 +68,18 @@ export function createVisibleLiquidSampler(region, options = {}) {
   const memo = (compute) => {
     const cache = new Map();
     return (x, y) => {
-      const key = `${x},${y}`;
-      if (cache.has(key)) {
-        const value = cache.get(key);
+      // sample() validates integer coordinates and every dependency adds an
+      // integer offset. Pack the common world range without allocating strings;
+      // negative, large and boundary-crossing dependencies keep their exact
+      // string identity. Number and string keys cannot collide in this Map.
+      const key =
+        x >= 0 && x < 32768 && y >= 0 && y < 32768
+          ? x * 32768 + y
+          : `${x},${y}`;
+      // These seven memoized stages return state objects or cached Unsupported
+      // errors, never undefined, so a hit needs only one lookup.
+      const value = cache.get(key);
+      if (value !== undefined) {
         if (value instanceof Unsupported) throw value;
         return value;
       }

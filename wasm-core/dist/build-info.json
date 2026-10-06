@@ -1,15 +1,15 @@
 {
   "artifact": "exploretv_wld_core.wasm",
-  "sha256": "2923ceec553904b9f6ca979bebe8f09fe0e4d04fbde74b2082a4fa00df00a74f",
-  "bytes": 32158,
+  "sha256": "ae0ff61ca5f26e9366732ec7e69ea675965af16ae9cdd0ed1bff4cb2ecf04d08",
+  "bytes": 35642,
   "abiVersion": 1,
   "cellBytes": 32,
-  "overviewAbiVersion": 1,
+  "overviewAbiVersion": 2,
   "maxLinearMemoryBytes": 134217728,
   "target": "wasm32-unknown-unknown",
   "rustc": "rustc 1.85.1 (4eb161250 2025-03-15)",
   "sourceSha256": "c5766506173a96e9d2e6c26ffba39ab1f70518ef9c2e961f1c55ed1d5bbe3215",
-  "overviewSourceSha256": "790d7804f76883eb83cd820cd7c2c2c0577e1d7cf839c64501ca9a55166a1d7c",
+  "overviewSourceSha256": "182274ef15127151909e5a335a6e43ae3acc19e852978b40b18428f02ee0c419",
   "imports": [],
   "profile": "release, opt-level=3, LTO, codegen-units=1, panic=abort, strip=true"
 }

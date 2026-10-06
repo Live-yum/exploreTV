@@ -36,6 +36,9 @@ jobs:
     timeout-minutes: 60
     env:
       BASELINE_COMMIT: cbdf5b3c3b9f4952a2075a133f809b9b2d779d12
+      EXPLORETV_DISABLE_TERRAIN_WASM: "0"
+      EXPLORETV_ENABLE_RESOLVED_CELL_MASK: "0"
+      EXPLORETV_DISABLE_RESOLVED_CELL_MASK: "0"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,7 +55,7 @@ jobs:
       - run: node --test test/native-reducer.test.mjs test/native-blitter.test.mjs test/software-overview-partition.test.mjs test/software-overview-composite.test.mjs test/overview-frame-metadata.test.mjs test/scene-frame-interner.test.mjs test/ordinary-planner-fast-path.test.mjs test/indexed-shimmer-hint.test.mjs test/process-memory.test.mjs test/raw-overview-frame.test.mjs test/raw-identity-preparation.test.mjs test/slope-overview-frame.test.mjs test/reduce-overview-canvas.test.mjs test/native-provenance.test.mjs test/overview-early-halo-cull.test.mjs
       - run: node --test test/world-validation-memo.test.mjs test/renderer-slope-polygons.test.mjs test/scene-frame-id.test.mjs test/renderer-emission-core.test.mjs test/overview-shared-geometry.test.mjs test/compact-overview-ci.test.mjs
       - run: node --test test/compact-overview-planner.test.mjs test/overview-terrain-wasm.test.mjs test/compact-terrain-engine.test.mjs test/direct-terrain-overview.test.mjs
-      - run: node --test test/compact-ablation.test.mjs
+      - run: node --test test/compact-ablation.test.mjs test/liquid-visible-level-cache.test.mjs
       - name: Measure pinned baseline on this runner
         run: |
           set -euo pipefail
@@ -87,19 +90,21 @@ jobs:
       - name: Measure the same compact candidate with terrain WASM disabled
         env:
           EXPLORETV_DISABLE_TERRAIN_WASM: "1"
-          EXPLORETV_DISABLE_RESOLVED_CELL_MASK: "0"
+          EXPLORETV_ENABLE_RESOLVED_CELL_MASK: "0"
+          EXPLORETV_DISABLE_RESOLVED_CELL_MASK: "1"
         run: node scripts/run-overview-ci.mjs artifacts/compact-js
       - run: node scripts/verify-overview.mjs fixtures/example-world.wld example/assets artifacts/compact-js/world-1px.png --example
-      - name: Measure the same compact candidate with the resolved-cell mask disabled
+      - name: Measure the same compact candidate with the experimental resolved-cell mask enabled
         env:
           EXPLORETV_DISABLE_TERRAIN_WASM: "0"
-          EXPLORETV_DISABLE_RESOLVED_CELL_MASK: "1"
-        run: node scripts/run-overview-ci.mjs artifacts/compact-unmasked
-      - run: node scripts/verify-overview.mjs fixtures/example-world.wld example/assets artifacts/compact-unmasked/world-1px.png --example
+          EXPLORETV_ENABLE_RESOLVED_CELL_MASK: "1"
+          EXPLORETV_DISABLE_RESOLVED_CELL_MASK: "0"
+        run: node scripts/run-overview-ci.mjs artifacts/compact-masked
+      - run: node scripts/verify-overview.mjs fixtures/example-world.wld example/assets artifacts/compact-masked/world-1px.png --example
       - name: Compare complete same-commit feature ablations
         run: |
           node scripts/compare-compact-ablations.mjs \
-            artifacts/direct-overview artifacts/compact-js artifacts/compact-unmasked \
+            artifacts/direct-overview artifacts/compact-js artifacts/compact-masked \
             "$(git rev-parse HEAD)" "$GITHUB_WORKSPACE"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -110,7 +115,7 @@ jobs:
             artifacts/direct-overview/*.json
             artifacts/direct-overview-baseline/*.json
             artifacts/compact-js/*.json
-            artifacts/compact-unmasked/*.json
+            artifacts/compact-masked/*.json
           compression-level: 0
           retention-days: 7
       - uses: actions/upload-artifact@v4

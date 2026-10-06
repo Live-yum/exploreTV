@@ -592,3 +592,44 @@ test("resolved-cell mask validation is atomic across aliases, detachment, shared
     { pixelsSkipped: 0, pixelsToResolvedCells: 0 },
   );
 });
+
+
+test("mask prechecks and merged spans preserve wide, clipped, flipped planes", () => {
+  const width = 111, height = 59, maskWidth = Math.ceil(width / 16),
+    sourceWidth = 96, sourceHeight = 48,
+    frame = new Uint8Array(sourceWidth * sourceHeight * 4),
+    initial = new Uint8Array(width * height * 4),
+    descriptors = Int32Array.from([
+      0, sourceWidth, sourceHeight, -9, 5, 1, 0, 0,
+      0, sourceWidth, sourceHeight, 23, -7, 0, 1, 1,
+      0, sourceWidth, sourceHeight, 5, 17, 1, 1, 0,
+    ]);
+  for (let i = 0; i < frame.length; i++) frame[i] = (i * 29 + 43) % 256;
+  for (let i = 0; i < initial.length; i++) initial[i] = i % 4 === 3 ? 255 : (i * 7 + 19) % 256;
+  for (const pattern of ["empty", "island", "stripes", "full"]) {
+    const mask = new Uint8Array(maskWidth * Math.ceil(height / 16));
+    if (pattern === "island") { mask[maskWidth + 3] = 1; mask[maskWidth * 2 + 3] = 2; }
+    if (pattern === "stripes") for (let y = 0; y < Math.ceil(height / 16); y++) { mask[y * maskWidth + 1] = 1; mask[y * maskWidth + 5] = 2; }
+    if (pattern === "full") mask.fill(1);
+    const actual = new Uint8Array(initial), expected = new Uint8Array(initial);
+    composeInto(expected, width, height, descriptors, [frame]);
+    let pixelsSkipped = 0, pixelsToResolvedCells = 0;
+    for (let i = 0; i < descriptors.length; i += 8) {
+      const dx = descriptors[i + 3], dy = descriptors[i + 4];
+      for (let y = Math.max(0, dy); y < Math.min(height, dy + sourceHeight); y++)
+        for (let x = Math.max(0, dx); x < Math.min(width, dx + sourceWidth); x++) {
+          const cell = mask[(y >> 4) * maskWidth + (x >> 4)];
+          if (cell) pixelsSkipped++;
+          if (cell === 1) pixelsToResolvedCells++;
+        }
+    }
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++)
+      if (mask[(y >> 4) * maskWidth + (x >> 4)]) {
+        const at = (y * width + x) * 4;
+        expected.set(initial.subarray(at, at + 4), at);
+      }
+    assert.deepEqual(composeIntoMasked(actual, width, height, descriptors, [frame], mask),
+      {pixelsSkipped, pixelsToResolvedCells}, pattern);
+    equalBytes(actual, expected, `merged ${pattern} spans`);
+  }
+});

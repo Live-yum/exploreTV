@@ -93,7 +93,7 @@ for (const [name, hash] of Object.entries(report.sourceHashes)) {
   );
 }
 if (report.terrainWasm?.available) {
-  assert.equal(report.terrainWasm.abiVersion, 1, "Executed terrain WASM ABI");
+  assert.equal(report.terrainWasm.abiVersion, 2, "Executed terrain WASM ABI");
   assert.equal(
     report.terrainWasm.binarySha256,
     report.sourceHashes["wasm-core/dist/exploretv_wld_core.wasm"],
@@ -110,7 +110,7 @@ if (report.terrainWasm?.available) {
     "Executed terrain WASM planning source",
   );
   assert.ok(
-    report.terrainWasm.peakWorkingBytes <= 65536 * 10,
+    report.terrainWasm.peakWorkingBytes <= 65536 * 18,
     "Bounded terrain WASM working data",
   );
 }

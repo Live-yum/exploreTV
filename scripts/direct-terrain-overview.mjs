@@ -168,7 +168,9 @@ export function createDirectTerrainOverview({
   maxDetailedBytes = 6 * 1024 * 1024,
   inputEncoding = "tconvert-game-raw",
   detailedRgbaArena = null,
-  resolvedCellMask = true,
+  // Fewer pixel operations did not beat unmasked composition in the complete
+  // CI export. Keep this kernel available for measured A/B, explicitly opt-in.
+  resolvedCellMask = false,
 } = {}) {
   if (
     typeof resolvedCellMask !== "boolean" ||
@@ -767,9 +769,9 @@ export function createDirectTerrainOverview({
       try {
         for (let i = 0; i < commands.length; i++) {
           const command = commands[i];
-          let c = command,
-            destX = c?.dx,
-            destY = c?.dy,
+          let c,
+            destX,
+            destY,
             frameSlot = -1,
             flags = 0,
             meanWord = 0;
@@ -799,6 +801,10 @@ export function createDirectTerrainOverview({
             }
             flags = compactFlags[frameSlot];
             if (flags) stats.compactValidationReuses++;
+          } else {
+            c = command;
+            destX = c?.dx;
+            destY = c?.dy;
           }
           if (!flags) {
             const kind = c ? candidateKind(c, destX, destY) : 0,

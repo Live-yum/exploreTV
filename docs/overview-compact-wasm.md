@@ -35,13 +35,15 @@
 - wall 邻域帧索引，包含依世界坐标变化的中心变体，范围 0–19。
 - 普通 Tile 的同类型邻域 mask，范围 0–15。
 
-输入为 **8 B/cell**，输出为 **2 B/cell**，合计 **10 B/cell 的输入／输出工作数据**。例如一个 148×68 读取区域需要 100,640 B；允许的最大 65,536 格区域需要 655,360 B。这不是完整 WASM 线性内存或总 RSS：模块及分配器开销、原有 region 数据、紧凑命令缓冲和纹理缓存另行存在。报告分别记录 `peakWorkingBytes` 和 `peakLinearMemoryBytes`，不能只用前者证明内存目标。
+单独地形输入为 **8 B/cell**，输出为 **2 B/cell**，合计 **10 B/cell 的输入／输出工作数据**。启用整图液体规划时，另用每格 4 B 的液体／形状／材质标志和最多 4 B 的候选记录，联合上限为 **18 B/cell**。例如一个 148×68 读取区域需要最多 181,152 B；允许的最大 65,536 格区域需要最多 1,179,648 B。这不是完整 WASM 线性内存或总 RSS：模块及分配器开销、原有 region 数据、紧凑命令缓冲和纹理缓存另行存在。报告分别记录 `peakWorkingBytes` 和 `peakLinearMemoryBytes`，不能只用前者证明内存目标。
 
 WASM 保留区域边缘、不可见墙／块、隐藏墙 318、同类型比较和有符号世界坐标的原规则。返回的帧表由 `planOverviewBand()` 同步消费，不保存到最终 plan 中。无法无损打包的输入退回 JavaScript 邻域计算；公开 `planScene()` 始终自行计算参考帧。
 
+ABI 2 还批量筛选液体候选和验证普通液体的 3×3 邻域。无关干格不进入 JavaScript 液体遍历；已证明的普通湿格直接使用数值邻域分类，已证明遮挡的湿固体保留计数并跳过绘制。坡块、半砖、特殊对象、混合液体、Shimmer、无效字段和缺失邻格都回到完整参考规则，存在 selection context 时保留原液体扫描。候选仍按原列优先顺序消费，普通液体命令的 atlas、动画帧、透明度、owner、诊断和层序不变。`liquidRegions / liquidCandidateCells / liquidFastCells` 记录实际执行范围。
+
 [`scripts/overview-terrain-wasm.mjs`](../scripts/overview-terrain-wasm.mjs) 校验 WASM 二进制与 Rust 源码哈希、ABI 和 imports。缺失、过期或不兼容时明确报告原因并退回 JavaScript 邻域路径。WASM 模块加载、编译、实例创建及运行期打包都发生在被测 exporter 进程中。
 
-本轮没有把整个渲染器改写为 WASM。特殊对象规则、液体规划、资源加载和流程组织仍有 JavaScript 工作；已经完成字节精度验证的 C 原生合成、覆盖片段跳过及缩小继续使用。`prepare:overview` 提前构建世界无关的原生模块；修改 Rust 后通过 `sh wasm-core/build.sh` 重建并校验仓库内的 WASM 产物。不能把世界相关准备移出首次导出计时来制造加速成绩。
+本轮没有把整个渲染器改写为 WASM。特殊对象规则、复杂液体几何与普通液体命令组装、资源加载和流程组织仍有 JavaScript 工作；已经完成字节精度验证的 C 原生合成和缩小继续使用，目标片段 mask 作为显式实验保留。`prepare:overview` 提前构建世界无关的原生模块；修改 Rust 后通过 `sh wasm-core/build.sh` 重建并校验仓库内的 WASM 产物。不能把世界相关准备移出首次导出计时来制造加速成绩。
 
 ## 3. 唯一帧验证与有界代际 slot
 
@@ -54,6 +56,8 @@ WASM 保留区域边缘、不可见墙／块、隐藏墙 318、同类型比较�
 新增计数包括 `compactFramesValidated`、`compactValidationReuses`、`frameKeyLookups`、`compactSecondPassSlotHits`、`compactSecondPassReloads` 和 `peakCompactSlotBytes`。这些指标用于确认重复工作是否减少；缓存命中率本身不能替代完整运行耗时。
 
 ## 4. 在原生合成器内跳过已解决片段
+
+**目标片段 mask 默认关闭，显式设置 `EXPLORETV_ENABLE_RESOLVED_CELL_MASK=1` 才开启。** 第一轮完整同机实验中，减少像素工作量没有换来完整耗时下降，因此没有把它作为默认加速。实验路径仍保留精确计数、字节验证和同提交的完整对照；已有整条命令剔除、直接均值和覆盖判定继续默认生效。
 
 第一遍覆盖分析确定哪些 16×16 目标格可以直接使用最终不透明均值，哪些格需要通用路径，哪些格仍需详细合成。传给 [`native-blitter.c`](../scripts/native-blitter.c) 的 mask 使用 0 表示需要详细合成、1 表示已经有精确结果、2 表示 direct 输出不会被采用的区域。
 
@@ -82,11 +86,12 @@ WASM 保留区域边缘、不可见墙／块、隐藏墙 318、同类型比较�
 
 以下开关只改变候选源码的路径选择，不等同于检出固定旧基线。默认优化入口用于 1 px/Tile、raw 通道、非世界录制且 direct 条件满足的整图路径。
 
-| 环境变量                                 | 效果                                                                             |
-| ---------------------------------------- | -------------------------------------------------------------------------------- |
-| `EXPLORETV_DISABLE_COMPACT_TERRAIN=1`    | 使用原对象规划入口；WASM 邻域随紧凑入口关闭，仍保留本轮 direct / mask 实现       |
-| `EXPLORETV_DISABLE_TERRAIN_WASM=1`       | 保留紧凑规划和唯一帧路径，邻域帧由 JavaScript 计算                               |
-| `EXPLORETV_DISABLE_RESOLVED_CELL_MASK=1` | 保留紧凑规划和 WASM，原生合成不使用目标片段 mask；已有整命令跳过及最终均值仍生效 |
+| 环境变量                                 | 效果                                                                       |
+| ---------------------------------------- | -------------------------------------------------------------------------- |
+| `EXPLORETV_DISABLE_COMPACT_TERRAIN=1`    | 使用原对象规划入口；WASM 邻域随紧凑入口关闭，仍保留本轮 direct / mask 实现 |
+| `EXPLORETV_DISABLE_TERRAIN_WASM=1`       | 保留紧凑规划和唯一帧路径，邻域帧由 JavaScript 计算                         |
+| `EXPLORETV_ENABLE_RESOLVED_CELL_MASK=1`  | 显式开启实验性原生目标片段 mask；默认关闭，完整实测决定是否应启用          |
+| `EXPLORETV_DISABLE_RESOLVED_CELL_MASK=1` | 强制关闭目标片段 mask，优先于 ENABLE 开关；已有整命令跳过及最终均值仍生效  |
 
 Linux 上可使用完整进程 harness 为每次运行选择新的输出目录：
 
@@ -98,7 +103,7 @@ node scripts/check-overview-native.mjs
 node scripts/run-overview-ci.mjs artifacts/compact-default
 EXPLORETV_DISABLE_TERRAIN_WASM=1 node scripts/run-overview-ci.mjs artifacts/compact-js-neighbours
 EXPLORETV_DISABLE_COMPACT_TERRAIN=1 node scripts/run-overview-ci.mjs artifacts/compact-object-plan
-EXPLORETV_DISABLE_RESOLVED_CELL_MASK=1 node scripts/run-overview-ci.mjs artifacts/compact-no-mask
+EXPLORETV_ENABLE_RESOLVED_CELL_MASK=1 node scripts/run-overview-ci.mjs artifacts/compact-masked
 
 # 每个输出都需要独立像素核验；按实际输出目录重复执行。
 node scripts/verify-overview.mjs fixtures/example-world.wld example/assets artifacts/compact-default/world-1px.png --example
@@ -106,7 +111,7 @@ node scripts/verify-overview.mjs fixtures/example-world.wld example/assets artif
 
 为单独观察紧凑表示的收益，应比较“禁用 WASM 的紧凑路径”和“对象规划路径”；默认与对象路径的差异同时包含 WASM。所有消融都需要检查报告中的实际启用状态、完整 RGBA、遗漏与资源身份，不能只看环境变量。保持同一机器、Node、依赖、堆／GC 参数和输出范围，顺序运行新的进程；操作系统文件缓存仍不是受控变量。
 
-本轮 Actions 对固定基线和默认候选完成对照后，还会顺序运行同一候选提交的两组完整消融：**禁用 WASM 邻域**、**禁用原生目标片段 mask**。两组都独立验证完整像素和 13 个区域，用于确认 WASM 与 mask 对实际完整耗时和峰值的影响；减少查询或像素工作量不能直接证明墙钟时间下降。对象规划开关保留为额外手动实验入口。
+本轮 Actions 对固定基线和默认候选完成对照后，还会顺序运行同一候选提交的两组完整消融：**禁用 WASM 地形／液体批处理**、**显式启用原生目标片段 mask**。两组都独立验证完整像素和 13 个区域，用于确认 WASM 与 mask 对实际完整耗时和峰值的影响；减少查询或像素工作量不能直接证明墙钟时间下降。对象规划开关保留为额外手动实验入口。
 
 ## 7. 验收合同与报告位置
 
@@ -120,7 +125,7 @@ node scripts/verify-overview.mjs fixtures/example-world.wld example/assets artif
 - [direct 缓存／像素测试](../test/direct-terrain-overview.test.mjs)与[原生合成器测试](../test/native-blitter.test.mjs)
 - [固定 main 整图对照 workflow](../.github/workflows/export-overview.yml)与[平台验证 workflow](../.github/workflows/validation.yml)
 
-整图 workflow 固定旧提交 `cbdf5b3c3b9f4952a2075a133f809b9b2d779d12`，在同一个 runner / job 中依次运行基线、默认候选、候选 JavaScript 邻域消融、候选关闭 mask 消融，共四次完整冷进程。每个 checkout 构建自身原生模块，以完整冷进程测量世界读取、索引、瀑布登记、纹理解码、规划、合成、缩小、GC、PNG 压缩及写入。验证源码报告与确切 Git 提交／tree 一致，且渲染依赖、世界与资源身份对应。
+整图 workflow 固定旧提交 `cbdf5b3c3b9f4952a2075a133f809b9b2d779d12`，在同一个 runner / job 中依次运行基线、默认候选、候选 JavaScript 邻域消融、候选启用 mask 消融，共四次完整冷进程。每个 checkout 构建自身原生模块，以完整冷进程测量世界读取、索引、瀑布登记、纹理解码、规划、合成、缩小、GC、PNG 压缩及写入。验证源码报告与确切 Git 提交／tree 一致，且渲染依赖、世界与资源身份对应。
 
 接受任何一组比较之前，参与比较的运行都必须覆盖完整 **8400×2400** 输出及 **20,160,000 个 Tile**，通过完整 RGBA 哈希、13 个独立区域、384 张纹理身份、逻辑命令计数和遗漏表核验。通过正确性及 600 秒／500 MB 防护门槛后，再分别报告 **60 秒时间目标**、**300 MB 保守总峰值目标**以及两项是否同时通过。绿色 workflow 本身不表示这两个优先目标已达到。MB 按十进制，MiB 按 1,048,576 B。
 

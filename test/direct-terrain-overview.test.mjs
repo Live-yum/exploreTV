@@ -1403,7 +1403,7 @@ test(
   () => {
     const s = scene(3, 3),
       imageAssets = assets(),
-      masked = createDirectTerrainOverview(),
+      masked = createDirectTerrainOverview({ resolvedCellMask: true }),
       unmasked = createDirectTerrainOverview({ resolvedCellMask: false }),
       full = s.plan([
         s.make({

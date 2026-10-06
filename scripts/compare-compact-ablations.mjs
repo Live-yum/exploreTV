@@ -9,9 +9,9 @@ import {
 } from "./compare-overview-benchmarks.mjs";
 
 const MODES = {
-  default: { wasm: true, mask: true },
-  compactJs: { wasm: false, mask: true },
-  compactUnmasked: { wasm: true, mask: false },
+  default: { wasm: true, mask: false },
+  compactJs: { wasm: false, mask: false },
+  compactMasked: { wasm: true, mask: true },
 };
 
 /** Compare only feature switches on the same immutable candidate source. */
@@ -137,15 +137,15 @@ export function compareCompactAblations(runs, commit, { checkout } = {}) {
     };
   }
   return {
-    schema: "exploretv-compact-ablation-comparison-v1",
+    schema: "exploretv-compact-ablation-comparison-v2",
     candidateCommit: commit,
     method:
-      "Pinned main, default candidate, compact JS without terrain WASM, then compact WASM without the resolved-cell mask run sequentially in one CI job on the same runner. " +
+      "Pinned main, default compact WASM candidate without a mask, compact JS without WASM or a mask, then compact WASM with the experimental resolved-cell mask enabled run sequentially in one CI job on the same runner. " +
       "The three candidate runs use one exact source commit and identical prepared native binaries, each in a fresh complete cold process. " +
       "Each independently verifies the full 20,160,000-pixel RGBA hash, 13 regions, texture identities and omission diagnostics. " +
       "One sequential sample per mode; OS file caches and run-order effects are uncontrolled. Small differences are observations, not a statistically established improvement.",
     deltaMeaning:
-      "A positive deltaFromDefaultSeconds means disabling the feature took longer in this single sample; a negative value means that sample was faster. Nested phase timings are not additive.",
+      "A positive deltaFromDefaultSeconds means that feature configuration took longer than the default in this single sample; a negative value means that sample was faster. The JS comparison disables WASM; the masked comparison enables an experimental mask. Nested phase timings are not additive.",
     preferredRuntimeSeconds: 60,
     preferredRssBytes: 300000000,
     runs: result,
@@ -156,18 +156,18 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(resolve(process.argv[1])).href
 ) {
-  const [defaultDir, jsDir, unmaskedDir, commit, checkout, ...extra] =
+  const [defaultDir, jsDir, maskedDir, commit, checkout, ...extra] =
     process.argv.slice(2);
   if (
     !defaultDir ||
     !jsDir ||
-    !unmaskedDir ||
+    !maskedDir ||
     !commit ||
     !checkout ||
     extra.length
   )
     throw new Error(
-      "Usage: node compare-compact-ablations.mjs default-dir compact-js-dir compact-unmasked-dir candidate-commit candidate-checkout",
+      "Usage: node compare-compact-ablations.mjs default-dir compact-js-dir compact-masked-dir candidate-commit candidate-checkout",
     );
   const load = (directory) => {
     const read = (name) =>
@@ -182,7 +182,7 @@ if (
     {
       default: load(defaultDir),
       compactJs: load(jsDir),
-      compactUnmasked: load(unmaskedDir),
+      compactMasked: load(maskedDir),
     },
     commit,
     { checkout },
@@ -194,9 +194,9 @@ if (
   );
   if (process.env.GITHUB_STEP_SUMMARY) {
     const label = {
-      default: "Compact + WASM + mask",
-      compactJs: "Compact + JS + mask",
-      compactUnmasked: "Compact + WASM, no mask",
+      default: "Compact + WASM, no mask (default)",
+      compactJs: "Compact + JS, no mask",
+      compactMasked: "Compact + WASM + experimental mask",
     };
     const status = (value) => (value ? "passed" : "not met");
     appendFileSync(

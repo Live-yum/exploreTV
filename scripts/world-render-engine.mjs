@@ -319,6 +319,7 @@ export function createWorldRenderer({
     ? createDirectTerrainOverview({
         detailedRgbaArena,
         resolvedCellMask:
+          process.env.EXPLORETV_ENABLE_RESOLVED_CELL_MASK === "1" &&
           process.env.EXPLORETV_DISABLE_RESOLVED_CELL_MASK !== "1",
       })
     : null;
@@ -579,6 +580,9 @@ export function createWorldRenderer({
         ? {
             ...options,
             ...(terrainFrames ? { overviewTerrainFrames: terrainFrames } : {}),
+            ...(terrainFrames && terrainPlanner?.liquidCandidates
+              ? { overviewLiquidCandidates: terrainPlanner.liquidCandidates }
+              : {}),
             outputBounds: {
               x: left,
               y: top,

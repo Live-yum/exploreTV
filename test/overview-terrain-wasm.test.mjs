@@ -6,6 +6,8 @@ import { planScene, planOverviewBand } from "../core/renderer.mjs";
 import { materializeOverviewCommand } from "../core/overview-command-buffer.mjs";
 import { createOverviewTerrainPlanner } from "../core/overview-wasm.mjs";
 import { createNodeOverviewTerrainPlanner } from "../scripts/overview-terrain-wasm.mjs";
+import { planLiquids } from "../core/liquid.mjs";
+import { isSolidOrSlopedTile } from "../core/tile-solidity.mjs";
 
 const wasmBytes = readFileSync(
   new URL("../wasm-core/dist/exploretv_wld_core.wasm", import.meta.url),
@@ -74,6 +76,9 @@ function equivalent(planner, input, options = {}, expectWasm = true) {
   const actual = planOverviewBand(input, {
     ...options,
     ...(frames ? { overviewTerrainFrames: frames } : {}),
+    ...(frames && planner.liquidCandidates
+      ? { overviewLiquidCandidates: planner.liquidCandidates }
+      : {}),
   });
   assert.deepEqual(publicPlan(actual), expected);
   return { frames, actual, expected };
@@ -274,6 +279,9 @@ test("WASM workspace stays bounded, returns borrowed views and isolates renderer
     const output = first.plan(large);
     assert.equal(output.length, 65536 * 2);
     assert.equal(first.stats.peakWorkingBytes, 65536 * 10);
+    first.plan(large, { liquids: { enabled: true } });
+    assert.equal(first.stats.peakWorkingBytes, 65536 * 18);
+    assert.ok(first.liquidCandidates instanceof Uint32Array);
     assert.ok(first.stats.peakLinearMemoryBytes < 4 * 1024 * 1024);
     assert.deepEqual(
       publicPlan(initial.actual),
@@ -300,8 +308,11 @@ test("WASM workspace stays bounded, returns borrowed views and isolates renderer
 test("actual ABI rejects oversized workspaces and stale output after failed preparation", () => {
   assert.deepEqual(WebAssembly.Module.imports(module), []);
   const e = new WebAssembly.Instance(module, {}).exports;
-  assert.equal(e.overview_abi_version(), 1);
+  assert.equal(e.overview_abi_version(), 2);
   assert.equal(e.overview_plan(0, 0, 0), 1);
+  assert.equal(e.overview_prepare_liquids(), 0);
+  assert.equal(e.overview_plan_liquids(), 1);
+  assert.equal(e.overview_liquid_output_len(), 0);
   assert.equal(e.overview_output_len(), 0);
   assert.ok(e.overview_prepare(3, 3) > 0);
   assert.equal(e.overview_plan(0, 0, 0), 0);
@@ -334,8 +345,142 @@ test("Node wrapper executes the checked-in WASM with verified build identity", (
       planner.stats.binarySha256,
       createHash("sha256").update(wasmBytes).digest("hex"),
     );
-    assert.equal(planner.stats.build.overviewAbiVersion, 1);
+    assert.equal(planner.stats.build.overviewAbiVersion, 2);
     equivalent(planner, region());
+  } finally {
+    planner.dispose();
+  }
+});
+
+test("WASM ordinary liquid candidates preserve the complete reference plan and diagnostics", () => {
+  const planner = createOverviewTerrainPlanner(module);
+  const check = (input, extra = {}) => {
+    const options = { enabled: true, isSolid: isSolidOrSlopedTile, ...extra };
+    planner.plan(input, { liquids: options });
+    assert.ok(planner.liquidCandidates instanceof Uint32Array);
+    const actual = planLiquids(input, {
+      ...options,
+      overviewCandidates: planner.liquidCandidates,
+    });
+    assert.deepEqual(actual, planLiquids(input, options));
+    return actual;
+  };
+  try {
+    const wet = region(8, 8, 100, 700);
+    wet.cells = wet.cells.map(() =>
+      tile({ active: false, liquid: 255, liquidKind: 1 }),
+    );
+    const output = check(wet);
+    assert.equal(output.support.drawn, 64);
+    assert.equal(planner.liquidCandidates.length, 64);
+    assert.equal(planner.stats.liquidFastCells, 36);
+    assert.equal(planner.stats.peakWorkingBytes, 64 * 18);
+    for (const layer of ["background", "foreground"])
+      for (const waterStyle of [0, 2, 13])
+        for (const liquidKind of [1, 2, 3, 4]) {
+          wet.cells.forEach((cell, i) =>
+            Object.assign(cell, {
+              liquid: [1, 64, 127, 254, 255][i % 5],
+              liquidKind,
+            }),
+          );
+          check(wet, {
+            layer,
+            waterStyle,
+            frame: 15,
+            waterfallFrame: 7,
+            lavaOpacity: 0.37,
+          });
+        }
+    const dry = region(8, 8);
+    check(dry);
+    assert.equal(planner.liquidCandidates.length, 0);
+    // Exhaust every pinned material ID plus unknown IDs: active materials may
+    // occlude, remain nonsolid, or force the reference diagnostic path.
+    for (let type = 0; type <= 755; type++) {
+      const input = region(3, 3, 10, 10);
+      input.cells = input.cells.map(() =>
+        tile({ active: false, liquid: 255, liquidKind: 1 }),
+      );
+      input.cells[4] = tile({ type, liquid: 255, liquidKind: 1 });
+      check(input);
+    }
+    let seed = 17;
+    const random = (max) => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed % max;
+    };
+    for (let n = 0; n < 80; n++) {
+      const input = region(7, 7, 100, 700);
+      input.cells = input.cells.map(() =>
+        tile({
+          active: random(3) !== 0,
+          type: [0, 1, 19, 379, 518, 546, 754][random(7)],
+          shape: random(6),
+          inactive: random(5) === 0,
+          liquid: [0, 0, 1, 80, 160, 255][random(6)],
+          liquidKind: random(4) + 1,
+          wall: random(3) ? 1 : 0,
+        }),
+      );
+      check(input);
+    }
+    const contextual = region();
+    contextual.context = region(5, 5);
+    planner.plan(contextual, { liquids: { enabled: true } });
+    assert.equal(planner.liquidCandidates, null);
+    planner.plan(region());
+    assert.equal(planner.liquidCandidates, null);
+  } finally {
+    planner.dispose();
+  }
+});
+
+test("WASM liquid classification keeps malformed and missing records on the reference path", () => {
+  const planner = createOverviewTerrainPlanner(module);
+  try {
+    for (const extra of [
+      { liquid: -1 },
+      { liquid: 256 },
+      { liquid: 1.5 },
+      { liquid: "255" },
+      { liquid: 1n },
+      { liquidKind: 8 },
+      { liquidKind: "1" },
+      { shape: 6 },
+      { shape: -1 },
+      { shape: "1" },
+      { active: 1 },
+      { inactive: "yes" },
+    ]) {
+      const input = region(5, 5, 10, 10);
+      input.cells = input.cells.map(() =>
+        tile({ active: false, liquid: 255, liquidKind: 1 }),
+      );
+      input.cells[12] = tile({ liquid: 255, liquidKind: 1, ...extra });
+      const options = { enabled: true, isSolid: isSolidOrSlopedTile };
+      planner.plan(input, { liquids: options });
+      const expected = planLiquids(input, options);
+      assert.deepEqual(
+        planLiquids(input, {
+          ...options,
+          overviewCandidates: planner.liquidCandidates,
+        }),
+        expected,
+      );
+    }
+    const input = region(5, 5, 10, 10);
+    input.cells[11] = null;
+    input.cells[12] = tile({ liquid: 255, liquidKind: 1 });
+    const options = { enabled: true, isSolid: isSolidOrSlopedTile };
+    planner.plan(input, { liquids: options });
+    assert.deepEqual(
+      planLiquids(input, {
+        ...options,
+        overviewCandidates: planner.liquidCandidates,
+      }),
+      planLiquids(input, options),
+    );
   } finally {
     planner.dispose();
   }

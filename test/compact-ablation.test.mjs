@@ -92,21 +92,32 @@ function fixture(seconds, bytes, wasm, mask) {
 }
 function runs() {
   return {
-    default: fixture(90, 270000000, true, true),
-    compactJs: fixture(89.8, 268000000, false, true),
-    compactUnmasked: fixture(94.2, 269000000, true, false),
+    default: fixture(90, 270000000, true, false),
+    compactJs: fixture(89.8, 268000000, false, false),
+    compactMasked: fixture(94.2, 269000000, true, true),
   };
 }
 
 test("same-commit ablation reports both directions without claiming statistical significance", () => {
   const report = compareCompactAblations(runs(), commit);
+  assert.equal(report.schema, "exploretv-compact-ablation-comparison-v2");
   assert.equal(report.candidateCommit, commit);
   assert.equal(report.runs.compactJs.deltaFromDefaultSeconds, -0.2);
-  assert.equal(report.runs.compactUnmasked.deltaFromDefaultSeconds, 4.2);
+  assert.equal(report.runs.compactMasked.deltaFromDefaultSeconds, 4.2);
   assert.equal(report.runs.compactJs.deltaFromDefaultPeakBytes, -2000000);
   assert.deepEqual(report.runs.compactJs.mode, {
     compactPlanning: true,
     terrainWasm: false,
+    resolvedCellMask: false,
+  });
+  assert.deepEqual(report.runs.default.mode, {
+    compactPlanning: true,
+    terrainWasm: true,
+    resolvedCellMask: false,
+  });
+  assert.deepEqual(report.runs.compactMasked.mode, {
+    compactPlanning: true,
+    terrainWasm: true,
     resolvedCellMask: true,
   });
   assert.match(report.method, /One sequential sample/);
@@ -116,21 +127,33 @@ test("same-commit ablation reports both directions without claiming statistical 
 
 test("each ablation independently reports strict runtime and memory targets", () => {
   const input = runs();
-  input.default = fixture(59.999, 299999999, true, true);
-  input.compactJs = fixture(60, 299999999, false, true);
-  input.compactUnmasked = fixture(59.999, 300000000, true, false);
+  input.default = fixture(59.999, 299999999, true, false);
+  input.compactJs = fixture(60, 299999999, false, false);
+  input.compactMasked = fixture(59.999, 300000000, true, true);
   const report = compareCompactAblations(input, commit);
   assert.equal(report.runs.default.preferredTargetsPassed, true);
   assert.equal(report.runs.compactJs.preferredRuntimePassed, false);
   assert.equal(report.runs.compactJs.preferredMemoryPassed, true);
-  assert.equal(report.runs.compactUnmasked.preferredRuntimePassed, true);
-  assert.equal(report.runs.compactUnmasked.preferredMemoryPassed, false);
-  for (const name of ["compactJs", "compactUnmasked"])
+  assert.equal(report.runs.compactMasked.preferredRuntimePassed, true);
+  assert.equal(report.runs.compactMasked.preferredMemoryPassed, false);
+  for (const name of ["compactJs", "compactMasked"])
     assert.equal(report.runs[name].preferredTargetsPassed, false);
 });
 
 test("ablation comparison rejects wrong modes, source or binary changes, omissions and incomplete fidelity", () => {
   for (const mutate of [
+    (r) => {
+      r.default.render.directTerrainOverviewStats.resolvedCellMask = true;
+    },
+    (r) => {
+      r.compactJs.render.directTerrainOverviewStats.resolvedCellMask = true;
+    },
+    (r) => {
+      r.default.render.directTerrainOverviewStats.maskedBlitPixelsSkipped = 1;
+    },
+    (r) => {
+      r.compactJs.render.directTerrainOverviewStats.blitPixelsToResolvedCells = 1;
+    },
     (r) => {
       r.default.render.compactTerrainPlanning = false;
     },
@@ -147,10 +170,10 @@ test("ablation comparison rejects wrong modes, source or binary changes, omissio
       r.compactJs.render.plannerPhaseMilliseconds.wasmPacking = 1;
     },
     (r) => {
-      r.compactUnmasked.render.directTerrainOverviewStats.resolvedCellMask = true;
+      r.compactMasked.render.directTerrainOverviewStats.resolvedCellMask = false;
     },
     (r) => {
-      r.compactUnmasked.render.directTerrainOverviewStats.maskedBlitPixelsSkipped = 1;
+      r.compactMasked.render.directTerrainOverviewStats.maskedBlitPixelsSkipped = 0;
     },
     (r) => {
       r.compactJs.render.sourceHashes["core/renderer.mjs"] = "f".repeat(64);
@@ -161,19 +184,19 @@ test("ablation comparison rejects wrong modes, source or binary changes, omissio
       );
     },
     (r) => {
-      r.compactUnmasked.render.terrainWasm.binarySha256 = "f".repeat(64);
+      r.compactMasked.render.terrainWasm.binarySha256 = "f".repeat(64);
     },
     (r) => {
       r.compactJs.render.missingCommands = { missing: 1 };
     },
     (r) => {
-      r.compactUnmasked.fidelity.patches.pop();
+      r.compactMasked.fidelity.patches.pop();
     },
     (r) => {
       r.compactJs.fidelity.wholeImagePixelSha256 = "f".repeat(64);
     },
     (r) => {
-      r.compactUnmasked.timing.environment.node = "different";
+      r.compactMasked.timing.environment.node = "different";
     },
   ]) {
     const input = runs();
@@ -195,18 +218,34 @@ test("Actions runs the two exact-head ablations sequentially and retains JSON wi
     js = workflow.indexOf(
       "- name: Measure the same compact candidate with terrain WASM disabled",
     ),
-    unmasked = workflow.indexOf(
-      "- name: Measure the same compact candidate with the resolved-cell mask disabled",
+    masked = workflow.indexOf(
+      "- name: Measure the same compact candidate with the experimental resolved-cell mask enabled",
     ),
     comparison = workflow.indexOf(
       "- name: Compare complete same-commit feature ablations",
     );
-  assert.ok(
-    primary > 0 && js > primary && unmasked > js && comparison > unmasked,
-  );
+  assert.ok(primary > 0 && js > primary && masked > js && comparison > masked);
   assert.ok(workflow.includes('EXPLORETV_DISABLE_TERRAIN_WASM: "1"'));
   assert.ok(workflow.includes('EXPLORETV_DISABLE_RESOLVED_CELL_MASK: "1"'));
-  for (const mode of ["compact-js", "compact-unmasked"]) {
+  const defaults = workflow.slice(
+    workflow.indexOf("BASELINE_COMMIT:"),
+    workflow.indexOf("    steps:", workflow.indexOf("BASELINE_COMMIT:")),
+  );
+  for (const name of [
+    "DISABLE_TERRAIN_WASM",
+    "ENABLE_RESOLVED_CELL_MASK",
+    "DISABLE_RESOLVED_CELL_MASK",
+  ])
+    assert.ok(defaults.includes(`EXPLORETV_${name}: "0"`));
+  const jsStep = workflow.slice(js, masked);
+  assert.ok(jsStep.includes('EXPLORETV_ENABLE_RESOLVED_CELL_MASK: "0"'));
+  assert.ok(jsStep.includes('EXPLORETV_DISABLE_RESOLVED_CELL_MASK: "1"'));
+  const maskedStep = workflow.slice(masked, comparison);
+  assert.ok(maskedStep.includes('EXPLORETV_DISABLE_TERRAIN_WASM: "0"'));
+  assert.ok(maskedStep.includes('EXPLORETV_ENABLE_RESOLVED_CELL_MASK: "1"'));
+  assert.ok(maskedStep.includes('EXPLORETV_DISABLE_RESOLVED_CELL_MASK: "0"'));
+  assert.equal(workflow.includes("compact-unmasked"), false);
+  for (const mode of ["compact-js", "compact-masked"]) {
     assert.ok(
       workflow.includes(`node scripts/run-overview-ci.mjs artifacts/${mode}`),
     );

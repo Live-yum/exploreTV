@@ -338,7 +338,19 @@ static napi_value compose_batch(napi_env env, napi_callback_info info, bool mask
     if (x1 <= x0 || y1 <= y0) continue;
     const uint8_t *source = frames[d[0]].data;
     const bool flip_x = d[5], flip_y = d[6], additive = d[7];
-    if (!masked) {
+    bool touches_mask = false;
+    if (masked) {
+      const size_t cell_x0 = (size_t)(x0 >> 4), cell_x1 = (size_t)((x1 - 1) >> 4);
+      const size_t cell_y1 = (size_t)((y1 - 1) >> 4);
+      for (size_t cy = (size_t)(y0 >> 4); cy <= cell_y1 && !touches_mask; cy++) {
+        const uint8_t *row_mask = mask.data + cy * mask_width;
+        for (size_t cx = cell_x0; cx <= cell_x1; cx++)
+          if (row_mask[cx]) { touches_mask = true; break; }
+      }
+    }
+    // Most submitted commands have no resolved fragments (whole-cell skips
+    // were removed by the compiler). Preserve their original full SIMD rows.
+    if (!touches_mask) {
       const int64_t source_x = flip_x ? fw - 1 - (x0 - dx) : x0 - dx;
       const size_t count = (size_t)(x1 - x0);
       for (int64_t y = y0; y < y1; y++) {
@@ -356,15 +368,22 @@ static napi_value compose_batch(napi_env env, napi_callback_info info, bool mask
     for (int64_t y = y0; y < y1;) {
       const int64_t cell_y1 = ((y >> 4) + 1) * 16;
       const int64_t end_y = cell_y1 < y1 ? cell_y1 : y1;
+      const uint8_t *row_mask = mask.data + (size_t)(y >> 4) * mask_width;
       for (int64_t x = x0; x < x1;) {
         const int64_t cell_x1 = ((x >> 4) + 1) * 16;
-        const int64_t end_x = cell_x1 < x1 ? cell_x1 : x1;
-        const uint8_t cell = mask.data[(size_t)(y >> 4) * mask_width + (size_t)(x >> 4)];
+        int64_t end_x = cell_x1 < x1 ? cell_x1 : x1;
+        const uint8_t cell = row_mask[(size_t)(x >> 4)];
         if (cell) {
           const uint64_t skipped = (uint64_t)(end_x - x) * (uint64_t)(end_y - y);
           pixels_skipped += skipped;
           if (cell == 1) pixels_to_resolved_cells += skipped;
         } else {
+          // Adjacent drawable cells form one SIMD span. Splitting every
+          // 32px wall into three short rows can cost more than its skipped work.
+          while (end_x < x1 && !row_mask[(size_t)(end_x >> 4)]) {
+            const int64_t next = ((end_x >> 4) + 1) * 16;
+            end_x = next < x1 ? next : x1;
+          }
           const int64_t source_x = flip_x ? fw - 1 - (x - dx) : x - dx;
           const size_t count = (size_t)(end_x - x);
           for (int64_t row = y; row < end_y; row++) {

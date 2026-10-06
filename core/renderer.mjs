@@ -128,6 +128,13 @@ export const ORDINARY_BLOCKS = Object.freeze([
   151, 367, 368, 383, 396, 397, 402, 403, 404,
 ]);
 const ordinary = new Set(ORDINARY_BLOCKS);
+// A numeric command in a tile group can only come from this allowlist. Prove
+// its common draw layer once, rather than resolving every owner's frame again
+// at the waterfall boundary. Future non-solid/unknown additions disable this
+// shortcut and retain the per-frame classification below.
+const ordinaryLayersAreSolid = ORDINARY_BLOCKS.every(
+  (type) => classifyTileDrawLayer(type) === "solid",
+);
 // Common terrain accounts for most whole-world commands. Reuse its immutable
 // names; command geometry remains private to each scene.
 const ordinaryAssets = [];
@@ -218,11 +225,6 @@ function planSceneInternal(region, options, compactOverview) {
       terrainFrames.length !== w * h * 2)
   )
     throw new RangeError("Invalid compact overview terrain frame table");
-  const compact = compactOverview
-    ? createOverviewCommandBuffer(
-        Math.min(maxCommands, w * h * ((tiles ? 1 : 0) + (walls ? 1 : 0))),
-      )
-    : null;
   // Optional destination crop for bounded exporters. Neighbor reads and all
   // source diagnostics still use the complete scene; coordinates remain local
   // to it. Keep a one-pixel guard for Canvas edge antialiasing.
@@ -341,6 +343,32 @@ function planSceneInternal(region, options, compactOverview) {
   };
   const hasWaterfallRegistry =
     options.liquids?.enabled && options.liquids?.waterfallRegistry;
+  const ownerCapacity = (minX, maxX, minY, maxY) =>
+    Math.max(0, Math.min(w, maxX) - Math.max(0, minX)) *
+    Math.max(0, Math.min(h, maxY) - Math.max(0, minY));
+  const compact = compactOverview
+    ? createOverviewCommandBuffer(
+        Math.min(
+          maxCommands,
+          (walls
+            ? outputBounds
+              ? ownerCapacity(wallMinX, wallMaxX, wallMinY, wallMaxY)
+              : w * h
+            : 0) +
+            (tiles
+              ? outputBounds &&
+                (!hasWaterfallRegistry || ordinaryLayersAreSolid)
+                ? ownerCapacity(
+                    ordinaryMinX,
+                    ordinaryMaxX,
+                    ordinaryMinY,
+                    ordinaryMaxY,
+                  )
+                : w * h
+              : 0),
+        ),
+      )
+    : null;
   const cullCommand = (c) => {
     if (
       !outputBounds ||
@@ -420,14 +448,18 @@ function planSceneInternal(region, options, compactOverview) {
         "Scene command budget exceeded; choose a smaller preview region",
       );
   };
+  let commandTarget = commands;
+  const compactTileObjectIndices =
+    compact && hasWaterfallRegistry && ordinaryLayersAreSolid && !region.context
+      ? []
+      : null;
   const emit = (c) => {
-    commands.push(c);
-    assets.add(
-      typeof c === "number"
-        ? compact.frames[compact.records[(-c - 1) * OVERVIEW_COMMAND_STRIDE]]
-            .asset
-        : c.asset,
-    );
+    commandTarget.push(c);
+    // Numeric terrain records bypass this object-only helper. Their source
+    // dependencies are enumerated once per unique frame after planning.
+    assets.add(c.asset);
+    if (compactTileObjectIndices && commandTarget !== commands)
+      compactTileObjectIndices.push(commandTarget.length - 1);
   };
   const add = (c) => {
     reserve();
@@ -435,7 +467,10 @@ function planSceneInternal(region, options, compactOverview) {
   };
   const queueCommand = (list, c) => {
     reserve();
-    if (!outputBounds || !cullCommand(c)) list.push(c);
+    if (!outputBounds || !cullCommand(c)) {
+      list.push(c);
+      assets.add(c.asset);
+    }
   };
   const reject = (t, x, y, reason) => {
     unsupportedCells.push({
@@ -559,7 +594,7 @@ function planSceneInternal(region, options, compactOverview) {
           paintId >= 0 &&
           paintId <= 255
         )
-          emit(compact.wall(t.wall, asset, mask, grid, paintId, x, y));
+          commands.push(compact.wall(t.wall, asset, mask, grid, paintId, x, y));
         else
           emit({
             kind: "wall",
@@ -589,6 +624,9 @@ function planSceneInternal(region, options, compactOverview) {
   const liquidPlan = planSceneLiquids(region, {
     ...options.liquids,
     isSolid: isSolidOrSlopedTile,
+    ...(compactOverview && options.overviewLiquidCandidates
+      ? { overviewCandidates: options.overviewLiquidCandidates }
+      : {}),
   });
   if (liquidPlan.support.layer === "background")
     for (const command of liquidPlan.commands)
@@ -601,6 +639,9 @@ function planSceneInternal(region, options, compactOverview) {
     phaseStart = now;
   }
   const tilePassStart = commands.length;
+  // Compact tiles are born into their final tile group. Do not append them to
+  // the wall/liquid stream only to splice and copy that entire suffix later.
+  if (compact) commandTarget = [];
   for (let x = 0; x < w; x++)
     for (let y = 0; y < h; y++) {
       const i = x * h + y,
@@ -648,7 +689,9 @@ function planSceneInternal(region, options, compactOverview) {
               y >= ordinaryMaxY)) ||
             outsideEmission(x, y)) &&
           Number.isInteger(shape) &&
-          (!hasWaterfallRegistry || classifyTileDrawLayer(t.type) !== undefined)
+          (!hasWaterfallRegistry ||
+            ordinaryLayersAreSolid ||
+            classifyTileDrawLayer(t.type) !== undefined)
         ) {
           reserve();
           culledCommands++;
@@ -700,7 +743,7 @@ function planSceneInternal(region, options, compactOverview) {
           // No intermediate command object or per-owner slope polygon. The
           // destination/owner record refers directly to one unique template.
           reserve();
-          emit(
+          commandTarget.push(
             compact.tile(
               type,
               ordinaryAsset,
@@ -1008,7 +1051,10 @@ function planSceneInternal(region, options, compactOverview) {
     planningMilliseconds.tiles = now - phaseStart;
     phaseStart = now;
   }
-  const ordinaryTileCommands = commands.splice(tilePassStart);
+  const ordinaryTileCommands = compact
+    ? commandTarget
+    : commands.splice(tilePassStart);
+  commandTarget = commands;
   // Preserve full-scene owner traversal when context bodies enter a cropped ROI.
   // Without appended context owners all three groups already follow the
   // column-major tile traversal. A stable sort is needed only for the ROI path.
@@ -1038,6 +1084,18 @@ function planSceneInternal(region, options, compactOverview) {
     foliageCommands,
     specialAbove,
   ];
+  let compactTileHoles = false;
+  const appendGroup = (group) => {
+    if (group === ordinaryTileCommands && compactTileHoles) {
+      // Only non-solid objects were moved ahead of the waterfalls. Filter
+      // those positions while copying the final stream, not in another full
+      // pass through every ordinary terrain token.
+      for (const c of group) if (c !== null) commands.push(c);
+    } else if (compact && group.length <= 8192) {
+      // Keep argument counts bounded even for maximum-size public scenes.
+      commands.push(...group);
+    } else for (const c of group) commands.push(c);
+  };
   const registry = hasWaterfallRegistry;
   if (registry) {
     if (
@@ -1045,16 +1103,43 @@ function planSceneInternal(region, options, compactOverview) {
       typeof registry.hasOrigin !== "function"
     )
       throw new Error("Invalid waterfall registry");
-    const compactLayers = compact?.frames.map((frame) =>
-      frame.kind === "tile"
-        ? classifyTileDrawLayer(frame.ownerType ?? frame.type)
-        : undefined,
-    );
+    const compactLayers =
+      compact && !ordinaryLayersAreSolid
+        ? compact.frames.map((frame) =>
+            frame.kind === "tile"
+              ? classifyTileDrawLayer(frame.ownerType ?? frame.type)
+              : undefined,
+          )
+        : null;
     // Classify each owner once. Compact the private groups in place to retain
     // their solid pass without a second command array or repeated Set lookups.
     for (const group of tileGroups) {
+      if (group === ordinaryTileCommands && compactTileObjectIndices) {
+        // Numeric owners are already proven solid. Only the sparse special
+        // object positions can change this group's layer or emit omissions.
+        for (const index of compactTileObjectIndices) {
+          const c = group[index],
+            layer = classifyTileDrawLayer(c.ownerType ?? c.type);
+          if (layer === "non-solid") {
+            commands.push(c);
+            group[index] = null;
+            compactTileHoles = true;
+          } else if (layer === undefined)
+            contextOmissions.push({
+              x: region.rect.x + c.x,
+              y: region.rect.y + c.y,
+              type: c.ownerType ?? c.type,
+              reason: "unknown-waterfall-tile-draw-layer",
+            });
+        }
+        continue;
+      }
       let retained = 0;
       for (const c of group) {
+        if (typeof c === "number" && ordinaryLayersAreSolid) {
+          group[retained++] = c;
+          continue;
+        }
         const offset =
             typeof c === "number" ? (-c - 1) * OVERVIEW_COMMAND_STRIDE : -1,
           frame = offset < 0 ? c : compact.frames[compact.records[offset]],
@@ -1062,7 +1147,7 @@ function planSceneInternal(region, options, compactOverview) {
             offset < 0
               ? classifyTileDrawLayer(frame.ownerType ?? frame.type)
               : compactLayers[compact.records[offset]];
-        if (layer === "non-solid") emit(c);
+        if (layer === "non-solid") commands.push(c);
         else {
           group[retained++] = c;
           if (layer === undefined)
@@ -1082,7 +1167,7 @@ function planSceneInternal(region, options, compactOverview) {
     }
     const waterfalls = registry.commandsFor(region.rect);
     for (const c of waterfalls) add(c);
-    for (const group of tileGroups) for (const c of group) emit(c);
+    for (const group of tileGroups) appendGroup(group);
     support.waterfalls = {
       commands: waterfalls.length,
       model: registry.model,
@@ -1091,7 +1176,7 @@ function planSceneInternal(region, options, compactOverview) {
       failures: registry.failures || [],
     };
   } else {
-    for (const group of tileGroups) for (const c of group) emit(c);
+    for (const group of tileGroups) appendGroup(group);
   }
   if (liquidPlan.support.layer === "foreground")
     for (const command of liquidPlan.commands)
@@ -1201,6 +1286,7 @@ function planSceneInternal(region, options, compactOverview) {
   }
   warnings.push(...liquidPlan.warnings);
   support.liquidDrawing = liquidPlan.support;
+  if (compact) for (const frame of compact.frames) assets.add(frame.asset);
   const compactTerrain = compact?.finish();
   if (measurePlanning) {
     const now = performance.now();
