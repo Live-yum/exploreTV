@@ -18,7 +18,8 @@ npm run dev:viewer
 - [原分辨率整图导出](docs/full-resolution-export.md)
 - [分块缩小全景工具](docs/full-world.md)
 - [原生整图概览：当前架构、参数与历史验收](docs/overview-native.md)
-- [本轮紧凑地形规划与 WASM：实现、消融和验收合同](docs/overview-compact-wasm.md)
+- [预编译 Tile / Wall 帧与 WASM 直接命令流](docs/overview-frame-pack.md)
+- [PR #6 紧凑地形规划与 WASM：实现、消融和验收合同](docs/overview-compact-wasm.md)
 - [PR #3 / PR #4 集成：路径选择、当前本地证据与待验收项目](docs/overview-integration.md)
 - [PR #3 历史优化：首次渲染、世界命令回放与小体积分享图](docs/overview-60s.md)
 
@@ -31,10 +32,11 @@ npm run export:full -- fixtures/example-world.wld example/assets artifacts/full-
 ```sh
 npm ci --ignore-scripts
 npm run prepare:overview
+npm run prepare:overview-frames -- example/assets example/assets/overview-frame-pack
 MALLOC_ARENA_MAX=2 MALLOC_MMAP_THRESHOLD_=131072 npm run export:overview -- fixtures/example-world.wld example/assets artifacts/world-overview.png
 ```
 
-大世界默认输出完整范围的 **8400×2400 PNG（每 Tile 1 px）**；项目示例的既有精确输出约 **17 MB**，其他世界以实际压缩结果为准。`prepare:overview` 只提前编译与世界无关的原生合成及缩小模块，不读取世界或纹理；世界加载、索引、完整瀑布登记、PNG 解码、冷缓存建立、合成与最终 PNG 写入仍计入整图耗时。
+大世界默认输出完整范围的 **8400×2400 PNG（每 Tile 1 px）**；项目示例的既有精确输出约 **17 MB**，其他世界以实际压缩结果为准。`prepare:overview` 编译与世界无关的原生合成及缩小模块，`prepare:overview-frames` 从纹理预编译常用普通帧；两步都不读取世界。帧包可供使用相同纹理和准备规则的新世界复用，包缺失时自动动态准备；纹理或规则改变后需要用新的输出目录重新构建。世界加载、索引、完整瀑布登记、包加载与资源身份校验、按需页读取、未覆盖帧准备、合成与最终 PNG 写入仍计入首次整图耗时。
 
 当前采用单渲染进程、**128×48 Tile** 分块、每 **32 行**一个稀疏 RLE 检查点；npm 命令使用 **48 MiB old-space / 1 MiB semi-space**。当前选择沿用 PR #3 的缓存预算：direct 帧、活动引用与扩展 key 限为 **4 MiB**，仅在 direct 启用时将 generic 帧缓存及活动引用限为 **2 MiB**；两条路径的详细像素借用同一个 **6 MiB** 缓冲，只在首次需要时分配一次。成功的 generic 输出在下一次 draw 前仍可读取；失败时立即归还本次 view 的借用。世界准备录制与 direct 关闭的路径保持原 **8 MiB** generic 限额。局部预算不等于整个进程 RSS。1 px/Tile 使用精确整数像素合成，并对复杂几何保留 Canvas 路径；2/4/8 px/Tile 保留原有完整合成后面积缩小的画质路径。模块加载会核对源码及二进制 SHA-256，缺失、过期或不兼容时自动退回 Canvas／JavaScript。全景保持现有 **fullbright 静态纹理渲染**范围，实时光照、动态实体和运行时效果仍受限制；适合全世界概览与结构检查。
 
@@ -42,7 +44,7 @@ MALLOC_ARENA_MAX=2 MALLOC_MMAP_THRESHOLD_=131072 npm run export:overview -- fixt
 
 当前集成保留 PR #3 的直接地形路径、6 MiB 共享详细缓冲、世界准备／回放与独立分享图工具，并引入 PR #4 的数字帧 ID、索引与共享几何。直接绘制成功时不重复构建 generic 索引／几何；录制、generic 与回退路径仍使用这些分析。规划器兼容两种裁剪 API，像素输出范围优先，完整资源、诊断与逻辑预算不因裁剪丢失。
 
-本轮从固定主分支 `cbdf5b3` 继续优化：普通 Tile / Wall 在规划时直接写入紧凑数值缓冲，WASM 批量计算邻域帧，direct 按唯一帧及代际 slot 复用缓存，现有原生合成器跳过已解决的目标片段。公开 `planScene()` 和特殊对象层序保持原合同。最终性能、平台状态与独立 WASM／mask 消融结果见本 PR 描述及对应 Actions，方法见[紧凑规划与 WASM 说明](docs/overview-compact-wasm.md)；不能由实现完成或减少的操作量直接认定首次整图达到 60 秒／300 MB。
+本轮从已合入 PR #6 的固定主分支 `fae6f52` 继续优化：先从 Tile / Wall 图集编译常用帧，再由 WASM 从有界 Tile 区域直接输出帧编号、紧凑记录和混合数字命令流，direct 的覆盖分析与批次编译直接消费这些记录。运行时最多保留一个临时读取页，把所需帧的精确像素副本放入细粒度缓存；临时页、预编译帧及动态回退帧共用既有 **4 MiB** 预算。公开 `planScene()`、特殊对象层序和 C 原生像素合同保持一致，实验性的 resolved-cell mask 默认关闭。最终性能与平台状态见本 PR 描述及对应 Actions；[帧包与直接命令流说明](docs/overview-frame-pack.md)给出使用方法、边界和两个独立消融。实现完成或减少的操作量不代表首次整图已达到 60 秒／300 MB。
 
 PR #5 整合提交的历史本地结果（old48 / young1 / 原生 GC4）为 **93.569 秒 / 255.55 MB**，全图及 13 ROI 核验通过。早期同配置快照为 88.921 秒 / 256.66 MB；固定 PR #3 GC2 实验 `29e4ebd` 为 111.056 秒 / 261.68 MB，不是最新 PR #3 的成绩。这是 Node 24 的本地实验，不能与 Node 22 远端成绩拼接计算加速比，也没有达到首次整图 60 秒目标。该提交选择 raw8 / direct4 缓存和该堆配置；其 JavaScript 776 项中 773 通过、3 跳过、0 失败；该提交世界准备为 **118.821 秒 / 257.95 MB**，已准备包回放为 **14.292 秒 / 137.69 MB**，两者均通过完整像素核验；回放不包含准备成本。该阶段证据见[集成说明](docs/overview-integration.md)和[逐次源码身份与本地证据](docs/benchmarks/overview-integration-local-20261006.json)，不作为本轮紧凑规划的性能成绩。
 

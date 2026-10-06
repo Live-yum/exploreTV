@@ -209,43 +209,52 @@ test("ablation comparison rejects wrong modes, source or binary changes, omissio
   );
 });
 
-test("Actions runs the two exact-head ablations sequentially and retains JSON without extra PNG uploads", () => {
+test("Actions isolates frame preparation and WASM command streams on one candidate", () => {
   const workflow = readFileSync(
     new URL("../.github/workflows/export-overview.yml", import.meta.url),
     "utf8",
   );
   const primary = workflow.indexOf("- name: Compare complete sequential runs"),
-    js = workflow.indexOf(
-      "- name: Measure the same compact candidate with terrain WASM disabled",
+    dynamic = workflow.indexOf(
+      "- name: Measure the same candidate with dynamic frames and WASM stream",
     ),
-    masked = workflow.indexOf(
-      "- name: Measure the same compact candidate with the experimental resolved-cell mask enabled",
+    legacy = workflow.indexOf(
+      "- name: Measure the same candidate with precompiled frames and legacy command planning",
     ),
     comparison = workflow.indexOf(
       "- name: Compare complete same-commit feature ablations",
     );
-  assert.ok(primary > 0 && js > primary && masked > js && comparison > masked);
-  assert.ok(workflow.includes('EXPLORETV_DISABLE_TERRAIN_WASM: "1"'));
-  assert.ok(workflow.includes('EXPLORETV_DISABLE_RESOLVED_CELL_MASK: "1"'));
+  assert.ok(
+    primary > 0 && dynamic > primary && legacy > dynamic && comparison > legacy,
+  );
+  assert.ok(workflow.includes('EXPLORETV_DISABLE_FRAME_PACK: "1"'));
+  assert.ok(workflow.includes('EXPLORETV_DISABLE_WASM_FRAME_STREAM: "1"'));
   const defaults = workflow.slice(
     workflow.indexOf("BASELINE_COMMIT:"),
     workflow.indexOf("    steps:", workflow.indexOf("BASELINE_COMMIT:")),
   );
   for (const name of [
     "DISABLE_TERRAIN_WASM",
+    "DISABLE_FRAME_PACK",
+    "DISABLE_WASM_FRAME_STREAM",
     "ENABLE_RESOLVED_CELL_MASK",
     "DISABLE_RESOLVED_CELL_MASK",
   ])
     assert.ok(defaults.includes(`EXPLORETV_${name}: "0"`));
-  const jsStep = workflow.slice(js, masked);
-  assert.ok(jsStep.includes('EXPLORETV_ENABLE_RESOLVED_CELL_MASK: "0"'));
-  assert.ok(jsStep.includes('EXPLORETV_DISABLE_RESOLVED_CELL_MASK: "1"'));
-  const maskedStep = workflow.slice(masked, comparison);
-  assert.ok(maskedStep.includes('EXPLORETV_DISABLE_TERRAIN_WASM: "0"'));
-  assert.ok(maskedStep.includes('EXPLORETV_ENABLE_RESOLVED_CELL_MASK: "1"'));
-  assert.ok(maskedStep.includes('EXPLORETV_DISABLE_RESOLVED_CELL_MASK: "0"'));
+  const dynamicStep = workflow.slice(dynamic, legacy);
+  assert.ok(dynamicStep.includes('EXPLORETV_DISABLE_FRAME_PACK: "1"'));
+  assert.equal(
+    dynamicStep.includes('EXPLORETV_DISABLE_TERRAIN_WASM: "1"'),
+    false,
+  );
+  const legacyStep = workflow.slice(legacy, comparison);
+  assert.ok(legacyStep.includes('EXPLORETV_DISABLE_WASM_FRAME_STREAM: "1"'));
+  assert.equal(
+    legacyStep.includes('EXPLORETV_DISABLE_TERRAIN_WASM: "1"'),
+    false,
+  );
   assert.equal(workflow.includes("compact-unmasked"), false);
-  for (const mode of ["compact-js", "compact-masked"]) {
+  for (const mode of ["dynamic-frames", "legacy-frame-planning"]) {
     assert.ok(
       workflow.includes(`node scripts/run-overview-ci.mjs artifacts/${mode}`),
     );
@@ -260,5 +269,13 @@ test("Actions runs the two exact-head ablations sequentially and retains JSON wi
       false,
     );
   }
+  assert.ok(
+    workflow.includes("build-overview-frame-pack") ||
+      workflow.includes("prepare:overview-frames"),
+  );
+  assert.ok(
+    workflow.includes("artifacts/overview-frame-pack/build-report.json"),
+  );
+  assert.ok(workflow.includes("compare-frame-pack-benchmarks.mjs"));
   assert.ok(workflow.includes('"$(git rev-parse HEAD)" "$GITHUB_WORKSPACE"'));
 });

@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const OVERVIEW_BASELINE_COMMIT =
-  "cbdf5b3c3b9f4952a2075a133f809b9b2d779d12";
+  "fae6f52a5227cef3f6544f383d074f10da84e1e0";
 const WORLD_SHA =
   "d551a6b360c7af49a07dadbb1e82223ac43ad398e2054c29f500ec5e8b5b1cab";
 const PIXEL_SHA =
@@ -59,6 +59,13 @@ export function summarizeOverviewPhases(render) {
     directCounters: Object.fromEntries(
       Object.entries(direct).filter(([, value]) => typeof value === "number"),
     ),
+    framePack: render.framePack ? { ...render.framePack } : null,
+    wasmFrameStream: {
+      enabled: render.wasmFrameStreamEnabled === true,
+      commands: render.commandStreamCommands ?? 0,
+      specialObjects: render.specialCommandObjects ?? 0,
+      peakCommandStreamBytes: render.peakCommandStreamBytes ?? 0,
+    },
     regionDecodeSeconds: render.regionDecodeSeconds ?? null,
     garbageCollectionSeconds: render.garbageCollectionSeconds ?? null,
     readbackAndReductionSeconds: render.readbackAndReductionSeconds ?? null,
@@ -154,7 +161,7 @@ export function compareOverviewBenchmarks(
     baselineCommit,
     candidateCommit,
     method:
-      "CI runs the pinned baseline then candidate sequentially on the same runner with identical installed rendering dependencies. Both prepare the existing native kernels before timing and use exporter startup MALLOC_ARENA_MAX=2 and MALLOC_MMAP_THRESHOLD_=131072. Explicit caller values are preserved; corresponding glibc tunables take precedence. Its report records requested allocator and Node settings, not an assumed effective arena count. The baseline retains its original launch configuration. Both use fresh processes and complete-lifetime RSS monitors. No world is pre-rendered. OS file-cache state is uncontrolled.",
+      "CI runs the pinned baseline then candidate sequentially on the same runner with identical installed rendering dependencies. Both prepare the existing native kernels before timing and use exporter startup MALLOC_ARENA_MAX=2 and MALLOC_MMAP_THRESHOLD_=131072. The candidate's world-independent frame pack is built from source textures in a separately measured preparation step; loading, source verification and page reads remain inside the timed exporter. Explicit caller values are preserved; corresponding glibc tunables take precedence. Its report records requested allocator and Node settings, not an assumed effective arena count. The baseline retains its original launch configuration. Both use fresh processes and complete-lifetime RSS monitors. No world is pre-rendered. OS file-cache state is uncontrolled.",
     worldSha256: WORLD_SHA,
     wholeImagePixelSha256: PIXEL_SHA,
     pixels: 20160000,

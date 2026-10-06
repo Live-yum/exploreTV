@@ -76,7 +76,7 @@ test("standalone overview workflow retains coverage and compares against integra
   const workflow = read("../.github/workflows/export-overview.yml");
   assert.equal(
     OVERVIEW_BASELINE_COMMIT,
-    "cbdf5b3c3b9f4952a2075a133f809b9b2d779d12",
+    "fae6f52a5227cef3f6544f383d074f10da84e1e0",
   );
   assert.ok(workflow.includes(`BASELINE_COMMIT: ${OVERVIEW_BASELINE_COMMIT}`));
   for (const name of [

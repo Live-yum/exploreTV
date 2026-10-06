@@ -266,7 +266,7 @@ child.once("exit", (code, signal) => {
       "separate correctness verification",
     ],
     cacheState:
-      "Fresh process/application caches; OS file cache uncontrolled; no persistent reduced-texture cache.",
+      "Fresh process/application caches; OS file cache uncontrolled. An optional world-independent frame pack is compiled separately; manifest/index loading, source verification and page reads stay inside export time. No prepared world results are reused.",
     memoryMeasurement:
       "Linux wait4 measures the entire exporter lifetime. getrusage measures the small native monitor and Node harness. Acceptance uses their conservative peak sum plus 1 MiB tail reserve, and samples their contemporaneous process-tree RSS every second when available. Native threads are included. If /proc sampling is unavailable or namespace-inconsistent, the exact lifetime conservative peak sum remains the acceptance measurement. A failed current-RSS call uses the harness OS lifetime peak conservatively and is excluded from contemporaneous sampling; V8 heap/external values remain measured and unavailable ArrayBuffer bytes are null.",
     environment: report?.environment ?? null,

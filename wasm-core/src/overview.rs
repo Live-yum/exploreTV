@@ -119,6 +119,116 @@ fn plan(input: &[u32], output: &mut [u8], width: usize, height: usize,
     }
 }
 
+
+// Stream metadata: word 0 carries presence, canonical shape, saved-frame and
+// diagnostic flags; word 1 holds identity paints. No per-owner JS commands.
+const STREAM_PRESENT: u32 = 1 << 3;
+const STREAM_SAVED_FRAME: u32 = 1 << 4;
+const STREAM_TILE_PAINT_VALID: u32 = 1 << 10;
+const STREAM_WALL_PAINT_VALID: u32 = 1 << 11;
+fn ordinary_type(kind: u32) -> bool { matches!(kind, 0 | 1 | 2 | 6 | 7 | 8 | 9 | 22 | 23 | 25 | 30 | 37 | 38 | 39 | 40 | 41 | 43 | 44 | 45 | 46 | 47 | 48 | 53 | 56 | 57 | 58 | 59 | 60 | 63 | 64 | 65 | 66 | 67 | 68 | 70 | 75 | 76 | 107 | 108 | 109 | 111 | 112 | 116 | 117 | 118 | 119 | 120 | 121 | 122 | 140 | 147 | 161 | 163 | 164 | 166 | 167 | 168 | 169 | 175 | 176 | 177 | 179 | 180 | 181 | 182 | 183 | 189 | 190 | 191 | 192 | 193 | 194 | 195 | 196 | 197 | 198 | 199 | 200 | 202 | 203 | 204 | 206 | 208 | 211 | 221 | 222 | 223 | 224 | 225 | 226 | 229 | 230 | 232 | 234 | 239 | 248 | 250 | 251 | 252 | 253 | 123 | 151 | 367 | 368 | 383 | 396 | 397 | 402 | 403 | 404) }
+#[derive(Default)]
+struct TerrainStream {
+    metadata: Vec<u32>, records: Vec<i32>, recipes: Vec<u32>,
+    keys: Vec<u32>, slots: Vec<u32>, wall_fallback: Vec<u32>, tile_fallback: Vec<u32>,
+    wall_assets: Vec<u32>, tile_assets: Vec<u32>, asset_bits: Vec<u8>,
+    // Counts: wall logical/drawn/hidden/culled; tile logical/drawn/hidden/
+    // culled/shapes; cell paint/liquid/wires/inactive/coatings; two reserved.
+    counts: [u32; 16], wall_records: usize, events: Vec<i32>, tokens: Vec<i32>,
+}
+impl TerrainStream {
+    fn clear(&mut self) {
+        self.metadata.clear(); self.records.clear(); self.recipes.clear();
+        self.wall_fallback.clear(); self.tile_fallback.clear(); self.wall_assets.clear();
+        self.tile_assets.clear(); self.counts.fill(0); self.wall_records=0;
+        self.events.clear(); self.tokens.clear();
+    }
+    fn bytes(&self) -> usize {
+        (self.metadata.capacity()+self.records.capacity()+self.recipes.capacity()+
+         self.keys.capacity()+self.slots.capacity()+self.wall_fallback.capacity()+
+         self.tile_fallback.capacity()+self.wall_assets.capacity()+self.tile_assets.capacity()+
+         self.events.capacity()+self.tokens.capacity())*4+self.asset_bits.capacity()+64
+    }
+    fn asset(&mut self, wall: bool, kind: u32) {
+        let at=kind as usize*2+if wall {1} else {0};
+        if self.asset_bits[at]==0 { self.asset_bits[at]=1;
+            if wall { self.wall_assets.push(kind); } else { self.tile_assets.push(kind); }
+        }
+    }
+    fn append(&mut self, recipe: u32, x: usize, y: usize, wall: bool, shape: u32) {
+        let mask=self.keys.len()-1;
+        let mut at=(recipe.wrapping_mul(2654435761) as usize)&mask;
+        while self.keys[at]!=0 && self.keys[at]!=recipe {at=(at+1)&mask;}
+        let slot=if self.keys[at]==0 {
+            let slot=self.recipes.len() as u32; self.recipes.push(recipe);
+            self.keys[at]=recipe; self.slots[at]=slot; slot
+        } else {self.slots[at]};
+        let dx=x as i32*16-if wall {8} else {0};
+        let dy=y as i32*16+if wall {-8} else if shape==1 {8} else {0};
+        self.records.extend_from_slice(&[slot as i32,dx,dy,x as i32,y as i32]);
+    }
+    fn plan(&mut self,input:&[u32],masks:&[u8],width:usize,height:usize,
+            flags:u32, tile_bounds:[i32;4],wall_bounds:[i32;4]) {
+        self.records.clear();self.recipes.clear();self.wall_fallback.clear();self.tile_fallback.clear();
+        self.wall_assets.clear();self.tile_assets.clear();self.counts.fill(0);self.tokens.clear();
+        let inside=|x:usize,y:usize,b:[i32;4]| x as i32>=b[0]&&(x as i32)<b[1]&&y as i32>=b[2]&&(y as i32)<b[3];
+        let area=|b:[i32;4]| ((b[1].clamp(0,width as i32)-b[0].clamp(0,width as i32)).max(0) as usize)*
+            ((b[3].clamp(0,height as i32)-b[2].clamp(0,height as i32)).max(0) as usize);
+        let limit=(if flags&1!=0 {area(tile_bounds)} else {0})+(if flags&2!=0 {area(wall_bounds)} else {0});
+        self.records.reserve_exact(limit*5); self.recipes.reserve_exact(limit);
+        let hash_size=(limit.max(1)*2).next_power_of_two();
+        self.keys.resize(hash_size,0);self.keys.fill(0);self.slots.resize(hash_size,0);
+        self.asset_bits.resize(65536*2,0);self.asset_bits.fill(0);
+        let reveal=flags&8!=0;let paint=flags&4!=0;
+        if flags&2!=0 {for x in 0..width {for y in 0..height {
+            let i=x*height+y;let wall=input[i*2+1]&65535;if wall==0 {continue;}
+            if !visible_wall(input[i*2+1],reveal) {self.counts[2]+=1;continue;}
+            let metadata=self.metadata[i*2];let paints=self.metadata[i*2+1];
+            let valid=!paint || metadata&STREAM_WALL_PAINT_VALID!=0;
+            if !valid {self.wall_fallback.push(i as u32);continue;}
+            self.counts[0]+=1;self.counts[1]+=1;self.asset(true,wall);
+            if !inside(x,y,wall_bounds) {self.counts[3]+=1;continue;}
+            let identity=if paint && (paints>>8)&255==31 {1} else {0};
+            self.append(0x01000000+wall*40+masks[i*2] as u32*2+identity,x,y,true,0);
+        }}}
+        self.wall_records=self.records.len()/5;
+        for x in 0..width {for y in 0..height {
+            let i=x*height+y;let metadata=self.metadata[i*2];
+            if metadata&STREAM_PRESENT==0 {continue;}
+            for bit in 5..=9 {if metadata&(1<<bit)!=0 {self.counts[bit+4]+=1;}}
+            if flags&1==0 || input[i*2]&ACTIVE==0 {continue;}
+            if !reveal && input[i*2]&INVISIBLE_BLOCK!=0 {self.counts[6]+=1;continue;}
+            let kind=input[i*2]&65535;let shape=metadata&7;
+            if !ordinary_type(kind) || shape>5 || metadata&STREAM_SAVED_FRAME!=0 ||
+                (paint && metadata&STREAM_TILE_PAINT_VALID==0) {
+                self.tile_fallback.push(i as u32);continue;
+            }
+            self.counts[4]+=1;self.counts[5]+=1;if shape!=0 {self.counts[8]+=1;}
+            self.asset(false,kind);
+            if !inside(x,y,tile_bounds) {self.counts[7]+=1;continue;}
+            let identity=if paint && self.metadata[i*2+1]&255==31 {1} else {0};
+            self.append(1+((kind*6+shape)*16+masks[i*2+1] as u32)*2+identity,x,y,false,shape);
+        }}
+    }
+    // Only sparse JS objects are passed as [ownerIndex, objectIndex]. Ordinary
+    // owner order, negative tokens and the final mixed stream are written here.
+    fn merge(&mut self,kind:u32,height:usize)->bool {
+        if kind>2 || self.events.len()%2!=0 {return false;}
+        let (start,end)=match kind {1=>(0,self.wall_records),2=>(self.wall_records,self.records.len()/5),_=>(0,0)};
+        if self.tokens.len()+end-start+self.events.len()/2>131072 {return false;}
+        let mut event=0;
+        for i in start..end {
+            let owner=self.records[i*5+3]*height as i32+self.records[i*5+4];
+            while event<self.events.len() && self.events[event]<=owner {
+                self.tokens.push(self.events[event+1]);event+=2;
+            }
+            self.tokens.push(-(i as i32)-1);
+        }
+        while event<self.events.len() {self.tokens.push(self.events[event+1]);event+=2;}
+        true
+    }
+}
+
 // One instance belongs to one renderer. Views are invalidated by prepare/release.
 // No source textures, expanded world, or world results are retained here.
 #[cfg(target_arch = "wasm32")]
@@ -127,17 +237,17 @@ mod abi {
     use std::cell::RefCell;
     #[derive(Default)]
     struct State { input: Vec<u32>, output: Vec<u8>, liquid_input: Vec<u32>,
-        liquid_output: Vec<u32>, liquid_fast: u32, width: usize, height: usize }
+        liquid_output: Vec<u32>, liquid_fast: u32, width: usize, height: usize, stream: TerrainStream }
     thread_local! { static STATE: RefCell<State> = RefCell::new(State::default()); }
 
-    #[no_mangle] pub extern "C" fn overview_abi_version() -> u32 { 2 }
+    #[no_mangle] pub extern "C" fn overview_abi_version() -> u32 { 3 }
 
     #[no_mangle] pub extern "C" fn overview_prepare(width: u32, height: u32) -> u32 {
         STATE.with(|state| {
             let mut s = state.borrow_mut();
             s.width = 0; s.height = 0; s.input.clear(); s.output.clear();
             s.liquid_input.clear(); s.liquid_output.clear();
-            s.liquid_fast = 0;
+            s.liquid_fast = 0; s.stream.clear();
             let cells = width as u64 * height as u64;
             if width == 0 || height == 0 || width > 512 || height > 512 || cells > MAX_CELLS as u64 {
                 return 0;
@@ -203,6 +313,48 @@ mod abi {
     #[no_mangle] pub extern "C" fn overview_liquid_fast_count() -> u32 {
         STATE.with(|s| s.borrow().liquid_fast)
     }
+
+    #[no_mangle] pub extern "C" fn overview_prepare_stream() -> u32 {
+        STATE.with(|state| {let mut s=state.borrow_mut();let count=s.width*s.height;
+            if count==0 {return 0;} s.stream.metadata.resize(count*2,0);
+            s.stream.metadata.as_mut_ptr() as u32})
+    }
+    #[no_mangle] pub extern "C" fn overview_plan_stream(flags:u32,
+        tx0:i32,tx1:i32,ty0:i32,ty1:i32,wx0:i32,wx1:i32,wy0:i32,wy1:i32)->u32 {
+        STATE.with(|state| {let mut s=state.borrow_mut();
+            if s.width==0||s.stream.metadata.len()!=s.width*s.height*2||s.output.len()!=s.width*s.height*2||flags>15{return 1;}
+            let State {input,output,width,height,stream,..}=&mut *s;
+            stream.plan(input,output,*width,*height,flags,[tx0,tx1,ty0,ty1],[wx0,wx1,wy0,wy1]);0})
+    }
+    #[no_mangle] pub extern "C" fn overview_stream_events(count:u32)->u32 {
+        STATE.with(|state| {let mut s=state.borrow_mut();if count>131072{return 0;}
+            s.stream.events.resize(count as usize*2,0);s.stream.events.as_mut_ptr() as u32})
+    }
+    #[no_mangle] pub extern "C" fn overview_stream_merge(kind:u32)->u32 {
+        STATE.with(|state| {let mut s=state.borrow_mut();let height=s.height;
+            if height==0||!s.stream.merge(kind,height){1}else{0}})
+    }
+    #[no_mangle] pub extern "C" fn overview_stream_counts_ptr()->u32 {
+        STATE.with(|s|s.borrow().stream.counts.as_ptr() as u32)
+    }
+    #[no_mangle] pub extern "C" fn overview_working_bytes()->u32 {
+        STATE.with(|state|{let s=state.borrow(); ((s.input.capacity()+s.liquid_input.capacity()+s.liquid_output.capacity())*4+s.output.capacity()+s.stream.bytes()) as u32})
+    }
+    #[no_mangle] pub extern "C" fn overview_stream_records_ptr()->u32 {STATE.with(|s|s.borrow().stream.records.as_ptr() as u32)}
+    #[no_mangle] pub extern "C" fn overview_stream_records_len()->u32 {STATE.with(|s|s.borrow().stream.records.len() as u32)}
+    #[no_mangle] pub extern "C" fn overview_stream_recipes_ptr()->u32 {STATE.with(|s|s.borrow().stream.recipes.as_ptr() as u32)}
+    #[no_mangle] pub extern "C" fn overview_stream_recipes_len()->u32 {STATE.with(|s|s.borrow().stream.recipes.len() as u32)}
+    #[no_mangle] pub extern "C" fn overview_stream_wall_fallback_ptr()->u32 {STATE.with(|s|s.borrow().stream.wall_fallback.as_ptr() as u32)}
+    #[no_mangle] pub extern "C" fn overview_stream_wall_fallback_len()->u32 {STATE.with(|s|s.borrow().stream.wall_fallback.len() as u32)}
+    #[no_mangle] pub extern "C" fn overview_stream_tile_fallback_ptr()->u32 {STATE.with(|s|s.borrow().stream.tile_fallback.as_ptr() as u32)}
+    #[no_mangle] pub extern "C" fn overview_stream_tile_fallback_len()->u32 {STATE.with(|s|s.borrow().stream.tile_fallback.len() as u32)}
+    #[no_mangle] pub extern "C" fn overview_stream_wall_assets_ptr()->u32 {STATE.with(|s|s.borrow().stream.wall_assets.as_ptr() as u32)}
+    #[no_mangle] pub extern "C" fn overview_stream_wall_assets_len()->u32 {STATE.with(|s|s.borrow().stream.wall_assets.len() as u32)}
+    #[no_mangle] pub extern "C" fn overview_stream_tile_assets_ptr()->u32 {STATE.with(|s|s.borrow().stream.tile_assets.as_ptr() as u32)}
+    #[no_mangle] pub extern "C" fn overview_stream_tile_assets_len()->u32 {STATE.with(|s|s.borrow().stream.tile_assets.len() as u32)}
+    #[no_mangle] pub extern "C" fn overview_stream_tokens_ptr()->u32 {STATE.with(|s|s.borrow().stream.tokens.as_ptr() as u32)}
+    #[no_mangle] pub extern "C" fn overview_stream_tokens_len()->u32 {STATE.with(|s|s.borrow().stream.tokens.len() as u32)}
+
     #[no_mangle] pub extern "C" fn overview_release() {
         STATE.with(|s| *s.borrow_mut() = State::default());
     }
@@ -211,6 +363,18 @@ mod abi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test] fn frame_stream_merges_sparse_specials_in_owner_order() {
+        let input=vec![ACTIVE|1,2,ACTIVE|4,2,ACTIVE|2,2];
+        let metadata=STREAM_PRESENT|STREAM_TILE_PAINT_VALID|STREAM_WALL_PAINT_VALID;
+        let mut stream=TerrainStream::default();stream.metadata=vec![metadata,0,metadata,0,metadata,0];
+        stream.plan(&input,&[0;6],3,1,3,[0,3,0,1],[0,3,0,1]);
+        assert_eq!(stream.wall_records,3);assert_eq!(stream.records.len(),25);
+        assert_eq!(stream.tile_fallback,vec![1]);assert_eq!(stream.counts[4],2);
+        stream.events=vec![1,0];assert!(stream.merge(2,1));
+        assert_eq!(stream.tokens,vec![-4,0,-5]);assert!(stream.bytes()>0);
+        stream.clear();assert!(stream.tokens.is_empty()&&stream.records.is_empty());
+    }
 
     #[test] fn all_masks_and_hidden_neighbours() {
         for mask in 0..16_u8 {

@@ -6,6 +6,7 @@ import { PNG } from "pngjs";
 import { createCanvas } from "@napi-rs/canvas";
 import { materializeOverviewCommand } from "../core/overview-command-buffer.mjs";
 import { createWorldRenderer } from "../scripts/world-render-engine.mjs";
+import { buildOverviewFramePack } from "../scripts/build-overview-frame-pack.mjs";
 import { nativeBlitterStatus } from "../scripts/native-blitter.mjs";
 import { nativeReducerStatus } from "../scripts/native-reducer.mjs";
 import { boxDownsampleRgba } from "../scripts/downsample-rgba.mjs";
@@ -81,10 +82,15 @@ function put(region, x, y, extra) {
 }
 
 function publicPlan(plan) {
-  const { compactTerrain, planningMilliseconds, ...rest } = plan;
+  const { compactTerrain, commandStream, planningMilliseconds, ...rest } = plan;
+  const commands = commandStream
+    ? Array.from(commandStream.tokens, (token) =>
+        token < 0 ? token : commandStream.objects[token],
+      )
+    : plan.commands;
   return {
     ...rest,
-    commands: plan.commands.map((command) =>
+    commands: commands.map((command) =>
       materializeOverviewCommand(plan, command),
     ),
   };
@@ -153,8 +159,10 @@ async function draw(assetDir, region, core, options = {}, drawOptions = {}) {
       pixels: output(drawn, canvas, core, region),
       plan: publicPlan(drawn.plan),
       compact: !!drawn.plan.compactTerrain,
-      compactCommands: drawn.plan.commands.filter((c) => typeof c === "number")
-        .length,
+      compactCommands: drawn.plan.compactTerrain
+        ? drawn.plan.compactTerrain.records.length /
+          drawn.plan.compactTerrain.stride
+        : 0,
       compactAllocatedBytes:
         drawn.plan.compactTerrain?.records.buffer.byteLength ?? 0,
       stats: structuredClone(renderer.stats),
@@ -209,6 +217,8 @@ test(
       actual.stats.directTerrainOverviewStats.compactValidationReuses > 0,
     );
     assert.equal(actual.stats.materializedTerrainCommands, 0);
+    assert.ok(actual.stats.commandStreamCommands > 0);
+    assert.equal(actual.stats.specialCommandObjects, 0);
     assert.equal(
       actual.stats.peakCompactTerrainBytes,
       actual.compactAllocatedBytes,
@@ -397,5 +407,163 @@ test(
       renderer.dispose();
       canvas.width = canvas.height = 1;
     }
+  },
+);
+
+test(
+  "disabling only the WASM frame stream preserves neighbourhood WASM and the legacy compact writer",
+  nativeOptions,
+  async (t) => {
+    const assetDir = assets(t),
+      region = scene(12, 10),
+      core = { x: 102, y: 202, width: 8, height: 6 };
+    const expected = await draw(assetDir, region, core, {
+      compactTerrainOverview: true,
+    });
+    const previous = process.env.EXPLORETV_DISABLE_WASM_FRAME_STREAM;
+    try {
+      process.env.EXPLORETV_DISABLE_WASM_FRAME_STREAM = "1";
+      const actual = await draw(assetDir, region, core, {
+        compactTerrainOverview: true,
+      });
+      equivalent(actual, expected);
+      assert.equal(actual.stats.terrainWasm.regions, 1);
+      assert.equal(actual.stats.wasmFrameStreamEnabled, false);
+      assert.equal(actual.stats.commandStreamCommands, 0);
+      assert.ok(actual.compactCommands > 0);
+    } finally {
+      if (previous === undefined)
+        delete process.env.EXPLORETV_DISABLE_WASM_FRAME_STREAM;
+      else process.env.EXPLORETV_DISABLE_WASM_FRAME_STREAM = previous;
+    }
+  },
+);
+
+test(
+  "absent default packs fall back, explicit bad paths fail, and the pack-disable control is independent",
+  nativeOptions,
+  async (t) => {
+    const assetDir = assets(t),
+      region = scene(12, 10),
+      core = { x: 102, y: 202, width: 8, height: 6 };
+    const options = {
+      assetDir,
+      lowMemory: true,
+      nativeOverview: true,
+      directTerrainOverview: true,
+      compactTerrainOverview: true,
+    };
+    assert.throws(() =>
+      createWorldRenderer({
+        ...options,
+        framePackDir: join(assetDir, "missing-explicit-pack"),
+      }),
+    );
+    const actual = await draw(assetDir, region, core, {
+      compactTerrainOverview: true,
+    });
+    assert.equal(actual.stats.framePack.available, false);
+    assert.match(actual.stats.framePack.reason, /not found/);
+    assert.ok(actual.stats.commandStreamCommands > 0);
+    const previous = process.env.EXPLORETV_DISABLE_FRAME_PACK;
+    try {
+      process.env.EXPLORETV_DISABLE_FRAME_PACK = "1";
+      const disabled = await draw(assetDir, region, core, {
+        compactTerrainOverview: true,
+        framePackDir: join(assetDir, "missing-explicit-pack"),
+      });
+      equivalent(disabled, actual);
+      assert.equal(disabled.stats.framePack.available, false);
+      assert.ok(disabled.stats.commandStreamCommands > 0);
+    } finally {
+      if (previous === undefined)
+        delete process.env.EXPLORETV_DISABLE_FRAME_PACK;
+      else process.env.EXPLORETV_DISABLE_FRAME_PACK = previous;
+    }
+  },
+);
+
+test(
+  "real precompiled pages, dynamic frames and the legacy compact writer preserve exact pixels and counters",
+  nativeOptions,
+  async (t) => {
+    const assetDir = assets(t),
+      framePackDir = join(assetDir, "overview-frame-pack");
+    buildOverviewFramePack({
+      assetDir,
+      outputDir: framePackDir,
+      pageBytes: 8192,
+    });
+    const region = scene(12, 10),
+      core = { x: 102, y: 202, width: 8, height: 6 };
+    for (let shape = 1; shape < 6; shape++)
+      put(region, 3 + shape, 4, { shape });
+    const options = { compactTerrainOverview: true };
+    const dynamic = await draw(assetDir, region, core, {
+      ...options,
+      precompiledTerrainFrames: false,
+    });
+    const packed = await draw(assetDir, region, core, options);
+    const copied = await draw(assetDir, region, core, {
+      ...options,
+      framePackCopyPixels: true,
+    });
+    const legacy = await draw(assetDir, region, core, {
+      ...options,
+      wasmFrameStream: false,
+    });
+    equivalent(packed, dynamic);
+    equivalent(copied, dynamic);
+    equivalent(legacy, dynamic);
+    assert.equal(packed.stats.framePack.available, true);
+    assert.ok(packed.stats.directTerrainOverviewStats.packFrameHits > 0);
+    assert.equal(packed.stats.directTerrainOverviewStats.packFailures, 0);
+    assert.equal(packed.stats.framePack.validationFailures, 0);
+    assert.equal(
+      packed.stats.rawTextureCache.rawDecodes,
+      0,
+      "covered assets do not inflate their source atlases",
+    );
+    assert.ok(dynamic.stats.rawTextureCache.rawDecodes > 0);
+    assert.equal(legacy.stats.commandStreamCommands, 0);
+    assert.ok(legacy.stats.directTerrainOverviewStats.packFrameHits > 0);
+    assert.ok(packed.stats.commandStreamCommands > 0);
+    assert.ok(
+      packed.stats.directTerrainOverviewStats.peakLiveFrameBytes <=
+        4 * 1024 * 1024,
+    );
+    assert.equal(packed.stats.sharedDetailedRgba.allocations, 1);
+    assert.equal(
+      copied.stats.directTerrainOverviewStats.framePackCopyPixels,
+      true,
+    );
+    assert.ok(copied.stats.directTerrainOverviewStats.packCopiedFrames > 0);
+    assert.equal(copied.stats.directTerrainOverviewStats.packFailures, 0);
+    assert.equal(copied.stats.framePack.validationFailures, 0);
+    assert.equal(copied.stats.rawTextureCache.rawDecodes, 0);
+    assert.ok(
+      copied.stats.directTerrainOverviewStats.peakPackStagingBytes <= 8192,
+    );
+    assert.ok(
+      copied.stats.directTerrainOverviewStats.peakLiveFrameBytes <=
+        4 * 1024 * 1024,
+    );
+    // A changed source invalidates only its package binding. The complete
+    // diagnostic/resource identity result must still equal dynamic rendering.
+    const changed = new PNG({ width: 288, height: 270 });
+    changed.data.fill(91);
+    writeFileSync(join(assetDir, "Tiles_1.png"), PNG.sync.write(changed));
+    const changedPacked = await draw(assetDir, region, core, options);
+    const changedDynamic = await draw(assetDir, region, core, {
+      ...options,
+      precompiledTerrainFrames: false,
+    });
+    equivalent(changedPacked, changedDynamic);
+    assert.ok(changedPacked.stats.framePack.validationFailures > 0);
+    assert.equal(
+      changedPacked.stats.directTerrainOverviewStats.packFailures,
+      0,
+    );
+    assert.ok(changedPacked.stats.rawTextureCache.rawDecodes > 0);
   },
 );
