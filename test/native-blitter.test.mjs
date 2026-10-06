@@ -4,6 +4,7 @@ import { createCanvas } from "@napi-rs/canvas";
 import {
   clearOpaque,
   composeInto,
+  composeIntoMasked,
   nativeBlitterStatus,
   nativeFrameWithOpacity,
   premultiplyRgba,
@@ -506,4 +507,129 @@ test("native availability is explicit and the module has an offline fallback", (
   assert.ok(
     ["sse2", "scalar", "javascript"].includes(nativeBlitterStatus.kernel),
   );
+});
+
+test("resolved-cell masks preserve ordered flipped planes outside exact 16px fragments", () => {
+  const width = 53,
+    height = 37,
+    target = new Uint8Array(new ArrayBuffer(width * height * 4 + 5), 5),
+    maskWidth = Math.ceil(width / 16),
+    maskHeight = Math.ceil(height / 16),
+    mask = new Uint8Array(new ArrayBuffer(maskWidth * maskHeight + 3), 3),
+    frame = new Uint8Array(new ArrayBuffer(32 * 32 * 4 + 7), 7);
+  for (let i = 0; i < target.length; i++)
+    target[i] = i % 4 === 3 ? 255 : (i * 37) % 256;
+  for (let i = 0; i < frame.length; i++) frame[i] = (i * 19 + 7) % 256;
+  for (let i = 0; i < mask.length; i++) mask[i] = i % 3;
+  const before = new Uint8Array(target),
+    expected = new Uint8Array(target),
+    descriptors = Int32Array.from([
+      0, 32, 32, 8, 8, 0, 0, 0, 0, 32, 32, 8, 8, 1, 1, 1, 0, 32, 32, -8, -8, 1,
+      0, 0, 0, 32, 32, 37, 19, 0, 1, 0, 0, 32, 32, -2147483648, 0, 0, 0, 0, 0,
+      32, 32, 2147483647, 0, 0, 0, 0,
+    ]);
+  composeInto(expected, width, height, descriptors, [frame]);
+  let pixelsSkipped = 0,
+    pixelsToResolvedCells = 0;
+  for (let i = 0; i < descriptors.length; i += 8) {
+    const dx = descriptors[i + 3],
+      dy = descriptors[i + 4];
+    for (let y = Math.max(0, dy); y < Math.min(height, dy + 32); y++)
+      for (let x = Math.max(0, dx); x < Math.min(width, dx + 32); x++) {
+        const cell = mask[(y >> 4) * maskWidth + (x >> 4)];
+        if (cell) pixelsSkipped++;
+        if (cell === 1) pixelsToResolvedCells++;
+      }
+  }
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++)
+      if (mask[(y >> 4) * maskWidth + (x >> 4)]) {
+        const at = (y * width + x) * 4;
+        expected.set(before.subarray(at, at + 4), at);
+      }
+  assert.deepEqual(
+    composeIntoMasked(target, width, height, descriptors, [frame], mask),
+    { pixelsSkipped, pixelsToResolvedCells },
+  );
+  assert.ok(pixelsSkipped > pixelsToResolvedCells);
+  assert.ok(pixelsToResolvedCells > 0);
+  equalBytes(target, expected, "masked ordered planes");
+});
+
+test("resolved-cell mask validation is atomic across aliases, detachment, shared buffers and bad batches", () => {
+  const target = clearOpaque(new Uint8Array(32 * 16 * 4)),
+    saved = new Uint8Array(target),
+    frame = Uint8Array.of(255, 0, 0, 255),
+    descriptors = Int32Array.of(0, 1, 1, 0, 0, 0, 0, 0);
+  for (const mask of [
+    null,
+    new Uint8Array(1),
+    new Uint16Array(2),
+    target.subarray(0, 2),
+    new Uint8Array(new SharedArrayBuffer(2)),
+  ])
+    assert.throws(() =>
+      composeIntoMasked(target, 32, 16, descriptors, [frame], mask),
+    );
+  const invalid = Int32Array.from([...descriptors, 4, 1, 1, 0, 0, 0, 0, 0]);
+  assert.throws(() =>
+    composeIntoMasked(target, 32, 16, invalid, [frame], new Uint8Array(2)),
+  );
+  const mask = new Uint8Array(2),
+    frames = [];
+  Object.defineProperty(frames, 0, {
+    get() {
+      structuredClone(mask.buffer, { transfer: [mask.buffer] });
+      return frame;
+    },
+  });
+  assert.throws(() =>
+    composeIntoMasked(target, 32, 16, descriptors, frames, mask),
+  );
+  equalBytes(target, saved, "invalid masks must preserve all output bytes");
+  assert.deepEqual(
+    composeIntoMasked(target, 32, 16, new Int32Array(), [], new Uint8Array(2)),
+    { pixelsSkipped: 0, pixelsToResolvedCells: 0 },
+  );
+});
+
+
+test("mask prechecks and merged spans preserve wide, clipped, flipped planes", () => {
+  const width = 111, height = 59, maskWidth = Math.ceil(width / 16),
+    sourceWidth = 96, sourceHeight = 48,
+    frame = new Uint8Array(sourceWidth * sourceHeight * 4),
+    initial = new Uint8Array(width * height * 4),
+    descriptors = Int32Array.from([
+      0, sourceWidth, sourceHeight, -9, 5, 1, 0, 0,
+      0, sourceWidth, sourceHeight, 23, -7, 0, 1, 1,
+      0, sourceWidth, sourceHeight, 5, 17, 1, 1, 0,
+    ]);
+  for (let i = 0; i < frame.length; i++) frame[i] = (i * 29 + 43) % 256;
+  for (let i = 0; i < initial.length; i++) initial[i] = i % 4 === 3 ? 255 : (i * 7 + 19) % 256;
+  for (const pattern of ["empty", "island", "stripes", "full"]) {
+    const mask = new Uint8Array(maskWidth * Math.ceil(height / 16));
+    if (pattern === "island") { mask[maskWidth + 3] = 1; mask[maskWidth * 2 + 3] = 2; }
+    if (pattern === "stripes") for (let y = 0; y < Math.ceil(height / 16); y++) { mask[y * maskWidth + 1] = 1; mask[y * maskWidth + 5] = 2; }
+    if (pattern === "full") mask.fill(1);
+    const actual = new Uint8Array(initial), expected = new Uint8Array(initial);
+    composeInto(expected, width, height, descriptors, [frame]);
+    let pixelsSkipped = 0, pixelsToResolvedCells = 0;
+    for (let i = 0; i < descriptors.length; i += 8) {
+      const dx = descriptors[i + 3], dy = descriptors[i + 4];
+      for (let y = Math.max(0, dy); y < Math.min(height, dy + sourceHeight); y++)
+        for (let x = Math.max(0, dx); x < Math.min(width, dx + sourceWidth); x++) {
+          const cell = mask[(y >> 4) * maskWidth + (x >> 4)];
+          if (cell) pixelsSkipped++;
+          if (cell === 1) pixelsToResolvedCells++;
+        }
+    }
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++)
+      if (mask[(y >> 4) * maskWidth + (x >> 4)]) {
+        const at = (y * width + x) * 4;
+        expected.set(initial.subarray(at, at + 4), at);
+      }
+    assert.deepEqual(composeIntoMasked(actual, width, height, descriptors, [frame], mask),
+      {pixelsSkipped, pixelsToResolvedCells}, pattern);
+    equalBytes(actual, expected, `merged ${pattern} spans`);
+  }
 });

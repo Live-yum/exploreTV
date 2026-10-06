@@ -18,6 +18,7 @@ npm run dev:viewer
 - [原分辨率整图导出](docs/full-resolution-export.md)
 - [分块缩小全景工具](docs/full-world.md)
 - [原生整图概览：当前架构、参数与历史验收](docs/overview-native.md)
+- [本轮紧凑地形规划与 WASM：实现、消融和验收合同](docs/overview-compact-wasm.md)
 - [PR #3 / PR #4 集成：路径选择、当前本地证据与待验收项目](docs/overview-integration.md)
 - [PR #3 历史优化：首次渲染、世界命令回放与小体积分享图](docs/overview-60s.md)
 
@@ -41,7 +42,9 @@ MALLOC_ARENA_MAX=2 MALLOC_MMAP_THRESHOLD_=131072 npm run export:overview -- fixt
 
 当前集成保留 PR #3 的直接地形路径、6 MiB 共享详细缓冲、世界准备／回放与独立分享图工具，并引入 PR #4 的数字帧 ID、索引与共享几何。直接绘制成功时不重复构建 generic 索引／几何；录制、generic 与回退路径仍使用这些分析。规划器兼容两种裁剪 API，像素输出范围优先，完整资源、诊断与逻辑预算不因裁剪丢失。
 
-当前最终源码 old48 / young1 / 原生 GC4 配置的完整本地冷进程为 **93.569 秒 / 255.55 MB**，全图及 13 ROI 核验通过。早期同配置快照为 88.921 秒 / 256.66 MB；固定 PR #3 GC2 实验 `29e4ebd` 为 111.056 秒 / 261.68 MB，不是最新 PR #3 的成绩。这是 Node 24 的本地实验，不能与 Node 22 远端成绩拼接计算加速比，也没有达到首次整图 60 秒目标。已选择 raw8 / direct4 缓存和该堆配置；最终源码 JavaScript 776 项中 773 通过、3 跳过、0 失败；当前世界准备为 **118.821 秒 / 257.95 MB**，已准备包回放为 **14.292 秒 / 137.69 MB**，两者均通过完整像素核验；回放不包含准备成本。完整证据及同 runner 远端验收状态见[集成说明](docs/overview-integration.md)和[逐次源码身份与本地证据](docs/benchmarks/overview-integration-local-20261006.json)。
+本轮从固定主分支 `cbdf5b3` 继续优化：普通 Tile / Wall 在规划时直接写入紧凑数值缓冲，WASM 批量计算邻域帧，direct 按唯一帧及代际 slot 复用缓存，现有原生合成器跳过已解决的目标片段。公开 `planScene()` 和特殊对象层序保持原合同。最终性能、平台状态与独立 WASM／mask 消融结果见本 PR 描述及对应 Actions，方法见[紧凑规划与 WASM 说明](docs/overview-compact-wasm.md)；不能由实现完成或减少的操作量直接认定首次整图达到 60 秒／300 MB。
+
+PR #5 整合提交的历史本地结果（old48 / young1 / 原生 GC4）为 **93.569 秒 / 255.55 MB**，全图及 13 ROI 核验通过。早期同配置快照为 88.921 秒 / 256.66 MB；固定 PR #3 GC2 实验 `29e4ebd` 为 111.056 秒 / 261.68 MB，不是最新 PR #3 的成绩。这是 Node 24 的本地实验，不能与 Node 22 远端成绩拼接计算加速比，也没有达到首次整图 60 秒目标。该提交选择 raw8 / direct4 缓存和该堆配置；其 JavaScript 776 项中 773 通过、3 跳过、0 失败；该提交世界准备为 **118.821 秒 / 257.95 MB**，已准备包回放为 **14.292 秒 / 137.69 MB**，两者均通过完整像素核验；回放不包含准备成本。该阶段证据见[集成说明](docs/overview-integration.md)和[逐次源码身份与本地证据](docs/benchmarks/overview-integration-local-20261006.json)，不作为本轮紧凑规划的性能成绩。
 
 ### PR #2 / PR #3 历史结果
 

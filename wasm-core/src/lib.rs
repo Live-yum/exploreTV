@@ -1,6 +1,8 @@
 //! Original implementation of exploreTV's bounded modern WLD tile contract.
 //! No external crate, game source, borrowed game code, JS callback, or WASI import.
 use std::ops::Range;
+#[cfg(any(target_arch = "wasm32", test))]
+mod overview;
 
 pub const ABI_VERSION: u32 = 1;
 pub const FILE_LIMIT: usize = 64 * 1024 * 1024;

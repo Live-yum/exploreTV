@@ -226,17 +226,18 @@ static napi_value clear_opaque(napi_env env, napi_callback_info info) {
   return argv[0];
 }
 
-static napi_value compose_into(napi_env env, napi_callback_info info) {
-  size_t argc = 5;
-  napi_value argv[5];
-  bytes target;
+static napi_value compose_batch(napi_env env, napi_callback_info info, bool masked) {
+  size_t argc = masked ? 6 : 5;
+  napi_value argv[6];
+  bytes target, mask = {NULL, 0};
   uint32_t width, height, frame_count;
   bool is_array = false, typed = false, array_buffer = false, detached = false;
   napi_typedarray_type type;
   size_t descriptor_length, offset;
   int32_t *descriptors;
   napi_value buffer;
-  if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok || argc != 5 ||
+  if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok ||
+      argc != (masked ? 6u : 5u) ||
       !get_bytes(env, argv[0], &target) || !get_u32(env, argv[1], &width) ||
       !get_u32(env, argv[2], &height) ||
       (uint64_t)width * height > SIZE_MAX / 4 ||
@@ -248,7 +249,10 @@ static napi_value compose_into(napi_env env, napi_callback_info info) {
       descriptor_length / DESCRIPTOR_SIZE > MAX_COMMANDS ||
       napi_is_array(env, argv[4], &is_array) != napi_ok || !is_array ||
       napi_get_array_length(env, argv[4], &frame_count) != napi_ok ||
-      frame_count > MAX_FRAMES)
+      frame_count > MAX_FRAMES ||
+      (masked && (!get_bytes(env, argv[5], &mask) ||
+        (uint64_t)((width + 15u) / 16u) * ((height + 15u) / 16u) > SIZE_MAX ||
+        mask.length != (size_t)((width + 15u) / 16u) * ((height + 15u) / 16u))))
     return fail(env, "Invalid integer-blitter target, descriptors, or frame array");
 
   bytes *frames = frame_count ? calloc(frame_count, sizeof(bytes)) : NULL;
@@ -259,6 +263,8 @@ static napi_value compose_into(napi_env env, napi_callback_info info) {
     return fail(env, "Cannot allocate bounded integer-blitter frame table");
   }
   const char *error = NULL;
+  uint64_t pixels_skipped = 0, pixels_to_resolved_cells = 0;
+  const uint32_t mask_width = (width + 15u) / 16u;
   /* Resolve possible array getters before retaining any raw data pointer. */
   for (uint32_t i = 0; i < frame_count; i++) {
     if (napi_get_element(env, argv[4], i, &values[i]) != napi_ok) {
@@ -273,7 +279,9 @@ static napi_value compose_into(napi_env env, napi_callback_info info) {
       type != napi_int32_array || descriptor_length % DESCRIPTOR_SIZE ||
       descriptor_length / DESCRIPTOR_SIZE > MAX_COMMANDS ||
       napi_is_arraybuffer(env, buffer, &array_buffer) != napi_ok || !array_buffer ||
-      napi_is_detached_arraybuffer(env, buffer, &detached) != napi_ok || detached) {
+      napi_is_detached_arraybuffer(env, buffer, &detached) != napi_ok || detached ||
+      (masked && (!get_bytes(env, argv[5], &mask) ||
+        mask.length != (size_t)mask_width * ((height + 15u) / 16u)))) {
     error = "Integer-blitter buffers must be attached, nonshared typed arrays";
     goto finish;
   }
@@ -284,6 +292,15 @@ static napi_value compose_into(napi_env env, napi_callback_info info) {
        (destination < commands && commands - destination < target.length))) {
     error = "Integer-blitter descriptors must not alias the destination";
     goto finish;
+  }
+  if (masked) {
+    const uintptr_t mask_start = (uintptr_t)mask.data;
+    if (mask.length &&
+        ((mask_start <= destination && destination - mask_start < mask.length) ||
+         (destination < mask_start && mask_start - destination < target.length))) {
+      error = "Integer-blitter mask must not alias the destination";
+      goto finish;
+    }
   }
   for (uint32_t i = 0; i < frame_count; i++) {
     if (!get_bytes(env, values[i], &frames[i])) {
@@ -321,14 +338,65 @@ static napi_value compose_into(napi_env env, napi_callback_info info) {
     if (x1 <= x0 || y1 <= y0) continue;
     const uint8_t *source = frames[d[0]].data;
     const bool flip_x = d[5], flip_y = d[6], additive = d[7];
-    const int64_t source_x = flip_x ? fw - 1 - (x0 - dx) : x0 - dx;
-    const size_t count = (size_t)(x1 - x0);
-    for (int64_t y = y0; y < y1; y++) {
-      const int64_t sy = flip_y ? fh - 1 - (y - dy) : y - dy;
-      const uint8_t *s = source + (size_t)sy * (size_t)fw * 4;
-      uint8_t *t = target.data + ((size_t)y * width + (size_t)x0) * 4;
-      if (additive) additive_row(t, s, source_x, count, flip_x);
-      else source_over_row(t, s, source_x, count, flip_x);
+    bool touches_mask = false;
+    if (masked) {
+      const size_t cell_x0 = (size_t)(x0 >> 4), cell_x1 = (size_t)((x1 - 1) >> 4);
+      const size_t cell_y1 = (size_t)((y1 - 1) >> 4);
+      for (size_t cy = (size_t)(y0 >> 4); cy <= cell_y1 && !touches_mask; cy++) {
+        const uint8_t *row_mask = mask.data + cy * mask_width;
+        for (size_t cx = cell_x0; cx <= cell_x1; cx++)
+          if (row_mask[cx]) { touches_mask = true; break; }
+      }
+    }
+    // Most submitted commands have no resolved fragments (whole-cell skips
+    // were removed by the compiler). Preserve their original full SIMD rows.
+    if (!touches_mask) {
+      const int64_t source_x = flip_x ? fw - 1 - (x0 - dx) : x0 - dx;
+      const size_t count = (size_t)(x1 - x0);
+      for (int64_t y = y0; y < y1; y++) {
+        const int64_t sy = flip_y ? fh - 1 - (y - dy) : y - dy;
+        const uint8_t *s = source + (size_t)sy * (size_t)fw * 4;
+        uint8_t *t = target.data + ((size_t)y * width + (size_t)x0) * 4;
+        if (additive) additive_row(t, s, source_x, count, flip_x);
+        else source_over_row(t, s, source_x, count, flip_x);
+      }
+      continue;
+    }
+    /* Split inside C at exact destination cell boundaries, not into JS
+     * commands. A -8px-offset 32px wall can touch 3x3 mask cells. All rows of
+     * this plane finish before the next descriptor, preserving transparency. */
+    for (int64_t y = y0; y < y1;) {
+      const int64_t cell_y1 = ((y >> 4) + 1) * 16;
+      const int64_t end_y = cell_y1 < y1 ? cell_y1 : y1;
+      const uint8_t *row_mask = mask.data + (size_t)(y >> 4) * mask_width;
+      for (int64_t x = x0; x < x1;) {
+        const int64_t cell_x1 = ((x >> 4) + 1) * 16;
+        int64_t end_x = cell_x1 < x1 ? cell_x1 : x1;
+        const uint8_t cell = row_mask[(size_t)(x >> 4)];
+        if (cell) {
+          const uint64_t skipped = (uint64_t)(end_x - x) * (uint64_t)(end_y - y);
+          pixels_skipped += skipped;
+          if (cell == 1) pixels_to_resolved_cells += skipped;
+        } else {
+          // Adjacent drawable cells form one SIMD span. Splitting every
+          // 32px wall into three short rows can cost more than its skipped work.
+          while (end_x < x1 && !row_mask[(size_t)(end_x >> 4)]) {
+            const int64_t next = ((end_x >> 4) + 1) * 16;
+            end_x = next < x1 ? next : x1;
+          }
+          const int64_t source_x = flip_x ? fw - 1 - (x - dx) : x - dx;
+          const size_t count = (size_t)(end_x - x);
+          for (int64_t row = y; row < end_y; row++) {
+            const int64_t sy = flip_y ? fh - 1 - (row - dy) : row - dy;
+            const uint8_t *s = source + (size_t)sy * (size_t)fw * 4;
+            uint8_t *t = target.data + ((size_t)row * width + (size_t)x) * 4;
+            if (additive) additive_row(t, s, source_x, count, flip_x);
+            else source_over_row(t, s, source_x, count, flip_x);
+          }
+        }
+        x = end_x;
+      }
+      y = end_y;
     }
   }
 
@@ -336,17 +404,36 @@ finish:
   free(frames);
   free(values);
   if (error) return fail(env, error);
+  if (masked) {
+    napi_value result, skipped, resolved;
+    if (napi_create_object(env, &result) != napi_ok ||
+        napi_create_double(env, (double)pixels_skipped, &skipped) != napi_ok ||
+        napi_create_double(env, (double)pixels_to_resolved_cells, &resolved) != napi_ok ||
+        napi_set_named_property(env, result, "pixelsSkipped", skipped) != napi_ok ||
+        napi_set_named_property(env, result, "pixelsToResolvedCells", resolved) != napi_ok)
+      return NULL;
+    return result;
+  }
   return argv[0];
+}
+
+static napi_value compose_into(napi_env env, napi_callback_info info) {
+  return compose_batch(env, info, false);
+}
+
+static napi_value compose_into_masked(napi_env env, napi_callback_info info) {
+  return compose_batch(env, info, true);
 }
 
 static napi_value init(napi_env env, napi_value exports) {
   const napi_property_descriptor properties[] = {
     {"composeInto", NULL, compose_into, NULL, NULL, NULL, napi_default, NULL},
+    {"composeIntoMasked", NULL, compose_into_masked, NULL, NULL, NULL, napi_default, NULL},
     {"premultiplyInto", NULL, premultiply_into, NULL, NULL, NULL, napi_default, NULL},
     {"scaleOpacityInto", NULL, scale_opacity_into, NULL, NULL, NULL, napi_default, NULL},
     {"clearOpaque", NULL, clear_opaque, NULL, NULL, NULL, napi_default, NULL},
   };
-  if (napi_define_properties(env, exports, 4, properties) != napi_ok) return NULL;
+  if (napi_define_properties(env, exports, 5, properties) != napi_ok) return NULL;
   napi_value kernel;
 #if defined(BLITTER_SSE2)
   const char *kernel_name = "sse2";

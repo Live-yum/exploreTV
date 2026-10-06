@@ -1,12 +1,13 @@
-name: Export direct small panorama
+name: Compare complete panorama with pinned main
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   requested:
+    if: github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.title != null
     runs-on: ubuntu-latest
     outputs:
       run: ${{ steps.request.outputs.run }}
@@ -17,12 +18,13 @@ jobs:
       - id: request
         env:
           EVENT_NAME: ${{ github.event_name }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           message=$(git log -1 --format=%B)
           if [ "$EVENT_NAME" = workflow_dispatch ]; then
             echo 'run=true' >> "$GITHUB_OUTPUT"
           else
-            case "$message" in
+            case "$PR_TITLE $message" in
               *'[export-overview]'*) echo 'run=true' >> "$GITHUB_OUTPUT" ;;
               *) echo 'run=false' >> "$GITHUB_OUTPUT" ;;
             esac
@@ -32,6 +34,11 @@ jobs:
     if: needs.requested.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      BASELINE_COMMIT: cbdf5b3c3b9f4952a2075a133f809b9b2d779d12
+      EXPLORETV_DISABLE_TERRAIN_WASM: "0"
+      EXPLORETV_ENABLE_RESOLVED_CELL_MASK: "0"
+      EXPLORETV_DISABLE_RESOLVED_CELL_MASK: "0"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,11 +53,12 @@ jobs:
       - run: node scripts/prepare-example.mjs example/assets --check
       - run: node --test test/png-stream.test.mjs test/export-world.test.mjs test/overview-export.test.mjs test/overview-fast-path.test.mjs test/scene-frame-cache.test.mjs test/compact-waterfall-registry.test.mjs test/overview-budget.test.mjs test/png-rgba.test.mjs test/png-rgba-node.test.mjs test/overview-core-cull.test.mjs test/static-planner-dispatch.test.mjs test/raw-texture-cache.test.mjs test/overview-comparison.test.mjs
       - run: node --test test/native-reducer.test.mjs test/native-blitter.test.mjs test/software-overview-partition.test.mjs test/software-overview-composite.test.mjs test/overview-frame-metadata.test.mjs test/scene-frame-interner.test.mjs test/ordinary-planner-fast-path.test.mjs test/indexed-shimmer-hint.test.mjs test/process-memory.test.mjs test/raw-overview-frame.test.mjs test/raw-identity-preparation.test.mjs test/slope-overview-frame.test.mjs test/reduce-overview-canvas.test.mjs test/native-provenance.test.mjs test/overview-early-halo-cull.test.mjs
-      - run: node --test test/world-validation-memo.test.mjs test/renderer-slope-polygons.test.mjs test/scene-frame-id.test.mjs test/renderer-emission-core.test.mjs test/overview-shared-geometry.test.mjs
+      - run: node --test test/world-validation-memo.test.mjs test/renderer-slope-polygons.test.mjs test/scene-frame-id.test.mjs test/renderer-emission-core.test.mjs test/overview-shared-geometry.test.mjs test/compact-overview-ci.test.mjs
+      - run: node --test test/compact-overview-planner.test.mjs test/overview-terrain-wasm.test.mjs test/compact-terrain-engine.test.mjs test/direct-terrain-overview.test.mjs
+      - run: node --test test/compact-ablation.test.mjs test/liquid-visible-level-cache.test.mjs
       - name: Measure pinned baseline on this runner
-        env:
-          BASELINE_COMMIT: 12389011ce9be374328e331837f1f16645ddb5fb
         run: |
+          set -euo pipefail
           git fetch --no-tags --depth=1 origin "$BASELINE_COMMIT"
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
@@ -68,12 +76,36 @@ jobs:
           cd "$baseline"
           npm run prepare:overview
           node scripts/check-overview-native.mjs
+          node scripts/prepare-example.mjs example/assets --check
           node scripts/run-overview-ci.mjs "$GITHUB_WORKSPACE/artifacts/direct-overview-baseline"
           node scripts/verify-overview.mjs fixtures/example-world.wld example/assets "$GITHUB_WORKSPACE/artifacts/direct-overview-baseline/world-1px.png" --example
       - run: node scripts/run-overview-ci.mjs
       - run: node scripts/verify-overview.mjs fixtures/example-world.wld example/assets artifacts/direct-overview/world-1px.png --example
       - name: Compare complete sequential runs
-        run: node scripts/compare-overview-benchmarks.mjs artifacts/direct-overview-baseline artifacts/direct-overview "$(git rev-parse HEAD)"
+        run: |
+          node scripts/compare-overview-benchmarks.mjs \
+            artifacts/direct-overview-baseline artifacts/direct-overview \
+            "$(git rev-parse HEAD)" "$BASELINE_COMMIT" \
+            "$RUNNER_TEMP/exploretv-overview-baseline" "$GITHUB_WORKSPACE"
+      - name: Measure the same compact candidate with terrain WASM disabled
+        env:
+          EXPLORETV_DISABLE_TERRAIN_WASM: "1"
+          EXPLORETV_ENABLE_RESOLVED_CELL_MASK: "0"
+          EXPLORETV_DISABLE_RESOLVED_CELL_MASK: "1"
+        run: node scripts/run-overview-ci.mjs artifacts/compact-js
+      - run: node scripts/verify-overview.mjs fixtures/example-world.wld example/assets artifacts/compact-js/world-1px.png --example
+      - name: Measure the same compact candidate with the experimental resolved-cell mask enabled
+        env:
+          EXPLORETV_DISABLE_TERRAIN_WASM: "0"
+          EXPLORETV_ENABLE_RESOLVED_CELL_MASK: "1"
+          EXPLORETV_DISABLE_RESOLVED_CELL_MASK: "0"
+        run: node scripts/run-overview-ci.mjs artifacts/compact-masked
+      - run: node scripts/verify-overview.mjs fixtures/example-world.wld example/assets artifacts/compact-masked/world-1px.png --example
+      - name: Compare complete same-commit feature ablations
+        run: |
+          node scripts/compare-compact-ablations.mjs \
+            artifacts/direct-overview artifacts/compact-js artifacts/compact-masked \
+            "$(git rev-parse HEAD)" "$GITHUB_WORKSPACE"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -82,5 +114,14 @@ jobs:
             artifacts/direct-overview/world-1px.png
             artifacts/direct-overview/*.json
             artifacts/direct-overview-baseline/*.json
+            artifacts/compact-js/*.json
+            artifacts/compact-masked/*.json
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: baseline-panorama-${{ env.BASELINE_COMMIT }}
+          path: artifacts/direct-overview-baseline/world-1px.png
           compression-level: 0
           retention-days: 7

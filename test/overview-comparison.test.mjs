@@ -77,6 +77,8 @@ test("sequential overview comparison reports full-process improvements and stric
   assert.equal(report.runtimeReductionPercent, 20);
   assert.equal(report.savedPeakBytes, 160000000);
   assert.equal(report.preferredMemoryPassed, true);
+  assert.equal(report.preferredRuntimePassed, false);
+  assert.equal(report.preferredTargetsPassed, false);
   assert.equal(
     compareOverviewBenchmarks(fixture(), fixture(310, 300000000), commit)
       .preferredMemoryPassed,
@@ -86,6 +88,26 @@ test("sequential overview comparison reports full-process improvements and stric
     compareOverviewBenchmarks(fixture(), fixture(310), commit)
       .runtimeReductionPercent < 0,
   );
+});
+test("60-second and 300-MB goals are independent and both use strict boundaries", () => {
+  for (const [seconds, bytes, runtime, memory, both] of [
+    [59.999, 299999999, true, true, true],
+    [60, 299999999, false, true, false],
+    [59.999, 300000000, true, false, false],
+    [60, 300000000, false, false, false],
+    [121.266, 285085696, false, true, false],
+  ]) {
+    const report = compareOverviewBenchmarks(
+      fixture(),
+      fixture(seconds, bytes),
+      commit,
+    );
+    assert.equal(report.preferredRuntimePassed, runtime);
+    assert.equal(report.preferredMemoryPassed, memory);
+    assert.equal(report.preferredTargetsPassed, both);
+    assert.equal(report.correctnessPassed, true);
+    assert.equal(report.protectiveBudgetsPassed, true);
+  }
 });
 test("comparison rejects budget, fidelity, input and environment mismatches", () => {
   for (const mutate of [

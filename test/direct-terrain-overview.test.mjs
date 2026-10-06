@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createCanvas } from "@napi-rs/canvas";
 import { registerTextureSource, textureSource } from "../core/assets.mjs";
 import { renderSceneBatched } from "../core/scene-batches.mjs";
+import { materializeOverviewCommand } from "../core/overview-command-buffer.mjs";
 import { createDirectTerrainOverview } from "../scripts/direct-terrain-overview.mjs";
 import { nativeBlitterStatus } from "../scripts/native-blitter.mjs";
 import { boxDownsampleRgba } from "../scripts/downsample-rgba.mjs";
@@ -85,7 +86,14 @@ function reference(plan, imageAssets, core, region) {
   try {
     const report = renderSceneBatched(
       context,
-      plan,
+      plan.compactTerrain
+        ? {
+            ...plan,
+            commands: plan.commands.map((command) =>
+              materializeOverviewCommand(plan, command),
+            ),
+          }
+        : plan,
       imageAssets,
       createCanvas,
       {
@@ -1117,6 +1125,378 @@ test(
     } finally {
       renderer.dispose();
       hot.width = hot.height = cold.width = cold.height = 1;
+    }
+  },
+);
+
+// Test-only conversion lets the unchanged Canvas path remain the independent
+// pixel reference. Production planning constructs these records directly.
+function compactPlan(
+  plan,
+  select = (c) => c.kind === "tile" || c.kind === "wall",
+) {
+  const frames = [],
+    frameSlots = new Map(),
+    records = [],
+    commands = plan.commands.map((c) => {
+      if (!select(c)) return c;
+      const { dx, dy, x = 0, y = 0, ...template } = c,
+        key = JSON.stringify(template);
+      let slot = frameSlots.get(key);
+      if (slot === undefined) {
+        slot = frames.length;
+        frames.push(Object.freeze(template));
+        frameSlots.set(key, slot);
+      }
+      records.push(slot, dx, dy, x, y);
+      return -(records.length / 5);
+    });
+  return {
+    ...plan,
+    commands,
+    compactTerrain: {
+      stride: 5,
+      records: Int32Array.from(records),
+      frames: Object.freeze(frames),
+    },
+  };
+}
+
+test(
+  "compact terrain validates unique frames once and uses generation slots in the second pass",
+  nativeTest,
+  () => {
+    const s = scene(16, 8),
+      imageAssets = assets(),
+      renderer = createDirectTerrainOverview(),
+      commands = [];
+    for (let i = 0; i < 2048; i++)
+      commands.push(
+        s.make({
+          asset: "excess",
+          sx: (i % 4) * 16,
+          dx: 32 + (i % 16) * 16,
+          dy: 32 + (Math.floor(i / 16) % 8) * 16,
+          flipX: !!(i & 1),
+          flipY: !!(i & 2),
+        }),
+      );
+    const full = s.plan(commands),
+      compact = compactPlan(full),
+      frameCount = compact.compactTerrain.frames.length;
+    try {
+      const { direct, result } = composePartition(
+        renderer,
+        compact,
+        imageAssets,
+        s.core,
+        s.region,
+      );
+      equalPixels(result, reference(full, imageAssets, s.core, s.region));
+      assert.equal(direct.handledCount, commands.length);
+      assert.equal(renderer.stats.compactCommands, commands.length);
+      assert.equal(renderer.stats.compactFramesValidated, frameCount);
+      assert.equal(
+        renderer.stats.compactValidationReuses,
+        commands.length - frameCount,
+      );
+      assert.equal(renderer.stats.frameKeyLookups, frameCount);
+      assert.equal(renderer.stats.compactSecondPassSlotHits, commands.length);
+      assert.equal(renderer.stats.compactSecondPassReloads, 0);
+      assert.equal(renderer.stats.peakCompactSlotBytes, frameCount * 13);
+      assert.equal(renderer.stats.compactSlotBytes, 0);
+    } finally {
+      renderer.dispose();
+    }
+  },
+);
+
+test(
+  "compact slot generations survive repeated byte-budget eviction without retaining old frames",
+  nativeTest,
+  () => {
+    const s = scene(12, 4),
+      imageAssets = assets(),
+      renderer = createDirectTerrainOverview({
+        maxFrameBytes: 8192,
+        maxFrames: 1,
+      }),
+      commands = [];
+    for (let i = 0; i < 300; i++)
+      commands.push(
+        s.make({
+          asset: i & 1 ? "plain" : "excess",
+          sx: (i % 3) * 16,
+          dx: 32 + (i % 12) * 16,
+          dy: 32 + (Math.floor(i / 12) % 4) * 16,
+          flipX: !!(i & 1),
+          flipY: !!(i & 2),
+        }),
+      );
+    const full = s.plan(commands),
+      compact = compactPlan(full);
+    try {
+      const { result } = composePartition(
+        renderer,
+        compact,
+        imageAssets,
+        s.core,
+        s.region,
+      );
+      equalPixels(result, reference(full, imageAssets, s.core, s.region));
+      assert.equal(
+        renderer.stats.compactFramesValidated,
+        compact.compactTerrain.frames.length,
+      );
+      assert.ok(renderer.stats.compactSecondPassReloads > 200);
+      assert.ok(renderer.stats.evictions > 200);
+      assert.ok(renderer.stats.nativeBatches > 200);
+      assert.ok(renderer.stats.peakLiveFrameBytes <= 8192);
+      assert.ok(renderer.stats.peakActiveFrameBytes <= 8192);
+      assert.equal(renderer.stats.peakFrameEntries, 1);
+      assert.equal(renderer.stats.activeFrameBytes, 0);
+    } finally {
+      renderer.dispose();
+    }
+    assert.equal(renderer.stats.liveFrameBytes, 0);
+  },
+);
+
+test(
+  "compact templates preserve mixed wall, sprite, slope, half-brick and liquid order",
+  nativeTest,
+  () => {
+    const s = scene(8, 4),
+      imageAssets = assets(),
+      renderer = createDirectTerrainOverview(),
+      commands = [];
+    for (let y = 0; y < 4; y++)
+      for (let x = 0; x < 8; x++) {
+        const dx = 32 + x * 16,
+          dy = 32 + y * 16;
+        commands.push(
+          s.make({
+            kind: "wall",
+            asset: "excess",
+            sw: 32,
+            sh: 32,
+            dw: 32,
+            dh: 32,
+            dx: dx - 8,
+            dy: dy - 8,
+          }),
+        );
+        commands.push(
+          s.make({ kind: "object", asset: "plain", dx, dy, opacity: 0.3 }),
+        );
+        commands.push(
+          s.make({
+            asset: "opaque",
+            dx,
+            dy,
+            clip: [
+              [0, 0],
+              [16, 16],
+              [0, 16],
+            ],
+            flipX: !!(x & 1),
+          }),
+        );
+        commands.push(s.make({ asset: "plain", dx, dy: dy + 8, sh: 8, dh: 8 }));
+        commands.push(
+          s.make({ kind: "liquid", asset: "excess", dx, dy, opacity: 0.4 }),
+        );
+      }
+    const full = s.plan(commands),
+      compact = compactPlan(full);
+    try {
+      const { result } = composePartition(
+        renderer,
+        compact,
+        imageAssets,
+        s.core,
+        s.region,
+      );
+      equalPixels(result, reference(full, imageAssets, s.core, s.region));
+      assert.ok(renderer.stats.slopeCandidates > 0);
+      assert.ok(renderer.stats.compactValidationReuses > 0);
+      assert.ok(renderer.stats.compactSecondPassSlotHits > 0);
+      assert.equal(renderer.stats.secondPassFailures, 0);
+    } finally {
+      renderer.dispose();
+    }
+  },
+);
+
+test(
+  "compact invalid crops and missing sources retain bounded validation and generic diagnostics",
+  nativeTest,
+  () => {
+    const s = scene(8, 2),
+      imageAssets = assets(),
+      renderer = createDirectTerrainOverview(),
+      control = createDirectTerrainOverview(),
+      commands = [];
+    for (let i = 0; i < 20; i++)
+      commands.push(
+        s.make({ asset: "missing", dx: 48 }),
+        s.make({ sx: 64, dx: 64 }),
+        s.make({ asset: "opaque", dx: 32 }),
+      );
+    const full = s.plan(commands),
+      compact = compactPlan(full);
+    try {
+      const actual = renderer.render(compact, s.core, s.region, imageAssets),
+        expected = control.render(full, s.core, s.region, imageAssets);
+      assert.ok(actual);
+      assert.deepEqual(actual.handled, expected.handled);
+      assert.deepEqual(actual.safe, expected.safe);
+      equalPixels(actual.pixels, expected.pixels);
+      assert.equal(renderer.stats.compactFramesValidated, 3);
+      assert.equal(renderer.stats.preparationFailures, 2);
+      assert.equal(renderer.stats.compactValidationReuses, 57);
+    } finally {
+      renderer.dispose();
+      control.dispose();
+    }
+  },
+);
+
+test(
+  "a compact slot re-preparation failure declines the complete view after generation invalidation",
+  nativeTest,
+  () => {
+    const s = scene(4, 1),
+      imageAssets = assets(),
+      source = imageAssets.get("plain"),
+      raw = textureSource(source).rawRgba,
+      renderer = createDirectTerrainOverview({
+        maxFrameBytes: 8192,
+        maxFrames: 1,
+      });
+    let reads = 0;
+    registerTextureSource(source, {
+      pngBytes: new Uint8Array(),
+      rawRgbaProvider: () => (++reads === 1 ? raw : null),
+    });
+    const compact = compactPlan(
+      s.plan([s.make(), s.make({ asset: "excess", dx: 48 })]),
+    );
+    try {
+      assert.equal(
+        renderer.render(compact, s.core, s.region, imageAssets),
+        null,
+      );
+      assert.equal(renderer.stats.compactSecondPassReloads, 1);
+      assert.equal(renderer.stats.secondPassFailures, 1);
+      assert.equal(renderer.stats.activeFrameBytes, 0);
+      assert.ok(renderer.stats.peakLiveFrameBytes <= 8192);
+    } finally {
+      renderer.dispose();
+    }
+  },
+);
+
+test(
+  "native resolved-cell clipping removes exact 3x3 wall fragments with unchanged output",
+  nativeTest,
+  () => {
+    const s = scene(3, 3),
+      imageAssets = assets(),
+      masked = createDirectTerrainOverview({ resolvedCellMask: true }),
+      unmasked = createDirectTerrainOverview({ resolvedCellMask: false }),
+      full = s.plan([
+        s.make({
+          kind: "wall",
+          asset: "plain",
+          sw: 32,
+          sh: 32,
+          dw: 32,
+          dh: 32,
+          dx: 40,
+          dy: 40,
+        }),
+        s.make({ asset: "opaque", dx: 32, dy: 32 }),
+        s.make({ asset: "opaque", dx: 48, dy: 48 }),
+        s.make({ asset: "opaque", dx: 64, dy: 64 }),
+      ]),
+      compact = compactPlan(full);
+    try {
+      const actual = composePartition(
+          masked,
+          compact,
+          imageAssets,
+          s.core,
+          s.region,
+        ),
+        control = composePartition(
+          unmasked,
+          compact,
+          imageAssets,
+          s.core,
+          s.region,
+        );
+      equalPixels(
+        actual.result,
+        reference(full, imageAssets, s.core, s.region),
+      );
+      equalPixels(actual.result, control.result);
+      assert.equal(masked.stats.keptCrossOpaqueWallCommands, 1);
+      // The -8px wall touches three cells on each axis: corner 8x8, center
+      // 16x16, opposite corner 8x8, counted over its one nonadditive plane.
+      assert.equal(masked.stats.blitPixelsToResolvedCells, 64 + 256 + 64);
+      assert.equal(masked.stats.maskedBlitPixelsSkipped, 384);
+      assert.equal(masked.stats.maskedUnsafeBlitPixelsSkipped, 0);
+      assert.equal(
+        unmasked.stats.nativeBlitPixels - masked.stats.nativeBlitPixels,
+        384,
+      );
+      assert.equal(
+        masked.stats.candidateBlitPixels,
+        masked.stats.nativeBlitPixels + masked.stats.skippedBlitPixels,
+      );
+    } finally {
+      masked.dispose();
+      unmasked.dispose();
+    }
+  },
+);
+
+test(
+  "malformed compact records decline safely before interpreting numeric commands",
+  nativeTest,
+  () => {
+    const s = scene(),
+      imageAssets = assets(),
+      renderer = createDirectTerrainOverview(),
+      original = compactPlan(s.plan([s.make()]));
+    try {
+      for (const p of [
+        { ...original, commands: [-2] },
+        { ...original, commands: [0] },
+        {
+          ...original,
+          compactTerrain: { ...original.compactTerrain, stride: 4 },
+        },
+        {
+          ...original,
+          compactTerrain: {
+            ...original.compactTerrain,
+            records: Int32Array.of(3, 32, 32, 0, 0),
+          },
+        },
+        {
+          ...original,
+          compactTerrain: {
+            ...original.compactTerrain,
+            records: new Int32Array(new SharedArrayBuffer(20)),
+          },
+        },
+      ])
+        assert.equal(renderer.render(p, s.core, s.region, imageAssets), null);
+      assert.equal(renderer.stats.activeFrameBytes, 0);
+    } finally {
+      renderer.dispose();
     }
   },
 );
