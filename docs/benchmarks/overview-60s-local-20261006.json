@@ -1,391 +1,35 @@
 {
-  "schema": "exploretv-overview-60s-local-evidence-v1",
+  "schema": "exploretv-overview-60s-local-evidence-v2",
   "date": "2026-10-06",
-  "runtimeCommit": "e2ca3ae45ab4f2f509f00db955aae7e5dcbb4607",
-  "runtimeGitTree": "7f57056fdbefc43086153c9e44e0125c7c077bed",
-  "runtimeProvenance": "Frozen staged tree measured locally, identical to the GitHub runtime commit tree. The checkout HEAD was aligned after measurements; fidelity verified all runtime source hashes.",
-  "worldSha256": "d551a6b360c7af49a07dadbb1e82223ac43ad398e2054c29f500ec5e8b5b1cab",
-  "worldDimensions": {
-    "width": 8400,
-    "height": 2400
-  },
-  "worldRect": {
-    "x": 0,
-    "y": 0,
-    "width": 8400,
-    "height": 2400
-  },
-  "sourceHashes": {
-    "scripts/export-world.mjs": "ff26b13b711e55855ca30a6d7b093912bba2a43b0cb7879cea1c1c7140c7fd6c",
-    "scripts/export-overview.mjs": "d49798365626a1b82e8dc4bc2635e3f8a5d6f0a88eaff749112ad5bc701aacf4",
-    "scripts/prepared-world.mjs": "be399c277595e77af69e5178e8b505e2148a85a9f9605b31f11aa7b347db9113",
-    "scripts/prepared-world-tape.mjs": "273e528fd1f058d72998d527bc463e0b160e2217bb4a22d7c8be70bd227beff2",
-    "scripts/direct-terrain-overview.mjs": "ca40dbe7f772348e67e53a3ff3446c5ffda5963ea7c4549cdf8c099a959910c7",
-    "scripts/direct-slope-overview-frame.mjs": "e93f1efa0226eac34f72ef0ba13c7fb91ec2cb20ce1573e8441d505bc50f8592",
-    "scripts/downsample-rgba.mjs": "0f84c15c01ee3f1287b4a72112dcb35084a1434b212c98a59d84e51918d05c2e",
-    "scripts/reduce-overview-canvas.mjs": "5abfd1de422948a3f4a5c9b45daad70578a8ae1d5bb89d79f154aa21eb65af38",
-    "scripts/overview-fast-path.mjs": "58e2bb421f1e6e0ec0183932b84c2a9f1f77b5a0b0df0afeb2f8fde275502ad4",
-    "scripts/raw-overview-frame.mjs": "9de1ed17dc42fb73a2375382fb9fb58668cd3f9adb1136cef4219ee92829ad78",
-    "scripts/slope-overview-frame.mjs": "aff6865b77cb1d91c6458550420bf7a4c3f2ba2f7342071fb89741b99fdbba71",
-    "scripts/compact-waterfall-registry.mjs": "ef7c5a45dd8e13c436e205ae7a04a69262af2452349f9e2b39ef033d53c9093a",
-    "scripts/png-stream.mjs": "c0b167f58e70a09a7b83df70c0ca1b8949d2d76c4e0108f4f756d5fc2c91f004",
-    "scripts/png-rgba-node.mjs": "225474c23837a770505f0d3b75fa7289d8a2281bfd2ffe509a3d699d7d70046e",
-    "scripts/raw-texture-cache.mjs": "20a3c2657a56479aef996ba9b6fb78353f9e855314f89cfc56eb96b277e8b607",
-    "scripts/process-memory.mjs": "78e4e341cca9dde351598b5d72d46ea1b8817fad27a6fdd23e3d74afff54a9a3",
-    "scripts/native-reducer.mjs": "962fbdf78de52d7baae2ce560b7b46eb9a5602a9c9db69db59df8e6679f1e3c5",
-    "scripts/native-reducer.c": "82365a96a41288ce8fd5c17573f835f0551245be02192ca5e6b9579c434587c9",
-    "scripts/native-blitter.mjs": "ddeea84fc3541db1833753c498b76c49c78d8295da47e4ebe30ae017d774c351",
-    "scripts/native-blitter.c": "7fcac83f1adbd91795753d3e5348cf933a1349fbf8aa90df8f06b18c2a7799e2",
-    "scripts/software-overview.mjs": "4d2efc7434e756c75e36ec97ca3884e81bec2f362fca5790a7494a2dd8b92d1f",
-    "scripts/scene-frame-interner.mjs": "57a4c50dcadf8c675e618facb511acb6f5c0ee75d17904e023882bf81c977764",
-    "scripts/world-render-engine.mjs": "4b51b21e6ead233549c4ea5dee179ad7bb7e65f5ee9ad7f5421fff7472c2008b",
-    "core/world.mjs": "6ddbae67bb202becf88d978cd938dce93d6ec3f45f2d8fc37c613bafaeb8f167",
-    "core/utf8.mjs": "9a7fe11da9b8681590062dbd6162c883a2bd7bebb22a6947c9ef112dfea97837",
-    "core/renderer.mjs": "25f4496489c03020ea0b85a8583a05c058ae2b07ff0a58158d9bd718617d14bd",
-    "core/static-nature.mjs": "eddce7e9fb7e25548743e83060556d0160aeb565ea32ad5b520bff63f9c01dc2",
-    "core/cobweb-shapes.mjs": "12ec8468a9144e5fd111478a75bf4f3152ffe2bb3b1e29d16822588dc1af7e62",
-    "core/static-objects.mjs": "52851bf7b1bd52bccc2d251ba7d4912a160aa7683593d6188b921f8ea976fcdd",
-    "core/static-blocks.mjs": "4ef4a16253108ed5a792e0b8d48314e635dd37e33408741d3478e26886e8b029",
-    "core/static-trees.mjs": "bbf7d2e4165766a33dd1ac19c2d77b06ce0201af5914cf2d4ba21d84e28dfa8c",
-    "core/static-misc.mjs": "53c5b77c5295e71228854562cbeed1f04d01f5858e8704022898cdd708508da1",
-    "core/static-furniture-next.mjs": "5c5304c37427f1d839f77749a5e40a4a14e057ecda7ec90a7c146fd9fb67b0d3",
-    "core/static-flames.mjs": "164fb546f6c1b9ba0c7b22c3393b3bfff030d9c80b736466686330302ebcc1e8",
-    "core/static-plants-next.mjs": "1772753424daa98112dea8db589789b0a0cb74f7280f3a2ec462e661366b96b7",
-    "core/static-special-objects.mjs": "f9982786b9278510fc3fa37f0346354c0123f71c637b59ee3812ee56387d112a",
-    "core/world-tree-context.mjs": "1f5e69144b8a8ba4a429854b92b859985858b08d47fd37f0d7711c7cc80f5404",
-    "core/liquid.mjs": "fb5177a188a451e03851d2090d7656b8cf9a872d009095b6626138e49eb124e5",
-    "core/liquid-halfbrick.mjs": "27dd9fb325fbcd7204c097463cf6eb62099faae4b3e7b5544589ac121daef268",
-    "core/liquid-mixed-halfbrick.mjs": "ecb59d409d45b2dcdf8157d9c8556d95cc509e59b87cc6ad9b1ede5402704d06",
-    "core/static-waterfalls.mjs": "24285f62b6062c5b56319fe90a384eaed4cc262b029ec84a0c2c03c04634bd8f",
-    "core/scene-batches.mjs": "8e809754f8e712d150b4950105cac8f97a800ca88b90be0c462bca750a99913a",
-    "core/liquid-composite.mjs": "e0f9e5f294f4d3452410d3bd461e3f7dc6742ffbd2577835930349fe8510dc24",
-    "core/liquid-shimmer.mjs": "abf6a37bf486bc71629ea82d8bb6e06a2a53ec37716a30e0b6c408b283a165d8",
-    "core/liquid-special-context.mjs": "ef272a3f4a4cbf772938b6b743379ad470a76bd2517b56031b941a75bf623258",
-    "core/tile-solidity.mjs": "6e8b9e54a8e1f85e8160a0ee54457b4c8db8bd79258174735cbf71723f2cb9ea",
-    "core/liquid-visible-level.mjs": "3001311bf6773e23ec0ce0aaf2ba768f1149891cf35450c37b11fdf4c9af7927",
-    "core/paint.mjs": "93256f0b4c847b1499809c0169bf6825d9a37413430d69fb8c90c6c9bf2abc9e",
-    "core/scene-frames.mjs": "06709f042be1a65a38656308ec3807c736c40eaec0bb2d60194a0a9bf0ad2dbc",
-    "core/assets.mjs": "53a03c313c18595073691c1fb8c659c23d004370692c55459e7521d841ffb967",
-    "core/png-rgba.mjs": "864d56cfcb4a425a33cd0463f387e935757dac73b43c1c3317ba4f9bcd2bce7c"
-  },
-  "commandCounts": {
-    "liquid": 1179913,
-    "waterfall": 82467,
-    "tile": 11161090,
-    "wall": 5200671
-  },
-  "plannedCommands": 17624141,
-  "renderedCommands": 17624141,
-  "assetFailures": {},
-  "missingCommands": {},
-  "invalidCommands": {},
-  "effectFailures": {},
-  "firstWorld": {
-    "schema": "exploretv-overview-cold-benchmark-v2",
-    "targetPassed": true,
-    "endToEndSeconds": 81.1,
-    "exporterSeconds": 80.91,
-    "targetSeconds": 600,
-    "preferredRuntimeSeconds": 60,
-    "preferredRuntimePassed": false,
-    "targetRssBytes": 500000000,
-    "preferredRssBytes": 300000000,
-    "preferredMemoryPassed": true,
-    "conservativeAggregatePeakRssBytes": 273223680,
-    "processTreeSamplingAvailable": false,
-    "completeTreeSamples": 0,
-    "partialTreeSamples": 81,
-    "sampledAggregatePeakRssBytes": null,
-    "partialTreeObservedPeakBytes": 44957696,
-    "harnessMemorySampling": {
-      "samples": 81,
-      "currentRssSamples": 0,
-      "lifetimePeakFallbackSamples": 81,
-      "currentRssAvailable": false,
-      "arrayBuffersAvailable": false,
-      "fallbackReasons": {
-        "ENOENT": 81
-      },
-      "lastFallbackError": {
-        "code": "ENOENT",
-        "message": "ENOENT: no such file or directory, uv_resident_set_memory"
-      },
-      "fallbackSemantics": "rss is the OS lifetime peak from resourceUsage().maxRSS in bytes; current RSS and ArrayBuffer bytes are unavailable. V8 supplies heap/external statistics. Lifetime wait4 acceptance limits remain unchanged.",
-      "processMemoryUsageOverrideInstalled": false
-    },
-    "harnessOsPeakRssBytes": 45088768,
-    "monitoringTailReserveBytes": 1048576,
-    "lifetime": {
-      "method": "Linux wait4 child lifetime plus monitor getrusage",
-      "exitCode": 0,
-      "elapsedSeconds": 81.096721,
-      "exporterOsPeakRssBytes": 221388800,
-      "monitorOsPeakRssBytes": 5697536
-    },
-    "measurementError": null,
-    "exitCode": 0,
-    "signal": null,
-    "includes": [
-      "process startup",
-      "world read/parse/index",
-      "complete waterfall registry",
-      "PNG decode",
-      "cold frame caches",
-      "all composition/reduction",
-      "PNG compression/hash/write",
-      "exporter shutdown"
-    ],
-    "excludes": [
-      "dependencies, native-renderer and benchmark-helper compilation",
-      "separate correctness verification"
-    ],
-    "cacheState": "Fresh process/application caches; OS file cache uncontrolled; no persistent reduced-texture cache.",
-    "memoryMeasurement": "Linux wait4 measures the entire exporter lifetime. getrusage measures the small native monitor and Node harness. Acceptance uses their conservative peak sum plus 1 MiB tail reserve, and samples their contemporaneous process-tree RSS every second when available. Native threads are included. If /proc sampling is unavailable or namespace-inconsistent, the exact lifetime conservative peak sum remains the acceptance measurement. A failed current-RSS call uses the harness OS lifetime peak conservatively and is excluded from contemporaneous sampling; V8 heap/external values remain measured and unavailable ArrayBuffer bytes are null.",
-    "environment": {
-      "node": "v24.19.0",
-      "platform": "linux",
-      "arch": "x64",
-      "release": "6.18.44",
-      "cpuModel": "unknown",
-      "logicalCpus": 0,
-      "availableParallelism": 9,
-      "rendererWorkers": 1,
-      "nodeArguments": [
-        "--max-old-space-size=48",
-        "--max-semi-space-size=4",
-        "--expose-gc"
-      ],
-      "allocator": {
-        "requestedArenaMax": "2",
-        "requestedMmapThreshold": "131072",
-        "glibcArenaMaxTunable": null,
-        "glibcMmapThresholdTunable": null,
-        "scope": "startup environment; only applicable to the glibc allocator",
-        "effectiveArenaCount": null
-      },
-      "processCpuSeconds": 170.389169
-    }
-  },
-  "firstPreparation": {
-    "schema": "exploretv-prepared-world-phase-benchmark-v1",
-    "phase": "first-world-preparation",
-    "completed": true,
-    "targetPassed": true,
-    "endToEndSeconds": 113.470938916,
-    "exporterSeconds": 113.36433731,
-    "targetSeconds": 600,
-    "hardLimitSeconds": 600,
-    "targetRssBytes": 500000000,
-    "preferredRssBytes": 300000000,
-    "preferredMemoryPassed": true,
-    "conservativeAggregatePeakRssBytes": 262811648,
-    "harnessOsPeakRssBytes": 41287680,
-    "monitoringTailReserveBytes": 1048576,
-    "lifetime": {
-      "method": "Linux wait4 child lifetime plus monitor getrusage",
-      "exitCode": 0,
-      "elapsedSeconds": 113.468504,
-      "exporterOsPeakRssBytes": 214720512,
-      "monitorOsPeakRssBytes": 5754880
-    },
-    "measurementError": null,
-    "exitCode": 0,
-    "signal": null,
-    "stopReason": null,
-    "worldSpecificPreparationIncluded": true,
-    "reusedWorldSpecificPreparation": false,
-    "includesFirstImage": true,
-    "worldSha256": "d551a6b360c7af49a07dadbb1e82223ac43ad398e2054c29f500ec5e8b5b1cab",
-    "rgbaSha256": "7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e",
-    "fullWorld": true,
-    "worldRect": {
-      "x": 0,
-      "y": 0,
-      "width": 8400,
-      "height": 2400
-    },
-    "png": {
-      "path": "/workspace/scratch/88770d679550/exploreTV-fast/artifacts/final-prepared/prepared-world/preview.png",
-      "width": 8400,
-      "height": 2400,
-      "rows": 2400,
-      "bytes": 16984482,
-      "sha256": "6e0dc1fc0b85c3acd7b537e66d3d191cbebd5f0c000b5a230ec09d1f13fd7e5c"
-    },
-    "preparedDirectory": "/workspace/scratch/88770d679550/exploreTV-fast/artifacts/final-prepared/prepared-world",
-    "phaseReport": "/workspace/scratch/88770d679550/exploreTV-fast/artifacts/final-prepared/prepared-world/preparation.json",
-    "nativeCompilationPerformed": false,
-    "includes": [
-      "fresh process startup and native-module load",
-      "world read/parse/index, waterfall registry and scene planning",
-      "texture loading, frame preparation, composition and reduction",
-      "world-specific instruction/frame tape construction and hashing",
-      "first PNG compression/hash/write, manifest finalization and shutdown"
-    ],
-    "excludes": [
-      "dependency installation and world-independent native-module builds",
-      "benchmark-helper compilation and harness setup"
-    ],
-    "cacheState": "No world-specific prepared directory exists before this phase. Fresh process/application caches; native modules are already built; OS file cache is uncontrolled. This phase creates the persistent world-specific instruction/frame tape.",
-    "memoryMeasurement": "Linux wait4 child lifetime RSS + native monitor getrusage peak + harness process lifetime peak + 1 MiB reporting reserve. These independently occurring peaks form a conservative upper bound, not a sampled simultaneous peak. Native threads are included; no /proc sampling is required. The sequential phase peaks are reported separately, never added together.",
-    "harnessMemorySampling": {
-      "samples": 1,
-      "currentRssSamples": 0,
-      "lifetimePeakFallbackSamples": 1,
-      "currentRssAvailable": false,
-      "arrayBuffersAvailable": false,
-      "fallbackReasons": {
-        "ENOENT": 1
-      },
-      "lastFallbackError": {
-        "code": "ENOENT",
-        "message": "ENOENT: no such file or directory, uv_resident_set_memory"
-      },
-      "fallbackSemantics": "rss is the OS lifetime peak from resourceUsage().maxRSS in bytes; current RSS and ArrayBuffer bytes are unavailable. V8 supplies heap/external statistics. Lifetime wait4 acceptance limits remain unchanged.",
-      "processMemoryUsageOverrideInstalled": false
-    },
-    "harnessRssSource": "resourceUsage.maxRSS-lifetime-peak",
-    "environment": {
-      "node": "v24.19.0",
-      "platform": "linux",
-      "arch": "x64",
-      "release": "6.18.44",
-      "cpuModel": "unknown",
-      "logicalCpus": 0,
-      "availableParallelism": 9,
-      "rendererWorkers": 1,
-      "nodeArguments": [
-        "--max-old-space-size=48",
-        "--max-semi-space-size=4",
-        "--expose-gc"
-      ],
-      "allocator": {
-        "requestedArenaMax": "2",
-        "requestedMmapThreshold": "131072",
-        "glibcArenaMaxTunable": null,
-        "glibcMmapThresholdTunable": null,
-        "scope": "startup environment; only applicable to the glibc allocator",
-        "effectiveArenaCount": null
-      },
-      "processCpuSeconds": 225.850717
-    }
-  },
-  "preparedReplay": {
-    "schema": "exploretv-prepared-world-phase-benchmark-v1",
-    "phase": "prepared-world-replay",
-    "completed": true,
-    "targetPassed": true,
-    "endToEndSeconds": 14.085182986,
-    "exporterSeconds": 13.971100091,
-    "targetSeconds": 60,
-    "hardLimitSeconds": 600,
-    "targetRssBytes": 500000000,
-    "preferredRssBytes": 300000000,
-    "preferredMemoryPassed": true,
-    "conservativeAggregatePeakRssBytes": 145428480,
-    "harnessOsPeakRssBytes": 41549824,
-    "monitoringTailReserveBytes": 1048576,
-    "lifetime": {
-      "method": "Linux wait4 child lifetime plus monitor getrusage",
-      "exitCode": 0,
-      "elapsedSeconds": 14.082238,
-      "exporterOsPeakRssBytes": 96854016,
-      "monitorOsPeakRssBytes": 5976064
-    },
-    "measurementError": null,
-    "exitCode": 0,
-    "signal": null,
-    "stopReason": null,
-    "worldSpecificPreparationIncluded": false,
-    "reusedWorldSpecificPreparation": true,
-    "includesFirstImage": false,
-    "worldSha256": "d551a6b360c7af49a07dadbb1e82223ac43ad398e2054c29f500ec5e8b5b1cab",
-    "rgbaSha256": "7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e",
-    "fullWorld": true,
-    "worldRect": {
-      "x": 0,
-      "y": 0,
-      "width": 8400,
-      "height": 2400
-    },
-    "png": {
-      "path": "/workspace/scratch/88770d679550/exploreTV-fast/artifacts/final-prepared/replay.png",
-      "width": 8400,
-      "height": 2400,
-      "rows": 2400,
-      "bytes": 16984470,
-      "sha256": "67022ee2a93ab79881402fd3c5612c05ead556f8a821ef45129fa6bc9798be85"
-    },
-    "preparedDirectory": "/workspace/scratch/88770d679550/exploreTV-fast/artifacts/final-prepared/prepared-world",
-    "phaseReport": "/workspace/scratch/88770d679550/exploreTV-fast/artifacts/final-prepared/replay.png.json",
-    "nativeCompilationPerformed": false,
-    "includes": [
-      "fresh process startup and native-module load",
-      "current world, textures, renderer, lockfile and tape hash verification",
-      "world-specific ordered command replay, composition and reduction",
-      "PNG compression/hash/write, exact compiled-pixel verification and shutdown"
-    ],
-    "excludes": [
-      "dependency installation and world-independent native-module builds",
-      "benchmark-helper compilation and harness setup",
-      "the separately measured first world-specific preparation"
-    ],
-    "cacheState": "Fresh process/application caches reuse the single world-specific instruction/frame tape produced by the preceding phase. All bindings are verified in the timed replay. OS file cache is uncontrolled and may be warm after preparation; preview.png is not reused as the output.",
-    "memoryMeasurement": "Linux wait4 child lifetime RSS + native monitor getrusage peak + harness process lifetime peak + 1 MiB reporting reserve. These independently occurring peaks form a conservative upper bound, not a sampled simultaneous peak. Native threads are included; no /proc sampling is required. The sequential phase peaks are reported separately, never added together.",
-    "harnessMemorySampling": {
-      "samples": 2,
-      "currentRssSamples": 0,
-      "lifetimePeakFallbackSamples": 2,
-      "currentRssAvailable": false,
-      "arrayBuffersAvailable": false,
-      "fallbackReasons": {
-        "ENOENT": 2
-      },
-      "lastFallbackError": {
-        "code": "ENOENT",
-        "message": "ENOENT: no such file or directory, uv_resident_set_memory"
-      },
-      "fallbackSemantics": "rss is the OS lifetime peak from resourceUsage().maxRSS in bytes; current RSS and ArrayBuffer bytes are unavailable. V8 supplies heap/external statistics. Lifetime wait4 acceptance limits remain unchanged.",
-      "processMemoryUsageOverrideInstalled": false
-    },
-    "harnessRssSource": "resourceUsage.maxRSS-lifetime-peak",
-    "environment": {
-      "node": "v24.19.0",
-      "platform": "linux",
-      "arch": "x64",
-      "release": "6.18.44",
-      "availableParallelism": 9,
-      "rendererWorkers": 1,
-      "processCpuSeconds": 16.510357
-    }
-  },
-  "pinnedNativeBaseline": {
-    "commit": "b9b0fdd6adc25484a021f9850bd4c81e0d725071",
-    "measurement": {
+  "finalRuntimeCommit": "f7ac4416a9cb2229d84421d07d8d1f542e9074f5",
+  "finalRuntimeGitTree": "42e6c4ceb7400490d9287401ed44b57d8d21dbca",
+  "finalRuntimeProvenance": "Frozen staged tree measured before local HEAD alignment, exactly matching this GitHub runtime tree; all 52 runtime source hashes verified after rendering.",
+  "finalLocalCold": {
+    "benchmark": {
       "schema": "exploretv-overview-cold-benchmark-v2",
       "targetPassed": true,
-      "endToEndSeconds": 97.588,
-      "exporterSeconds": 97.44,
+      "endToEndSeconds": 83.116,
+      "exporterSeconds": 82.97,
       "targetSeconds": 600,
       "preferredRuntimeSeconds": 60,
       "preferredRuntimePassed": false,
       "targetRssBytes": 500000000,
       "preferredRssBytes": 300000000,
       "preferredMemoryPassed": true,
-      "conservativeAggregatePeakRssBytes": 251949056,
+      "conservativeAggregatePeakRssBytes": 259354624,
       "processTreeSamplingAvailable": false,
       "completeTreeSamples": 0,
-      "partialTreeSamples": 97,
+      "partialTreeSamples": 83,
       "sampledAggregatePeakRssBytes": null,
-      "partialTreeObservedPeakBytes": 45088768,
+      "partialTreeObservedPeakBytes": 44826624,
       "harnessMemorySampling": {
-        "samples": 97,
+        "samples": 83,
         "currentRssSamples": 0,
-        "lifetimePeakFallbackSamples": 97,
+        "lifetimePeakFallbackSamples": 83,
         "currentRssAvailable": false,
         "arrayBuffersAvailable": false,
         "fallbackReasons": {
-          "ENOENT": 97
+          "ENOENT": 83
         },
         "lastFallbackError": {
           "code": "ENOENT",
@@ -394,14 +38,14 @@
         "fallbackSemantics": "rss is the OS lifetime peak from resourceUsage().maxRSS in bytes; current RSS and ArrayBuffer bytes are unavailable. V8 supplies heap/external statistics. Lifetime wait4 acceptance limits remain unchanged.",
         "processMemoryUsageOverrideInstalled": false
       },
-      "harnessOsPeakRssBytes": 45219840,
+      "harnessOsPeakRssBytes": 44826624,
       "monitoringTailReserveBytes": 1048576,
       "lifetime": {
         "method": "Linux wait4 child lifetime plus monitor getrusage",
         "exitCode": 0,
-        "elapsedSeconds": 97.585056,
-        "exporterOsPeakRssBytes": 200077312,
-        "monitorOsPeakRssBytes": 5603328
+        "elapsedSeconds": 83.11303,
+        "exporterOsPeakRssBytes": 207814656,
+        "monitorOsPeakRssBytes": 5664768
       },
       "measurementError": null,
       "exitCode": 0,
@@ -444,623 +88,1546 @@
           "scope": "startup environment; only applicable to the glibc allocator",
           "effectiveArenaCount": null
         },
-        "processCpuSeconds": 190.956061
+        "processCpuSeconds": 174.878229
       }
-    }
-  },
-  "sameWorkspaceComparison": {
-    "coldRuntimeReductionPercent": 16.895519940976357,
-    "conservativePeakIncreaseBytes": 21274624,
-    "note": "Same workspace and Node version, separate sequential fresh-process runs. OS file cache uncontrolled. Do not combine with remote measurements."
-  },
-  "coldPng": {
-    "path": "artifacts/final-cold/world-1px.png",
-    "width": 8400,
-    "height": 2400,
-    "rows": 2400,
-    "bytes": 16984482,
-    "sha256": "6e0dc1fc0b85c3acd7b537e66d3d191cbebd5f0c000b5a230ec09d1f13fd7e5c"
-  },
-  "directTerrain": {
-    "available": true,
-    "backend": "direct-terrain-integer-compositor",
-    "reason": null,
-    "sourceSha256": "7fcac83f1adbd91795753d3e5348cf933a1349fbf8aa90df8f06b18c2a7799e2",
-    "binarySha256": "c12b4fa8e46b68595b87616592e77d83fd496cc0686e337606df3cdd7c4a1cfa",
-    "kernel": "sse2",
-    "frameByteLimit": 4194304,
-    "frameBytes": 4191806,
-    "peakFrameBytes": 4194302,
-    "liveFrameBytes": 4191806,
-    "peakLiveFrameBytes": 4194302,
-    "activeFrameBytes": 0,
-    "peakActiveFrameBytes": 789498,
-    "frameEntries": 2672,
-    "peakFrameEntries": 2835,
-    "hits": 29309748,
-    "misses": 62906,
-    "evictions": 60234,
-    "clockScans": 185728,
-    "clockPromotions": 125494,
-    "sourceInvalidations": 0,
-    "rawPreparedFrames": 56094,
-    "preparationFailures": 0,
-    "budgetFallbacks": 0,
-    "extendedCandidates": 2579466,
-    "slopeCandidates": 269584,
-    "slopePreparedFrames": 6812,
-    "secondPassHits": 10875178,
-    "secondPassMisses": 0,
-    "secondPassFailures": 0,
-    "candidateCoreCommands": 17825360,
-    "candidateBlitPixels": 8444660120,
-    "skippedBlitPixels": 2565780048,
-    "nativeBlitPixels": 5878880072,
-    "skippedWallCommands": 1129380,
-    "skippedTileCommands": 5820802,
-    "skippedUnsafeCommands": 142046,
-    "keptCrossOpaqueWallCommands": 1726236,
-    "opaqueCells": 5680013,
-    "nativeRequiredCells": 14371498,
-    "allNativeSkippedRenders": 540,
-    "nativeCommands": 10875178,
-    "nativeBlits": 10879955,
-    "nativeBatches": 2888,
-    "maxBatchSources": 458,
-    "maxBatchBlits": 8192,
-    "handledCommands": 18199797,
-    "totalCommands": 18612825,
-    "totalCells": 20160000,
-    "unsafeCells": 108489,
-    "renders": 3300,
-    "fallbackRenders": 0,
-    "bufferBytes": 6291456,
-    "peakBufferBytes": 6291456,
-    "phaseMilliseconds": {
-      "scanAndBatch": 26219.377874000013,
-      "scan": 12381.267710000071,
-      "batch": 13838.11016399994,
-      "prepare": 5189.147938000214,
-      "clear": 811.909286000443,
-      "compose": 7322.41961500019,
-      "partition": 347.9129839997713,
-      "reduce": 2052.0371740004566
-    }
-  },
-  "stageMilliseconds": {
-    "plan": 15702.283870999956,
-    "assets": 2271.8425969999753,
-    "batches": 112.32579299989175,
-    "prepareFrames": 1515.013413000128,
-    "validate": 582.2620920001709,
-    "draw": 2404.3586809999906,
-    "opaqueOverview": 666.9078010003241,
-    "nativePartition": 977.042562999799,
-    "keyGeneration": 1579.661787999973,
-    "directTerrain": 28833.119967000064
-  },
-  "readbackAndReductionSeconds": 3.97,
-  "garbageCollectionSeconds": 8.06,
-  "tape": {
-    "frames": 9781,
-    "chunks": 3300,
-    "commands": 11333425,
-    "batches": 2898,
-    "overrides": 5590895,
-    "frameFileBytes": 1662019,
-    "commandFileBytes": 57301163,
-    "manifestBytes": 2334659,
-    "totalBytes": 61297841,
-    "indexBytes": 2223040,
-    "decodedFrameBytes": 16516624,
-    "deduplicatedFrames": 8567,
-    "peakChunkEncodedBytes": 43821,
-    "peakChunkRawBytes": 374216,
-    "finalized": true,
+    },
+    "png": {
+      "path": "artifacts/shared-cold/world-1px.png",
+      "width": 8400,
+      "height": 2400,
+      "rows": 2400,
+      "bytes": 16984482,
+      "sha256": "6e0dc1fc0b85c3acd7b537e66d3d191cbebd5f0c000b5a230ec09d1f13fd7e5c"
+    },
+    "sourceHashes": {
+      "scripts/export-world.mjs": "a3bc86a12ba1b7b116cb4070098e3ed4551b8093e889cb3abcb3b1ea75da7be2",
+      "scripts/export-overview.mjs": "d49798365626a1b82e8dc4bc2635e3f8a5d6f0a88eaff749112ad5bc701aacf4",
+      "scripts/prepared-world.mjs": "be399c277595e77af69e5178e8b505e2148a85a9f9605b31f11aa7b347db9113",
+      "scripts/prepared-world-tape.mjs": "273e528fd1f058d72998d527bc463e0b160e2217bb4a22d7c8be70bd227beff2",
+      "scripts/direct-terrain-overview.mjs": "13dc8c04c625385a2952d8134107a791c7a56cfd9937243d15182fc9e865a6ab",
+      "scripts/direct-slope-overview-frame.mjs": "e93f1efa0226eac34f72ef0ba13c7fb91ec2cb20ce1573e8441d505bc50f8592",
+      "scripts/overview-rgba-arena.mjs": "acf3f83154faf221fc5ba7478226ea4bbe272adfdc35fe73a9da3ff866aa2bd2",
+      "scripts/downsample-rgba.mjs": "0f84c15c01ee3f1287b4a72112dcb35084a1434b212c98a59d84e51918d05c2e",
+      "scripts/reduce-overview-canvas.mjs": "5abfd1de422948a3f4a5c9b45daad70578a8ae1d5bb89d79f154aa21eb65af38",
+      "scripts/overview-fast-path.mjs": "58e2bb421f1e6e0ec0183932b84c2a9f1f77b5a0b0df0afeb2f8fde275502ad4",
+      "scripts/raw-overview-frame.mjs": "9de1ed17dc42fb73a2375382fb9fb58668cd3f9adb1136cef4219ee92829ad78",
+      "scripts/slope-overview-frame.mjs": "aff6865b77cb1d91c6458550420bf7a4c3f2ba2f7342071fb89741b99fdbba71",
+      "scripts/compact-waterfall-registry.mjs": "ef7c5a45dd8e13c436e205ae7a04a69262af2452349f9e2b39ef033d53c9093a",
+      "scripts/png-stream.mjs": "c0b167f58e70a09a7b83df70c0ca1b8949d2d76c4e0108f4f756d5fc2c91f004",
+      "scripts/png-rgba-node.mjs": "225474c23837a770505f0d3b75fa7289d8a2281bfd2ffe509a3d699d7d70046e",
+      "scripts/raw-texture-cache.mjs": "20a3c2657a56479aef996ba9b6fb78353f9e855314f89cfc56eb96b277e8b607",
+      "scripts/process-memory.mjs": "78e4e341cca9dde351598b5d72d46ea1b8817fad27a6fdd23e3d74afff54a9a3",
+      "scripts/native-reducer.mjs": "962fbdf78de52d7baae2ce560b7b46eb9a5602a9c9db69db59df8e6679f1e3c5",
+      "scripts/native-reducer.c": "82365a96a41288ce8fd5c17573f835f0551245be02192ca5e6b9579c434587c9",
+      "scripts/native-blitter.mjs": "ddeea84fc3541db1833753c498b76c49c78d8295da47e4ebe30ae017d774c351",
+      "scripts/native-blitter.c": "7fcac83f1adbd91795753d3e5348cf933a1349fbf8aa90df8f06b18c2a7799e2",
+      "scripts/software-overview.mjs": "3957c1fcdaf120122a922a92f922b16784164baa9716522c69108e192d9f9174",
+      "scripts/scene-frame-interner.mjs": "57a4c50dcadf8c675e618facb511acb6f5c0ee75d17904e023882bf81c977764",
+      "scripts/world-render-engine.mjs": "fea0172747608d0a4cfac420d3b6f4b533972d30c5ce87e52c8fef0140107af1",
+      "core/world.mjs": "6ddbae67bb202becf88d978cd938dce93d6ec3f45f2d8fc37c613bafaeb8f167",
+      "core/utf8.mjs": "9a7fe11da9b8681590062dbd6162c883a2bd7bebb22a6947c9ef112dfea97837",
+      "core/renderer.mjs": "25f4496489c03020ea0b85a8583a05c058ae2b07ff0a58158d9bd718617d14bd",
+      "core/static-nature.mjs": "eddce7e9fb7e25548743e83060556d0160aeb565ea32ad5b520bff63f9c01dc2",
+      "core/cobweb-shapes.mjs": "12ec8468a9144e5fd111478a75bf4f3152ffe2bb3b1e29d16822588dc1af7e62",
+      "core/static-objects.mjs": "52851bf7b1bd52bccc2d251ba7d4912a160aa7683593d6188b921f8ea976fcdd",
+      "core/static-blocks.mjs": "4ef4a16253108ed5a792e0b8d48314e635dd37e33408741d3478e26886e8b029",
+      "core/static-trees.mjs": "bbf7d2e4165766a33dd1ac19c2d77b06ce0201af5914cf2d4ba21d84e28dfa8c",
+      "core/static-misc.mjs": "53c5b77c5295e71228854562cbeed1f04d01f5858e8704022898cdd708508da1",
+      "core/static-furniture-next.mjs": "5c5304c37427f1d839f77749a5e40a4a14e057ecda7ec90a7c146fd9fb67b0d3",
+      "core/static-flames.mjs": "164fb546f6c1b9ba0c7b22c3393b3bfff030d9c80b736466686330302ebcc1e8",
+      "core/static-plants-next.mjs": "1772753424daa98112dea8db589789b0a0cb74f7280f3a2ec462e661366b96b7",
+      "core/static-special-objects.mjs": "f9982786b9278510fc3fa37f0346354c0123f71c637b59ee3812ee56387d112a",
+      "core/world-tree-context.mjs": "1f5e69144b8a8ba4a429854b92b859985858b08d47fd37f0d7711c7cc80f5404",
+      "core/liquid.mjs": "fb5177a188a451e03851d2090d7656b8cf9a872d009095b6626138e49eb124e5",
+      "core/liquid-halfbrick.mjs": "27dd9fb325fbcd7204c097463cf6eb62099faae4b3e7b5544589ac121daef268",
+      "core/liquid-mixed-halfbrick.mjs": "ecb59d409d45b2dcdf8157d9c8556d95cc509e59b87cc6ad9b1ede5402704d06",
+      "core/static-waterfalls.mjs": "24285f62b6062c5b56319fe90a384eaed4cc262b029ec84a0c2c03c04634bd8f",
+      "core/scene-batches.mjs": "8e809754f8e712d150b4950105cac8f97a800ca88b90be0c462bca750a99913a",
+      "core/liquid-composite.mjs": "e0f9e5f294f4d3452410d3bd461e3f7dc6742ffbd2577835930349fe8510dc24",
+      "core/liquid-shimmer.mjs": "abf6a37bf486bc71629ea82d8bb6e06a2a53ec37716a30e0b6c408b283a165d8",
+      "core/liquid-special-context.mjs": "ef272a3f4a4cbf772938b6b743379ad470a76bd2517b56031b941a75bf623258",
+      "core/tile-solidity.mjs": "6e8b9e54a8e1f85e8160a0ee54457b4c8db8bd79258174735cbf71723f2cb9ea",
+      "core/liquid-visible-level.mjs": "3001311bf6773e23ec0ce0aaf2ba768f1149891cf35450c37b11fdf4c9af7927",
+      "core/paint.mjs": "93256f0b4c847b1499809c0169bf6825d9a37413430d69fb8c90c6c9bf2abc9e",
+      "core/scene-frames.mjs": "06709f042be1a65a38656308ec3807c736c40eaec0bb2d60194a0a9bf0ad2dbc",
+      "core/assets.mjs": "53a03c313c18595073691c1fb8c659c23d004370692c55459e7521d841ffb967",
+      "core/png-rgba.mjs": "864d56cfcb4a425a33cd0463f387e935757dac73b43c1c3317ba4f9bcd2bce7c"
+    },
     "stageMilliseconds": {
-      "frameHashAndWrite": 1109.641990000002,
-      "commandWrite": 2499.618693000075,
-      "overrides": 5920.4945899997265
+      "plan": 16346.020256999784,
+      "assets": 2377.6396459999487,
+      "batches": 102.82425599953513,
+      "prepareFrames": 1618.5772219997398,
+      "validate": 580.4643789999118,
+      "draw": 2314.623804000311,
+      "opaqueOverview": 685.7367600000325,
+      "nativePartition": 719.40431300005,
+      "keyGeneration": 1716.3181919997278,
+      "directTerrain": 29639.19128400026
+    },
+    "directTerrain": {
+      "available": true,
+      "backend": "direct-terrain-integer-compositor",
+      "reason": null,
+      "sourceSha256": "7fcac83f1adbd91795753d3e5348cf933a1349fbf8aa90df8f06b18c2a7799e2",
+      "binarySha256": "c12b4fa8e46b68595b87616592e77d83fd496cc0686e337606df3cdd7c4a1cfa",
+      "kernel": "sse2",
+      "frameByteLimit": 4194304,
+      "frameBytes": 4191806,
+      "peakFrameBytes": 4194302,
+      "liveFrameBytes": 4191806,
+      "peakLiveFrameBytes": 4194302,
+      "activeFrameBytes": 0,
+      "peakActiveFrameBytes": 789498,
+      "frameEntries": 2672,
+      "peakFrameEntries": 2835,
+      "hits": 29309748,
+      "misses": 62906,
+      "evictions": 60234,
+      "clockScans": 185728,
+      "clockPromotions": 125494,
+      "sourceInvalidations": 0,
+      "rawPreparedFrames": 56094,
+      "preparationFailures": 0,
+      "budgetFallbacks": 0,
+      "extendedCandidates": 2579466,
+      "slopeCandidates": 269584,
+      "slopePreparedFrames": 6812,
+      "secondPassHits": 10875178,
+      "secondPassMisses": 0,
+      "secondPassFailures": 0,
+      "candidateCoreCommands": 17825360,
+      "candidateBlitPixels": 8444660120,
+      "skippedBlitPixels": 2565780048,
+      "nativeBlitPixels": 5878880072,
+      "skippedWallCommands": 1129380,
+      "skippedTileCommands": 5820802,
+      "skippedUnsafeCommands": 142046,
+      "keptCrossOpaqueWallCommands": 1726236,
+      "opaqueCells": 5680013,
+      "nativeRequiredCells": 14371498,
+      "allNativeSkippedRenders": 540,
+      "nativeCommands": 10875178,
+      "nativeBlits": 10879955,
+      "nativeBatches": 2888,
+      "maxBatchSources": 458,
+      "maxBatchBlits": 8192,
+      "handledCommands": 18199797,
+      "totalCommands": 18612825,
+      "totalCells": 20160000,
+      "unsafeCells": 108489,
+      "renders": 3300,
+      "fallbackRenders": 0,
+      "bufferBytes": 0,
+      "peakBufferBytes": 0,
+      "sharedBufferBytes": 6291456,
+      "peakSharedBufferBytes": 6291456,
+      "phaseMilliseconds": {
+        "scanAndBatch": 26920.269682999566,
+        "scan": 12665.552864999669,
+        "batch": 14254.716817999895,
+        "prepare": 5158.860243000005,
+        "clear": 669.3445539999393,
+        "compose": 7609.498377000299,
+        "partition": 361.1619619999301,
+        "reduce": 2123.628664999871
+      }
+    },
+    "nativeOverview": {
+      "available": true,
+      "backend": "node-api-integer-compositor",
+      "reason": null,
+      "sourceSha256": "7fcac83f1adbd91795753d3e5348cf933a1349fbf8aa90df8f06b18c2a7799e2",
+      "binarySha256": "c12b4fa8e46b68595b87616592e77d83fd496cc0686e337606df3cdd7c4a1cfa",
+      "build": {
+        "napiVersion": 8,
+        "compiler": "cc",
+        "flags": [
+          "-O3",
+          "-std=c11",
+          "-DNAPI_VERSION=8",
+          "-DNODE_GYP_MODULE_NAME=exploretv_native_blitter",
+          "-fPIC",
+          "-shared",
+          "-Wall",
+          "-Wextra"
+        ],
+        "forceScalar": false
+      },
+      "kernel": "sse2",
+      "frameBytes": 2095040,
+      "peakFrameBytes": 2097152,
+      "frameEntries": 946,
+      "activeFrameBytes": 0,
+      "peakActiveFrameBytes": 612544,
+      "liveFrameBytes": 2095040,
+      "peakLiveFrameBytes": 2097152,
+      "liveFrameByteLimit": 2097152,
+      "nativeBatches": 2341,
+      "nativeComposeMilliseconds": 262.32391700007247,
+      "clearMilliseconds": 459.7194340002625,
+      "maxBatchSources": 644,
+      "maxBatchBlits": 3125,
+      "rawPreparedFrames": 1377,
+      "rawPreparationFallbacks": 921,
+      "hits": 51817,
+      "misses": 4231,
+      "evictions": 3285,
+      "bufferBytes": 0,
+      "peakBufferBytes": 0,
+      "sharedBufferBytes": 6291456,
+      "peakSharedBufferBytes": 6291456,
+      "nativeCommands": 376431,
+      "canvasCommands": 170064,
+      "unsafeCells": 34469,
+      "totalCells": 14373888
+    },
+    "sharedDetailedRgba": {
+      "maxBytes": 6291456,
+      "bufferBytes": 6291456,
+      "peakBufferBytes": 6291456,
+      "activeBytes": 3932160,
+      "peakActiveBytes": 6291456,
+      "allocations": 1,
+      "acquisitions": 5113,
+      "releases": 5112,
+      "rejectedAcquisitions": 0
+    },
+    "readbackAndReductionSeconds": 4.03,
+    "garbageCollectionSeconds": 8.1,
+    "plannedCommands": 17624141,
+    "renderedCommands": 17624141,
+    "commandCounts": {
+      "liquid": 1179913,
+      "waterfall": 82467,
+      "tile": 11161090,
+      "wall": 5200671
+    },
+    "assetFailures": {},
+    "missingCommands": {},
+    "invalidCommands": {},
+    "effectFailures": {},
+    "fidelity": {
+      "schema": "exploretv-direct-overview-verification-v1",
+      "status": "passed",
+      "png": {
+        "status": "passed",
+        "path": "artifacts/shared-cold/world-1px.png",
+        "width": 8400,
+        "height": 2400,
+        "pixels": 20160000,
+        "rows": 2400,
+        "filteredScanlineBytes": 80642400,
+        "encodedBytes": 16984482,
+        "sha256": "6e0dc1fc0b85c3acd7b537e66d3d191cbebd5f0c000b5a230ec09d1f13fd7e5c",
+        "filteredScanlineSha256": "dbb43225a589d0ea1163f1f1b8d05882f47f7bd74066acf7dfbc3d30c62b1e43",
+        "filters": {
+          "1": 2400
+        },
+        "chunkCount": 1064,
+        "idatCount": 1062,
+        "runtimeSeconds": 0.38,
+        "fullImageAllocated": false,
+        "checks": [
+          "PNG signature, IHDR and IEND",
+          "Every generated PNG chunk CRC",
+          "Complete zlib stream",
+          "Every scanline filter and exact declared byte/row count",
+          "Encoded PNG SHA-256"
+        ]
+      },
+      "worldSha256": "d551a6b360c7af49a07dadbb1e82223ac43ad398e2054c29f500ec5e8b5b1cab",
+      "worldRect": {
+        "x": 0,
+        "y": 0,
+        "width": 8400,
+        "height": 2400
+      },
+      "verifiedSourceFiles": 52,
+      "verifiedTextures": 384,
+      "pixelsPerTile": 1,
+      "wholeImagePixelSha256": "7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e",
+      "pinnedWholeImageComparedPixels": 20160000,
+      "processedCells": 20160000,
+      "patches": [
+        {
+          "name": "top-left",
+          "worldRect": {
+            "x": 0,
+            "y": 0,
+            "width": 65,
+            "height": 49
+          },
+          "comparedPixels": 3185,
+          "differentBytes": 0
+        },
+        {
+          "name": "top-right",
+          "worldRect": {
+            "x": 8335,
+            "y": 0,
+            "width": 65,
+            "height": 49
+          },
+          "comparedPixels": 3185,
+          "differentBytes": 0
+        },
+        {
+          "name": "bottom-left",
+          "worldRect": {
+            "x": 0,
+            "y": 2351,
+            "width": 65,
+            "height": 49
+          },
+          "comparedPixels": 3185,
+          "differentBytes": 0
+        },
+        {
+          "name": "bottom-right",
+          "worldRect": {
+            "x": 8335,
+            "y": 2351,
+            "width": 65,
+            "height": 49
+          },
+          "comparedPixels": 3185,
+          "differentBytes": 0
+        },
+        {
+          "name": "center",
+          "worldRect": {
+            "x": 4167,
+            "y": 1175,
+            "width": 65,
+            "height": 49
+          },
+          "comparedPixels": 3185,
+          "differentBytes": 0
+        },
+        {
+          "name": "render-seams",
+          "worldRect": {
+            "x": 111,
+            "y": 35,
+            "width": 65,
+            "height": 49
+          },
+          "comparedPixels": 3185,
+          "differentBytes": 0
+        },
+        {
+          "name": "surface-and-forest",
+          "worldRect": {
+            "x": 4095,
+            "y": 480,
+            "width": 65,
+            "height": 65
+          },
+          "comparedPixels": 4225,
+          "differentBytes": 0
+        },
+        {
+          "name": "water",
+          "worldRect": {
+            "x": 65,
+            "y": 918,
+            "width": 65,
+            "height": 49
+          },
+          "comparedPixels": 3185,
+          "differentBytes": 0
+        },
+        {
+          "name": "lava",
+          "worldRect": {
+            "x": 100,
+            "y": 1942,
+            "width": 65,
+            "height": 49
+          },
+          "comparedPixels": 3185,
+          "differentBytes": 0
+        },
+        {
+          "name": "honey",
+          "worldRect": {
+            "x": 312,
+            "y": 1986,
+            "width": 65,
+            "height": 49
+          },
+          "comparedPixels": 3185,
+          "differentBytes": 0
+        },
+        {
+          "name": "rain",
+          "worldRect": {
+            "x": 906,
+            "y": 281,
+            "width": 65,
+            "height": 49
+          },
+          "comparedPixels": 3185,
+          "differentBytes": 0
+        },
+        {
+          "name": "shimmer",
+          "worldRect": {
+            "x": 789,
+            "y": 840,
+            "width": 85,
+            "height": 40
+          },
+          "comparedPixels": 3400,
+          "differentBytes": 0
+        },
+        {
+          "name": "mixed-halfbrick",
+          "worldRect": {
+            "x": 4630,
+            "y": 2000,
+            "width": 65,
+            "height": 49
+          },
+          "comparedPixels": 3185,
+          "differentBytes": 0
+        }
+      ],
+      "alphaRange": [
+        255,
+        255
+      ],
+      "checks": [
+        "Every PNG CRC, encoded hash, filtered scanline and dimension",
+        "All 20,160,000 pinned example pixels match the original full-detail reduction hash; all 384 textures and command counts match",
+        "Full export rectangle and exact world-cell/row accounting",
+        "All output alpha values",
+        "Bounded full-detail patches independently area-reduced, including seams and world corners",
+        "Matched real input, current source hashes and every recorded texture hash"
+      ],
+      "wholeHighResolutionImageAllocated": false,
+      "runtimeSeconds": 5.3
     }
   },
-  "fidelity": [
-    {
-      "file": "artifacts/final-cold/world-1px.png.fidelity.json",
-      "status": "passed",
-      "rgbaSha256": "7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e",
-      "pinnedWholeImageComparedPixels": 20160000,
-      "verifiedSourceFiles": 51,
-      "verifiedTextures": 384,
-      "patches": [
-        {
-          "name": "top-left",
-          "worldRect": {
-            "x": 0,
-            "y": 0,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "top-right",
-          "worldRect": {
-            "x": 8335,
-            "y": 0,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "bottom-left",
-          "worldRect": {
-            "x": 0,
-            "y": 2351,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "bottom-right",
-          "worldRect": {
-            "x": 8335,
-            "y": 2351,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "center",
-          "worldRect": {
-            "x": 4167,
-            "y": 1175,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "render-seams",
-          "worldRect": {
-            "x": 111,
-            "y": 35,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "surface-and-forest",
-          "worldRect": {
-            "x": 4095,
-            "y": 480,
-            "width": 65,
-            "height": 65
-          },
-          "comparedPixels": 4225,
-          "differentBytes": 0
-        },
-        {
-          "name": "water",
-          "worldRect": {
-            "x": 65,
-            "y": 918,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "lava",
-          "worldRect": {
-            "x": 100,
-            "y": 1942,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "honey",
-          "worldRect": {
-            "x": 312,
-            "y": 1986,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "rain",
-          "worldRect": {
-            "x": 906,
-            "y": 281,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "shimmer",
-          "worldRect": {
-            "x": 789,
-            "y": 840,
-            "width": 85,
-            "height": 40
-          },
-          "comparedPixels": 3400,
-          "differentBytes": 0
-        },
-        {
-          "name": "mixed-halfbrick",
-          "worldRect": {
-            "x": 4630,
-            "y": 2000,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        }
-      ],
-      "wholeHighResolutionImageAllocated": false
+  "comparisons": {
+    "versusPinnedNative": {
+      "baselineCommit": "b9b0fdd6adc25484a021f9850bd4c81e0d725071",
+      "baselineSeconds": 97.588,
+      "baselineConservativeRssBytes": 251949056,
+      "runtimeReductionPercent": 14.82969217526745,
+      "conservativePeakIncreaseBytes": 7405568
     },
-    {
-      "file": "artifacts/final-prepared/prepared-world/preview.png.fidelity.json",
-      "status": "passed",
-      "rgbaSha256": "7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e",
-      "pinnedWholeImageComparedPixels": 20160000,
-      "verifiedSourceFiles": 51,
-      "verifiedTextures": 384,
-      "patches": [
-        {
-          "name": "top-left",
-          "worldRect": {
-            "x": 0,
-            "y": 0,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "top-right",
-          "worldRect": {
-            "x": 8335,
-            "y": 0,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "bottom-left",
-          "worldRect": {
-            "x": 0,
-            "y": 2351,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "bottom-right",
-          "worldRect": {
-            "x": 8335,
-            "y": 2351,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "center",
-          "worldRect": {
-            "x": 4167,
-            "y": 1175,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "render-seams",
-          "worldRect": {
-            "x": 111,
-            "y": 35,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "surface-and-forest",
-          "worldRect": {
-            "x": 4095,
-            "y": 480,
-            "width": 65,
-            "height": 65
-          },
-          "comparedPixels": 4225,
-          "differentBytes": 0
-        },
-        {
-          "name": "water",
-          "worldRect": {
-            "x": 65,
-            "y": 918,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "lava",
-          "worldRect": {
-            "x": 100,
-            "y": 1942,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "honey",
-          "worldRect": {
-            "x": 312,
-            "y": 1986,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "rain",
-          "worldRect": {
-            "x": 906,
-            "y": 281,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "shimmer",
-          "worldRect": {
-            "x": 789,
-            "y": 840,
-            "width": 85,
-            "height": 40
-          },
-          "comparedPixels": 3400,
-          "differentBytes": 0
-        },
-        {
-          "name": "mixed-halfbrick",
-          "worldRect": {
-            "x": 4630,
-            "y": 2000,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        }
-      ],
-      "wholeHighResolutionImageAllocated": false
-    },
-    {
-      "file": "artifacts/final-prepared/replay.png.fidelity.json",
-      "status": "passed",
-      "rgbaSha256": "7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e",
-      "pinnedWholeImageComparedPixels": 20160000,
-      "verifiedSourceFiles": 51,
-      "verifiedTextures": 384,
-      "patches": [
-        {
-          "name": "top-left",
-          "worldRect": {
-            "x": 0,
-            "y": 0,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "top-right",
-          "worldRect": {
-            "x": 8335,
-            "y": 0,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "bottom-left",
-          "worldRect": {
-            "x": 0,
-            "y": 2351,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "bottom-right",
-          "worldRect": {
-            "x": 8335,
-            "y": 2351,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "center",
-          "worldRect": {
-            "x": 4167,
-            "y": 1175,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "render-seams",
-          "worldRect": {
-            "x": 111,
-            "y": 35,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "surface-and-forest",
-          "worldRect": {
-            "x": 4095,
-            "y": 480,
-            "width": 65,
-            "height": 65
-          },
-          "comparedPixels": 4225,
-          "differentBytes": 0
-        },
-        {
-          "name": "water",
-          "worldRect": {
-            "x": 65,
-            "y": 918,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "lava",
-          "worldRect": {
-            "x": 100,
-            "y": 1942,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "honey",
-          "worldRect": {
-            "x": 312,
-            "y": 1986,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "rain",
-          "worldRect": {
-            "x": 906,
-            "y": 281,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        },
-        {
-          "name": "shimmer",
-          "worldRect": {
-            "x": 789,
-            "y": 840,
-            "width": 85,
-            "height": 40
-          },
-          "comparedPixels": 3400,
-          "differentBytes": 0
-        },
-        {
-          "name": "mixed-halfbrick",
-          "worldRect": {
-            "x": 4630,
-            "y": 2000,
-            "width": 65,
-            "height": 49
-          },
-          "comparedPixels": 3185,
-          "differentBytes": 0
-        }
-      ],
-      "wholeHighResolutionImageAllocated": false
+    "versusPriorStage": {
+      "stageCommit": "e2ca3ae45ab4f2f509f00db955aae7e5dcbb4607",
+      "extraSeconds": 2.0160000000000053,
+      "savedConservativePeakBytes": 13869056
     }
-  ],
-  "sharing": {
-    "path": "docs/benchmarks/large-world-share.webp",
-    "width": 4200,
-    "height": 1200,
-    "quality": 85,
-    "bytes": 1503034,
-    "sha256": "4c7fc9fc5e4d554d71910c238f53c887f4bdfbe3d94a543aada113aa1ef034ab",
-    "measurement": {
-      "schema": "exploretv-experiment-lifetime-v1",
-      "code": 0,
-      "signal": null,
-      "endToEndSeconds": 1.522895515,
+  },
+  "earlierMeasuredStage": {
+    "schema": "exploretv-overview-60s-local-evidence-v1",
+    "date": "2026-10-06",
+    "runtimeCommit": "e2ca3ae45ab4f2f509f00db955aae7e5dcbb4607",
+    "runtimeGitTree": "7f57056fdbefc43086153c9e44e0125c7c077bed",
+    "runtimeProvenance": "Frozen staged tree measured locally, identical to the GitHub runtime commit tree. The checkout HEAD was aligned after measurements; fidelity verified all runtime source hashes.",
+    "worldSha256": "d551a6b360c7af49a07dadbb1e82223ac43ad398e2054c29f500ec5e8b5b1cab",
+    "worldDimensions": {
+      "width": 8400,
+      "height": 2400
+    },
+    "worldRect": {
+      "x": 0,
+      "y": 0,
+      "width": 8400,
+      "height": 2400
+    },
+    "sourceHashes": {
+      "scripts/export-world.mjs": "ff26b13b711e55855ca30a6d7b093912bba2a43b0cb7879cea1c1c7140c7fd6c",
+      "scripts/export-overview.mjs": "d49798365626a1b82e8dc4bc2635e3f8a5d6f0a88eaff749112ad5bc701aacf4",
+      "scripts/prepared-world.mjs": "be399c277595e77af69e5178e8b505e2148a85a9f9605b31f11aa7b347db9113",
+      "scripts/prepared-world-tape.mjs": "273e528fd1f058d72998d527bc463e0b160e2217bb4a22d7c8be70bd227beff2",
+      "scripts/direct-terrain-overview.mjs": "ca40dbe7f772348e67e53a3ff3446c5ffda5963ea7c4549cdf8c099a959910c7",
+      "scripts/direct-slope-overview-frame.mjs": "e93f1efa0226eac34f72ef0ba13c7fb91ec2cb20ce1573e8441d505bc50f8592",
+      "scripts/downsample-rgba.mjs": "0f84c15c01ee3f1287b4a72112dcb35084a1434b212c98a59d84e51918d05c2e",
+      "scripts/reduce-overview-canvas.mjs": "5abfd1de422948a3f4a5c9b45daad70578a8ae1d5bb89d79f154aa21eb65af38",
+      "scripts/overview-fast-path.mjs": "58e2bb421f1e6e0ec0183932b84c2a9f1f77b5a0b0df0afeb2f8fde275502ad4",
+      "scripts/raw-overview-frame.mjs": "9de1ed17dc42fb73a2375382fb9fb58668cd3f9adb1136cef4219ee92829ad78",
+      "scripts/slope-overview-frame.mjs": "aff6865b77cb1d91c6458550420bf7a4c3f2ba2f7342071fb89741b99fdbba71",
+      "scripts/compact-waterfall-registry.mjs": "ef7c5a45dd8e13c436e205ae7a04a69262af2452349f9e2b39ef033d53c9093a",
+      "scripts/png-stream.mjs": "c0b167f58e70a09a7b83df70c0ca1b8949d2d76c4e0108f4f756d5fc2c91f004",
+      "scripts/png-rgba-node.mjs": "225474c23837a770505f0d3b75fa7289d8a2281bfd2ffe509a3d699d7d70046e",
+      "scripts/raw-texture-cache.mjs": "20a3c2657a56479aef996ba9b6fb78353f9e855314f89cfc56eb96b277e8b607",
+      "scripts/process-memory.mjs": "78e4e341cca9dde351598b5d72d46ea1b8817fad27a6fdd23e3d74afff54a9a3",
+      "scripts/native-reducer.mjs": "962fbdf78de52d7baae2ce560b7b46eb9a5602a9c9db69db59df8e6679f1e3c5",
+      "scripts/native-reducer.c": "82365a96a41288ce8fd5c17573f835f0551245be02192ca5e6b9579c434587c9",
+      "scripts/native-blitter.mjs": "ddeea84fc3541db1833753c498b76c49c78d8295da47e4ebe30ae017d774c351",
+      "scripts/native-blitter.c": "7fcac83f1adbd91795753d3e5348cf933a1349fbf8aa90df8f06b18c2a7799e2",
+      "scripts/software-overview.mjs": "4d2efc7434e756c75e36ec97ca3884e81bec2f362fca5790a7494a2dd8b92d1f",
+      "scripts/scene-frame-interner.mjs": "57a4c50dcadf8c675e618facb511acb6f5c0ee75d17904e023882bf81c977764",
+      "scripts/world-render-engine.mjs": "4b51b21e6ead233549c4ea5dee179ad7bb7e65f5ee9ad7f5421fff7472c2008b",
+      "core/world.mjs": "6ddbae67bb202becf88d978cd938dce93d6ec3f45f2d8fc37c613bafaeb8f167",
+      "core/utf8.mjs": "9a7fe11da9b8681590062dbd6162c883a2bd7bebb22a6947c9ef112dfea97837",
+      "core/renderer.mjs": "25f4496489c03020ea0b85a8583a05c058ae2b07ff0a58158d9bd718617d14bd",
+      "core/static-nature.mjs": "eddce7e9fb7e25548743e83060556d0160aeb565ea32ad5b520bff63f9c01dc2",
+      "core/cobweb-shapes.mjs": "12ec8468a9144e5fd111478a75bf4f3152ffe2bb3b1e29d16822588dc1af7e62",
+      "core/static-objects.mjs": "52851bf7b1bd52bccc2d251ba7d4912a160aa7683593d6188b921f8ea976fcdd",
+      "core/static-blocks.mjs": "4ef4a16253108ed5a792e0b8d48314e635dd37e33408741d3478e26886e8b029",
+      "core/static-trees.mjs": "bbf7d2e4165766a33dd1ac19c2d77b06ce0201af5914cf2d4ba21d84e28dfa8c",
+      "core/static-misc.mjs": "53c5b77c5295e71228854562cbeed1f04d01f5858e8704022898cdd708508da1",
+      "core/static-furniture-next.mjs": "5c5304c37427f1d839f77749a5e40a4a14e057ecda7ec90a7c146fd9fb67b0d3",
+      "core/static-flames.mjs": "164fb546f6c1b9ba0c7b22c3393b3bfff030d9c80b736466686330302ebcc1e8",
+      "core/static-plants-next.mjs": "1772753424daa98112dea8db589789b0a0cb74f7280f3a2ec462e661366b96b7",
+      "core/static-special-objects.mjs": "f9982786b9278510fc3fa37f0346354c0123f71c637b59ee3812ee56387d112a",
+      "core/world-tree-context.mjs": "1f5e69144b8a8ba4a429854b92b859985858b08d47fd37f0d7711c7cc80f5404",
+      "core/liquid.mjs": "fb5177a188a451e03851d2090d7656b8cf9a872d009095b6626138e49eb124e5",
+      "core/liquid-halfbrick.mjs": "27dd9fb325fbcd7204c097463cf6eb62099faae4b3e7b5544589ac121daef268",
+      "core/liquid-mixed-halfbrick.mjs": "ecb59d409d45b2dcdf8157d9c8556d95cc509e59b87cc6ad9b1ede5402704d06",
+      "core/static-waterfalls.mjs": "24285f62b6062c5b56319fe90a384eaed4cc262b029ec84a0c2c03c04634bd8f",
+      "core/scene-batches.mjs": "8e809754f8e712d150b4950105cac8f97a800ca88b90be0c462bca750a99913a",
+      "core/liquid-composite.mjs": "e0f9e5f294f4d3452410d3bd461e3f7dc6742ffbd2577835930349fe8510dc24",
+      "core/liquid-shimmer.mjs": "abf6a37bf486bc71629ea82d8bb6e06a2a53ec37716a30e0b6c408b283a165d8",
+      "core/liquid-special-context.mjs": "ef272a3f4a4cbf772938b6b743379ad470a76bd2517b56031b941a75bf623258",
+      "core/tile-solidity.mjs": "6e8b9e54a8e1f85e8160a0ee54457b4c8db8bd79258174735cbf71723f2cb9ea",
+      "core/liquid-visible-level.mjs": "3001311bf6773e23ec0ce0aaf2ba768f1149891cf35450c37b11fdf4c9af7927",
+      "core/paint.mjs": "93256f0b4c847b1499809c0169bf6825d9a37413430d69fb8c90c6c9bf2abc9e",
+      "core/scene-frames.mjs": "06709f042be1a65a38656308ec3807c736c40eaec0bb2d60194a0a9bf0ad2dbc",
+      "core/assets.mjs": "53a03c313c18595073691c1fb8c659c23d004370692c55459e7521d841ffb967",
+      "core/png-rgba.mjs": "864d56cfcb4a425a33cd0463f387e935757dac73b43c1c3317ba4f9bcd2bce7c"
+    },
+    "commandCounts": {
+      "liquid": 1179913,
+      "waterfall": 82467,
+      "tile": 11161090,
+      "wall": 5200671
+    },
+    "plannedCommands": 17624141,
+    "renderedCommands": 17624141,
+    "assetFailures": {},
+    "missingCommands": {},
+    "invalidCommands": {},
+    "effectFailures": {},
+    "firstWorld": {
+      "schema": "exploretv-overview-cold-benchmark-v2",
+      "targetPassed": true,
+      "endToEndSeconds": 81.1,
+      "exporterSeconds": 80.91,
+      "targetSeconds": 600,
+      "preferredRuntimeSeconds": 60,
+      "preferredRuntimePassed": false,
+      "targetRssBytes": 500000000,
+      "preferredRssBytes": 300000000,
+      "preferredMemoryPassed": true,
+      "conservativeAggregatePeakRssBytes": 273223680,
+      "processTreeSamplingAvailable": false,
+      "completeTreeSamples": 0,
+      "partialTreeSamples": 81,
+      "sampledAggregatePeakRssBytes": null,
+      "partialTreeObservedPeakBytes": 44957696,
+      "harnessMemorySampling": {
+        "samples": 81,
+        "currentRssSamples": 0,
+        "lifetimePeakFallbackSamples": 81,
+        "currentRssAvailable": false,
+        "arrayBuffersAvailable": false,
+        "fallbackReasons": {
+          "ENOENT": 81
+        },
+        "lastFallbackError": {
+          "code": "ENOENT",
+          "message": "ENOENT: no such file or directory, uv_resident_set_memory"
+        },
+        "fallbackSemantics": "rss is the OS lifetime peak from resourceUsage().maxRSS in bytes; current RSS and ArrayBuffer bytes are unavailable. V8 supplies heap/external statistics. Lifetime wait4 acceptance limits remain unchanged.",
+        "processMemoryUsageOverrideInstalled": false
+      },
+      "harnessOsPeakRssBytes": 45088768,
+      "monitoringTailReserveBytes": 1048576,
       "lifetime": {
         "method": "Linux wait4 child lifetime plus monitor getrusage",
         "exitCode": 0,
-        "elapsedSeconds": 1.51894,
-        "exporterOsPeakRssBytes": 218406912,
-        "monitorOsPeakRssBytes": 5283840
+        "elapsedSeconds": 81.096721,
+        "exporterOsPeakRssBytes": 221388800,
+        "monitorOsPeakRssBytes": 5697536
       },
-      "harnessOsPeakRssBytes": 38928384,
-      "monitoringTailReserveBytes": 1048576,
-      "conservativeAggregatePeakRssBytes": 263667712,
-      "cacheState": "Postprocess an existing, previously rendered overview PNG; this is not first-world generation and is measured separately from rendering.",
-      "measurementLabelCorrection": "The generic experiment harness initially used an uncached-world label; only that label has been corrected. Raw lifetime and RSS measurements are unchanged."
+      "measurementError": null,
+      "exitCode": 0,
+      "signal": null,
+      "includes": [
+        "process startup",
+        "world read/parse/index",
+        "complete waterfall registry",
+        "PNG decode",
+        "cold frame caches",
+        "all composition/reduction",
+        "PNG compression/hash/write",
+        "exporter shutdown"
+      ],
+      "excludes": [
+        "dependencies, native-renderer and benchmark-helper compilation",
+        "separate correctness verification"
+      ],
+      "cacheState": "Fresh process/application caches; OS file cache uncontrolled; no persistent reduced-texture cache.",
+      "memoryMeasurement": "Linux wait4 measures the entire exporter lifetime. getrusage measures the small native monitor and Node harness. Acceptance uses their conservative peak sum plus 1 MiB tail reserve, and samples their contemporaneous process-tree RSS every second when available. Native threads are included. If /proc sampling is unavailable or namespace-inconsistent, the exact lifetime conservative peak sum remains the acceptance measurement. A failed current-RSS call uses the harness OS lifetime peak conservatively and is excluded from contemporaneous sampling; V8 heap/external values remain measured and unavailable ArrayBuffer bytes are null.",
+      "environment": {
+        "node": "v24.19.0",
+        "platform": "linux",
+        "arch": "x64",
+        "release": "6.18.44",
+        "cpuModel": "unknown",
+        "logicalCpus": 0,
+        "availableParallelism": 9,
+        "rendererWorkers": 1,
+        "nodeArguments": [
+          "--max-old-space-size=48",
+          "--max-semi-space-size=4",
+          "--expose-gc"
+        ],
+        "allocator": {
+          "requestedArenaMax": "2",
+          "requestedMmapThreshold": "131072",
+          "glibcArenaMaxTunable": null,
+          "glibcMmapThresholdTunable": null,
+          "scope": "startup environment; only applicable to the glibc allocator",
+          "effectiveArenaCount": null
+        },
+        "processCpuSeconds": 170.389169
+      }
     },
-    "note": "Separate measured postprocessing of an earlier PNG with the same canonical RGBA; this is not world generation time."
+    "firstPreparation": {
+      "schema": "exploretv-prepared-world-phase-benchmark-v1",
+      "phase": "first-world-preparation",
+      "completed": true,
+      "targetPassed": true,
+      "endToEndSeconds": 113.470938916,
+      "exporterSeconds": 113.36433731,
+      "targetSeconds": 600,
+      "hardLimitSeconds": 600,
+      "targetRssBytes": 500000000,
+      "preferredRssBytes": 300000000,
+      "preferredMemoryPassed": true,
+      "conservativeAggregatePeakRssBytes": 262811648,
+      "harnessOsPeakRssBytes": 41287680,
+      "monitoringTailReserveBytes": 1048576,
+      "lifetime": {
+        "method": "Linux wait4 child lifetime plus monitor getrusage",
+        "exitCode": 0,
+        "elapsedSeconds": 113.468504,
+        "exporterOsPeakRssBytes": 214720512,
+        "monitorOsPeakRssBytes": 5754880
+      },
+      "measurementError": null,
+      "exitCode": 0,
+      "signal": null,
+      "stopReason": null,
+      "worldSpecificPreparationIncluded": true,
+      "reusedWorldSpecificPreparation": false,
+      "includesFirstImage": true,
+      "worldSha256": "d551a6b360c7af49a07dadbb1e82223ac43ad398e2054c29f500ec5e8b5b1cab",
+      "rgbaSha256": "7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e",
+      "fullWorld": true,
+      "worldRect": {
+        "x": 0,
+        "y": 0,
+        "width": 8400,
+        "height": 2400
+      },
+      "png": {
+        "path": "/workspace/scratch/88770d679550/exploreTV-fast/artifacts/final-prepared/prepared-world/preview.png",
+        "width": 8400,
+        "height": 2400,
+        "rows": 2400,
+        "bytes": 16984482,
+        "sha256": "6e0dc1fc0b85c3acd7b537e66d3d191cbebd5f0c000b5a230ec09d1f13fd7e5c"
+      },
+      "preparedDirectory": "/workspace/scratch/88770d679550/exploreTV-fast/artifacts/final-prepared/prepared-world",
+      "phaseReport": "/workspace/scratch/88770d679550/exploreTV-fast/artifacts/final-prepared/prepared-world/preparation.json",
+      "nativeCompilationPerformed": false,
+      "includes": [
+        "fresh process startup and native-module load",
+        "world read/parse/index, waterfall registry and scene planning",
+        "texture loading, frame preparation, composition and reduction",
+        "world-specific instruction/frame tape construction and hashing",
+        "first PNG compression/hash/write, manifest finalization and shutdown"
+      ],
+      "excludes": [
+        "dependency installation and world-independent native-module builds",
+        "benchmark-helper compilation and harness setup"
+      ],
+      "cacheState": "No world-specific prepared directory exists before this phase. Fresh process/application caches; native modules are already built; OS file cache is uncontrolled. This phase creates the persistent world-specific instruction/frame tape.",
+      "memoryMeasurement": "Linux wait4 child lifetime RSS + native monitor getrusage peak + harness process lifetime peak + 1 MiB reporting reserve. These independently occurring peaks form a conservative upper bound, not a sampled simultaneous peak. Native threads are included; no /proc sampling is required. The sequential phase peaks are reported separately, never added together.",
+      "harnessMemorySampling": {
+        "samples": 1,
+        "currentRssSamples": 0,
+        "lifetimePeakFallbackSamples": 1,
+        "currentRssAvailable": false,
+        "arrayBuffersAvailable": false,
+        "fallbackReasons": {
+          "ENOENT": 1
+        },
+        "lastFallbackError": {
+          "code": "ENOENT",
+          "message": "ENOENT: no such file or directory, uv_resident_set_memory"
+        },
+        "fallbackSemantics": "rss is the OS lifetime peak from resourceUsage().maxRSS in bytes; current RSS and ArrayBuffer bytes are unavailable. V8 supplies heap/external statistics. Lifetime wait4 acceptance limits remain unchanged.",
+        "processMemoryUsageOverrideInstalled": false
+      },
+      "harnessRssSource": "resourceUsage.maxRSS-lifetime-peak",
+      "environment": {
+        "node": "v24.19.0",
+        "platform": "linux",
+        "arch": "x64",
+        "release": "6.18.44",
+        "cpuModel": "unknown",
+        "logicalCpus": 0,
+        "availableParallelism": 9,
+        "rendererWorkers": 1,
+        "nodeArguments": [
+          "--max-old-space-size=48",
+          "--max-semi-space-size=4",
+          "--expose-gc"
+        ],
+        "allocator": {
+          "requestedArenaMax": "2",
+          "requestedMmapThreshold": "131072",
+          "glibcArenaMaxTunable": null,
+          "glibcMmapThresholdTunable": null,
+          "scope": "startup environment; only applicable to the glibc allocator",
+          "effectiveArenaCount": null
+        },
+        "processCpuSeconds": 225.850717
+      }
+    },
+    "preparedReplay": {
+      "schema": "exploretv-prepared-world-phase-benchmark-v1",
+      "phase": "prepared-world-replay",
+      "completed": true,
+      "targetPassed": true,
+      "endToEndSeconds": 14.085182986,
+      "exporterSeconds": 13.971100091,
+      "targetSeconds": 60,
+      "hardLimitSeconds": 600,
+      "targetRssBytes": 500000000,
+      "preferredRssBytes": 300000000,
+      "preferredMemoryPassed": true,
+      "conservativeAggregatePeakRssBytes": 145428480,
+      "harnessOsPeakRssBytes": 41549824,
+      "monitoringTailReserveBytes": 1048576,
+      "lifetime": {
+        "method": "Linux wait4 child lifetime plus monitor getrusage",
+        "exitCode": 0,
+        "elapsedSeconds": 14.082238,
+        "exporterOsPeakRssBytes": 96854016,
+        "monitorOsPeakRssBytes": 5976064
+      },
+      "measurementError": null,
+      "exitCode": 0,
+      "signal": null,
+      "stopReason": null,
+      "worldSpecificPreparationIncluded": false,
+      "reusedWorldSpecificPreparation": true,
+      "includesFirstImage": false,
+      "worldSha256": "d551a6b360c7af49a07dadbb1e82223ac43ad398e2054c29f500ec5e8b5b1cab",
+      "rgbaSha256": "7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e",
+      "fullWorld": true,
+      "worldRect": {
+        "x": 0,
+        "y": 0,
+        "width": 8400,
+        "height": 2400
+      },
+      "png": {
+        "path": "/workspace/scratch/88770d679550/exploreTV-fast/artifacts/final-prepared/replay.png",
+        "width": 8400,
+        "height": 2400,
+        "rows": 2400,
+        "bytes": 16984470,
+        "sha256": "67022ee2a93ab79881402fd3c5612c05ead556f8a821ef45129fa6bc9798be85"
+      },
+      "preparedDirectory": "/workspace/scratch/88770d679550/exploreTV-fast/artifacts/final-prepared/prepared-world",
+      "phaseReport": "/workspace/scratch/88770d679550/exploreTV-fast/artifacts/final-prepared/replay.png.json",
+      "nativeCompilationPerformed": false,
+      "includes": [
+        "fresh process startup and native-module load",
+        "current world, textures, renderer, lockfile and tape hash verification",
+        "world-specific ordered command replay, composition and reduction",
+        "PNG compression/hash/write, exact compiled-pixel verification and shutdown"
+      ],
+      "excludes": [
+        "dependency installation and world-independent native-module builds",
+        "benchmark-helper compilation and harness setup",
+        "the separately measured first world-specific preparation"
+      ],
+      "cacheState": "Fresh process/application caches reuse the single world-specific instruction/frame tape produced by the preceding phase. All bindings are verified in the timed replay. OS file cache is uncontrolled and may be warm after preparation; preview.png is not reused as the output.",
+      "memoryMeasurement": "Linux wait4 child lifetime RSS + native monitor getrusage peak + harness process lifetime peak + 1 MiB reporting reserve. These independently occurring peaks form a conservative upper bound, not a sampled simultaneous peak. Native threads are included; no /proc sampling is required. The sequential phase peaks are reported separately, never added together.",
+      "harnessMemorySampling": {
+        "samples": 2,
+        "currentRssSamples": 0,
+        "lifetimePeakFallbackSamples": 2,
+        "currentRssAvailable": false,
+        "arrayBuffersAvailable": false,
+        "fallbackReasons": {
+          "ENOENT": 2
+        },
+        "lastFallbackError": {
+          "code": "ENOENT",
+          "message": "ENOENT: no such file or directory, uv_resident_set_memory"
+        },
+        "fallbackSemantics": "rss is the OS lifetime peak from resourceUsage().maxRSS in bytes; current RSS and ArrayBuffer bytes are unavailable. V8 supplies heap/external statistics. Lifetime wait4 acceptance limits remain unchanged.",
+        "processMemoryUsageOverrideInstalled": false
+      },
+      "harnessRssSource": "resourceUsage.maxRSS-lifetime-peak",
+      "environment": {
+        "node": "v24.19.0",
+        "platform": "linux",
+        "arch": "x64",
+        "release": "6.18.44",
+        "availableParallelism": 9,
+        "rendererWorkers": 1,
+        "processCpuSeconds": 16.510357
+      }
+    },
+    "pinnedNativeBaseline": {
+      "commit": "b9b0fdd6adc25484a021f9850bd4c81e0d725071",
+      "measurement": {
+        "schema": "exploretv-overview-cold-benchmark-v2",
+        "targetPassed": true,
+        "endToEndSeconds": 97.588,
+        "exporterSeconds": 97.44,
+        "targetSeconds": 600,
+        "preferredRuntimeSeconds": 60,
+        "preferredRuntimePassed": false,
+        "targetRssBytes": 500000000,
+        "preferredRssBytes": 300000000,
+        "preferredMemoryPassed": true,
+        "conservativeAggregatePeakRssBytes": 251949056,
+        "processTreeSamplingAvailable": false,
+        "completeTreeSamples": 0,
+        "partialTreeSamples": 97,
+        "sampledAggregatePeakRssBytes": null,
+        "partialTreeObservedPeakBytes": 45088768,
+        "harnessMemorySampling": {
+          "samples": 97,
+          "currentRssSamples": 0,
+          "lifetimePeakFallbackSamples": 97,
+          "currentRssAvailable": false,
+          "arrayBuffersAvailable": false,
+          "fallbackReasons": {
+            "ENOENT": 97
+          },
+          "lastFallbackError": {
+            "code": "ENOENT",
+            "message": "ENOENT: no such file or directory, uv_resident_set_memory"
+          },
+          "fallbackSemantics": "rss is the OS lifetime peak from resourceUsage().maxRSS in bytes; current RSS and ArrayBuffer bytes are unavailable. V8 supplies heap/external statistics. Lifetime wait4 acceptance limits remain unchanged.",
+          "processMemoryUsageOverrideInstalled": false
+        },
+        "harnessOsPeakRssBytes": 45219840,
+        "monitoringTailReserveBytes": 1048576,
+        "lifetime": {
+          "method": "Linux wait4 child lifetime plus monitor getrusage",
+          "exitCode": 0,
+          "elapsedSeconds": 97.585056,
+          "exporterOsPeakRssBytes": 200077312,
+          "monitorOsPeakRssBytes": 5603328
+        },
+        "measurementError": null,
+        "exitCode": 0,
+        "signal": null,
+        "includes": [
+          "process startup",
+          "world read/parse/index",
+          "complete waterfall registry",
+          "PNG decode",
+          "cold frame caches",
+          "all composition/reduction",
+          "PNG compression/hash/write",
+          "exporter shutdown"
+        ],
+        "excludes": [
+          "dependencies, native-renderer and benchmark-helper compilation",
+          "separate correctness verification"
+        ],
+        "cacheState": "Fresh process/application caches; OS file cache uncontrolled; no persistent reduced-texture cache.",
+        "memoryMeasurement": "Linux wait4 measures the entire exporter lifetime. getrusage measures the small native monitor and Node harness. Acceptance uses their conservative peak sum plus 1 MiB tail reserve, and samples their contemporaneous process-tree RSS every second when available. Native threads are included. If /proc sampling is unavailable or namespace-inconsistent, the exact lifetime conservative peak sum remains the acceptance measurement. A failed current-RSS call uses the harness OS lifetime peak conservatively and is excluded from contemporaneous sampling; V8 heap/external values remain measured and unavailable ArrayBuffer bytes are null.",
+        "environment": {
+          "node": "v24.19.0",
+          "platform": "linux",
+          "arch": "x64",
+          "release": "6.18.44",
+          "cpuModel": "unknown",
+          "logicalCpus": 0,
+          "availableParallelism": 9,
+          "rendererWorkers": 1,
+          "nodeArguments": [
+            "--max-old-space-size=48",
+            "--max-semi-space-size=4",
+            "--expose-gc"
+          ],
+          "allocator": {
+            "requestedArenaMax": "2",
+            "requestedMmapThreshold": "131072",
+            "glibcArenaMaxTunable": null,
+            "glibcMmapThresholdTunable": null,
+            "scope": "startup environment; only applicable to the glibc allocator",
+            "effectiveArenaCount": null
+          },
+          "processCpuSeconds": 190.956061
+        }
+      }
+    },
+    "sameWorkspaceComparison": {
+      "coldRuntimeReductionPercent": 16.895519940976357,
+      "conservativePeakIncreaseBytes": 21274624,
+      "note": "Same workspace and Node version, separate sequential fresh-process runs. OS file cache uncontrolled. Do not combine with remote measurements."
+    },
+    "coldPng": {
+      "path": "artifacts/final-cold/world-1px.png",
+      "width": 8400,
+      "height": 2400,
+      "rows": 2400,
+      "bytes": 16984482,
+      "sha256": "6e0dc1fc0b85c3acd7b537e66d3d191cbebd5f0c000b5a230ec09d1f13fd7e5c"
+    },
+    "directTerrain": {
+      "available": true,
+      "backend": "direct-terrain-integer-compositor",
+      "reason": null,
+      "sourceSha256": "7fcac83f1adbd91795753d3e5348cf933a1349fbf8aa90df8f06b18c2a7799e2",
+      "binarySha256": "c12b4fa8e46b68595b87616592e77d83fd496cc0686e337606df3cdd7c4a1cfa",
+      "kernel": "sse2",
+      "frameByteLimit": 4194304,
+      "frameBytes": 4191806,
+      "peakFrameBytes": 4194302,
+      "liveFrameBytes": 4191806,
+      "peakLiveFrameBytes": 4194302,
+      "activeFrameBytes": 0,
+      "peakActiveFrameBytes": 789498,
+      "frameEntries": 2672,
+      "peakFrameEntries": 2835,
+      "hits": 29309748,
+      "misses": 62906,
+      "evictions": 60234,
+      "clockScans": 185728,
+      "clockPromotions": 125494,
+      "sourceInvalidations": 0,
+      "rawPreparedFrames": 56094,
+      "preparationFailures": 0,
+      "budgetFallbacks": 0,
+      "extendedCandidates": 2579466,
+      "slopeCandidates": 269584,
+      "slopePreparedFrames": 6812,
+      "secondPassHits": 10875178,
+      "secondPassMisses": 0,
+      "secondPassFailures": 0,
+      "candidateCoreCommands": 17825360,
+      "candidateBlitPixels": 8444660120,
+      "skippedBlitPixels": 2565780048,
+      "nativeBlitPixels": 5878880072,
+      "skippedWallCommands": 1129380,
+      "skippedTileCommands": 5820802,
+      "skippedUnsafeCommands": 142046,
+      "keptCrossOpaqueWallCommands": 1726236,
+      "opaqueCells": 5680013,
+      "nativeRequiredCells": 14371498,
+      "allNativeSkippedRenders": 540,
+      "nativeCommands": 10875178,
+      "nativeBlits": 10879955,
+      "nativeBatches": 2888,
+      "maxBatchSources": 458,
+      "maxBatchBlits": 8192,
+      "handledCommands": 18199797,
+      "totalCommands": 18612825,
+      "totalCells": 20160000,
+      "unsafeCells": 108489,
+      "renders": 3300,
+      "fallbackRenders": 0,
+      "bufferBytes": 6291456,
+      "peakBufferBytes": 6291456,
+      "phaseMilliseconds": {
+        "scanAndBatch": 26219.377874000013,
+        "scan": 12381.267710000071,
+        "batch": 13838.11016399994,
+        "prepare": 5189.147938000214,
+        "clear": 811.909286000443,
+        "compose": 7322.41961500019,
+        "partition": 347.9129839997713,
+        "reduce": 2052.0371740004566
+      }
+    },
+    "stageMilliseconds": {
+      "plan": 15702.283870999956,
+      "assets": 2271.8425969999753,
+      "batches": 112.32579299989175,
+      "prepareFrames": 1515.013413000128,
+      "validate": 582.2620920001709,
+      "draw": 2404.3586809999906,
+      "opaqueOverview": 666.9078010003241,
+      "nativePartition": 977.042562999799,
+      "keyGeneration": 1579.661787999973,
+      "directTerrain": 28833.119967000064
+    },
+    "readbackAndReductionSeconds": 3.97,
+    "garbageCollectionSeconds": 8.06,
+    "tape": {
+      "frames": 9781,
+      "chunks": 3300,
+      "commands": 11333425,
+      "batches": 2898,
+      "overrides": 5590895,
+      "frameFileBytes": 1662019,
+      "commandFileBytes": 57301163,
+      "manifestBytes": 2334659,
+      "totalBytes": 61297841,
+      "indexBytes": 2223040,
+      "decodedFrameBytes": 16516624,
+      "deduplicatedFrames": 8567,
+      "peakChunkEncodedBytes": 43821,
+      "peakChunkRawBytes": 374216,
+      "finalized": true,
+      "stageMilliseconds": {
+        "frameHashAndWrite": 1109.641990000002,
+        "commandWrite": 2499.618693000075,
+        "overrides": 5920.4945899997265
+      }
+    },
+    "fidelity": [
+      {
+        "file": "artifacts/final-cold/world-1px.png.fidelity.json",
+        "status": "passed",
+        "rgbaSha256": "7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e",
+        "pinnedWholeImageComparedPixels": 20160000,
+        "verifiedSourceFiles": 51,
+        "verifiedTextures": 384,
+        "patches": [
+          {
+            "name": "top-left",
+            "worldRect": {
+              "x": 0,
+              "y": 0,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "top-right",
+            "worldRect": {
+              "x": 8335,
+              "y": 0,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "bottom-left",
+            "worldRect": {
+              "x": 0,
+              "y": 2351,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "bottom-right",
+            "worldRect": {
+              "x": 8335,
+              "y": 2351,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "center",
+            "worldRect": {
+              "x": 4167,
+              "y": 1175,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "render-seams",
+            "worldRect": {
+              "x": 111,
+              "y": 35,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "surface-and-forest",
+            "worldRect": {
+              "x": 4095,
+              "y": 480,
+              "width": 65,
+              "height": 65
+            },
+            "comparedPixels": 4225,
+            "differentBytes": 0
+          },
+          {
+            "name": "water",
+            "worldRect": {
+              "x": 65,
+              "y": 918,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "lava",
+            "worldRect": {
+              "x": 100,
+              "y": 1942,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "honey",
+            "worldRect": {
+              "x": 312,
+              "y": 1986,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "rain",
+            "worldRect": {
+              "x": 906,
+              "y": 281,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "shimmer",
+            "worldRect": {
+              "x": 789,
+              "y": 840,
+              "width": 85,
+              "height": 40
+            },
+            "comparedPixels": 3400,
+            "differentBytes": 0
+          },
+          {
+            "name": "mixed-halfbrick",
+            "worldRect": {
+              "x": 4630,
+              "y": 2000,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          }
+        ],
+        "wholeHighResolutionImageAllocated": false
+      },
+      {
+        "file": "artifacts/final-prepared/prepared-world/preview.png.fidelity.json",
+        "status": "passed",
+        "rgbaSha256": "7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e",
+        "pinnedWholeImageComparedPixels": 20160000,
+        "verifiedSourceFiles": 51,
+        "verifiedTextures": 384,
+        "patches": [
+          {
+            "name": "top-left",
+            "worldRect": {
+              "x": 0,
+              "y": 0,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "top-right",
+            "worldRect": {
+              "x": 8335,
+              "y": 0,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "bottom-left",
+            "worldRect": {
+              "x": 0,
+              "y": 2351,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "bottom-right",
+            "worldRect": {
+              "x": 8335,
+              "y": 2351,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "center",
+            "worldRect": {
+              "x": 4167,
+              "y": 1175,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "render-seams",
+            "worldRect": {
+              "x": 111,
+              "y": 35,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "surface-and-forest",
+            "worldRect": {
+              "x": 4095,
+              "y": 480,
+              "width": 65,
+              "height": 65
+            },
+            "comparedPixels": 4225,
+            "differentBytes": 0
+          },
+          {
+            "name": "water",
+            "worldRect": {
+              "x": 65,
+              "y": 918,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "lava",
+            "worldRect": {
+              "x": 100,
+              "y": 1942,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "honey",
+            "worldRect": {
+              "x": 312,
+              "y": 1986,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "rain",
+            "worldRect": {
+              "x": 906,
+              "y": 281,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "shimmer",
+            "worldRect": {
+              "x": 789,
+              "y": 840,
+              "width": 85,
+              "height": 40
+            },
+            "comparedPixels": 3400,
+            "differentBytes": 0
+          },
+          {
+            "name": "mixed-halfbrick",
+            "worldRect": {
+              "x": 4630,
+              "y": 2000,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          }
+        ],
+        "wholeHighResolutionImageAllocated": false
+      },
+      {
+        "file": "artifacts/final-prepared/replay.png.fidelity.json",
+        "status": "passed",
+        "rgbaSha256": "7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e",
+        "pinnedWholeImageComparedPixels": 20160000,
+        "verifiedSourceFiles": 51,
+        "verifiedTextures": 384,
+        "patches": [
+          {
+            "name": "top-left",
+            "worldRect": {
+              "x": 0,
+              "y": 0,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "top-right",
+            "worldRect": {
+              "x": 8335,
+              "y": 0,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "bottom-left",
+            "worldRect": {
+              "x": 0,
+              "y": 2351,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "bottom-right",
+            "worldRect": {
+              "x": 8335,
+              "y": 2351,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "center",
+            "worldRect": {
+              "x": 4167,
+              "y": 1175,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "render-seams",
+            "worldRect": {
+              "x": 111,
+              "y": 35,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "surface-and-forest",
+            "worldRect": {
+              "x": 4095,
+              "y": 480,
+              "width": 65,
+              "height": 65
+            },
+            "comparedPixels": 4225,
+            "differentBytes": 0
+          },
+          {
+            "name": "water",
+            "worldRect": {
+              "x": 65,
+              "y": 918,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "lava",
+            "worldRect": {
+              "x": 100,
+              "y": 1942,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "honey",
+            "worldRect": {
+              "x": 312,
+              "y": 1986,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "rain",
+            "worldRect": {
+              "x": 906,
+              "y": 281,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          },
+          {
+            "name": "shimmer",
+            "worldRect": {
+              "x": 789,
+              "y": 840,
+              "width": 85,
+              "height": 40
+            },
+            "comparedPixels": 3400,
+            "differentBytes": 0
+          },
+          {
+            "name": "mixed-halfbrick",
+            "worldRect": {
+              "x": 4630,
+              "y": 2000,
+              "width": 65,
+              "height": 49
+            },
+            "comparedPixels": 3185,
+            "differentBytes": 0
+          }
+        ],
+        "wholeHighResolutionImageAllocated": false
+      }
+    ],
+    "sharing": {
+      "path": "docs/benchmarks/large-world-share.webp",
+      "width": 4200,
+      "height": 1200,
+      "quality": 85,
+      "bytes": 1503034,
+      "sha256": "4c7fc9fc5e4d554d71910c238f53c887f4bdfbe3d94a543aada113aa1ef034ab",
+      "measurement": {
+        "schema": "exploretv-experiment-lifetime-v1",
+        "code": 0,
+        "signal": null,
+        "endToEndSeconds": 1.522895515,
+        "lifetime": {
+          "method": "Linux wait4 child lifetime plus monitor getrusage",
+          "exitCode": 0,
+          "elapsedSeconds": 1.51894,
+          "exporterOsPeakRssBytes": 218406912,
+          "monitorOsPeakRssBytes": 5283840
+        },
+        "harnessOsPeakRssBytes": 38928384,
+        "monitoringTailReserveBytes": 1048576,
+        "conservativeAggregatePeakRssBytes": 263667712,
+        "cacheState": "Postprocess an existing, previously rendered overview PNG; this is not first-world generation and is measured separately from rendering.",
+        "measurementLabelCorrection": "The generic experiment harness initially used an uncached-world label; only that label has been corrected. Raw lifetime and RSS measurements are unchanged."
+      },
+      "note": "Separate measured postprocessing of an earlier PNG with the same canonical RGBA; this is not world generation time."
+    },
+    "validation": {
+      "run": "https://github.com/Live-yum/exploreTV/actions/runs/37420185717",
+      "runtimeCommit": "e2ca3ae45ab4f2f509f00db955aae7e5dcbb4607",
+      "status": "success",
+      "nodeTests": {
+        "total": 741,
+        "passed": 738,
+        "failed": 0,
+        "skipped": 3
+      },
+      "skipReasons": [
+        "private real-map scan fixture unavailable",
+        "optional real-world streaming test not enabled",
+        "optional scalar native binary not built"
+      ],
+      "rustTestsPassed": 4,
+      "playwrightTestsPassed": 22,
+      "otherPassed": [
+        "committed WASM rebuild check",
+        "H5 build",
+        "WeChat build and checks",
+        "Node/Chromium real-world JS and WASM measurements",
+        "waterfall worker browser test"
+      ]
+    },
+    "limitations": [
+      "The first render of an unseen world is 81.100 seconds and does not meet 60 seconds.",
+      "The 14.085-second replay uses a pre-existing world-specific hybrid tape; the first 113.471-second preparation includes its first PNG.",
+      "The tape includes native ordered commands plus exact precomputed residual cells, and is bound to the input world, resources, source version and export scope.",
+      "Pixel equivalence is to the pinned static fullbright renderer, not full live Terraria lighting and entities.",
+      "Memory is a conservative sum of complete-lifetime process peaks, including the harness and native monitor plus 1 MiB.",
+      "Dependencies and world-independent native compilation are excluded. Correctness checks run outside cold timing; input/tape verification is included in replay."
+    ]
   },
-  "validation": {
-    "run": "https://github.com/Live-yum/exploreTV/actions/runs/37420185717",
-    "runtimeCommit": "e2ca3ae45ab4f2f509f00db955aae7e5dcbb4607",
+  "limitations": [
+    "Only cold generation was repeated locally for the final shared-arena runtime. Full preparation and replay in earlierMeasuredStage belong to e2ca3ae and must not be relabeled as f7ac441 measurements.",
+    "The final f7ac441 full cold, preparation and replay are additionally measured on the remote runner and archived separately.",
+    "All runs use fresh processes. OS page cache is uncontrolled; CPU model is unavailable in this local sandbox.",
+    "The arena statistics are captured while the last native output remains readable; normal renderer disposal subsequently releases its final lease.",
+    "Component retained-buffer caps are not the complete process RSS; the benchmark uses conservative lifetime RSS including harness and native monitor."
+  ],
+  "finalValidation": {
+    "run": "https://github.com/Live-yum/exploreTV/actions/runs/37422281581",
+    "runtimeCommit": "f7ac4416a9cb2229d84421d07d8d1f542e9074f5",
     "status": "success",
     "nodeTests": {
-      "total": 741,
-      "passed": 738,
+      "total": 750,
+      "passed": 747,
       "failed": 0,
       "skipped": 3
     },
@@ -1071,20 +1638,12 @@
     ],
     "rustTestsPassed": 4,
     "playwrightTestsPassed": 22,
+    "waterfallBrowserWorkerTestsPassed": 1,
     "otherPassed": [
       "committed WASM rebuild check",
       "H5 build",
       "WeChat build and checks",
-      "Node/Chromium real-world JS and WASM measurements",
-      "waterfall worker browser test"
+      "Node/Chromium real-world JS and WASM measurements"
     ]
-  },
-  "limitations": [
-    "The first render of an unseen world is 81.100 seconds and does not meet 60 seconds.",
-    "The 14.085-second replay uses a pre-existing world-specific hybrid tape; the first 113.471-second preparation includes its first PNG.",
-    "The tape includes native ordered commands plus exact precomputed residual cells, and is bound to the input world, resources, source version and export scope.",
-    "Pixel equivalence is to the pinned static fullbright renderer, not full live Terraria lighting and entities.",
-    "Memory is a conservative sum of complete-lifetime process peaks, including the harness and native monitor plus 1 MiB.",
-    "Dependencies and world-independent native compilation are excluded. Correctness checks run outside cold timing; input/tape verification is included in replay."
-  ]
+  }
 }

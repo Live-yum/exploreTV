@@ -247,16 +247,18 @@ export async function exportWorld(
       throw new Error("Overview exceeded the 600-second generation limit");
   };
   checkOverviewBudget();
+  const directTerrainEnabled =
+    pixelsPerTile === 1 &&
+    config.inputEncoding === "tconvert-game-raw" &&
+    !commandRecorder &&
+    process.env.EXPLORETV_DISABLE_DIRECT_TERRAIN !== "1";
   const renderer = createWorldRenderer({
     onNativeBatch: commandRecorder
       ? (batch) => commandRecorder.recordBatch(batch)
       : null,
     lowMemory: overview,
     nativeOverview: overview,
-    directTerrainOverview:
-      pixelsPerTile === 1 &&
-      !commandRecorder &&
-      process.env.EXPLORETV_DISABLE_DIRECT_TERRAIN !== "1",
+    directTerrainOverview: directTerrainEnabled,
     waterfallRegistry,
     assetDir: config.assetDir,
     inputEncoding: config.inputEncoding,
@@ -341,7 +343,7 @@ export async function exportWorld(
     chunksSinceMajorGc = 0,
     canvasPendingMajorGc = false;
   const overviewGc = {
-    nativeOverviewInterval: 4,
+    nativeOverviewInterval: directTerrainEnabled ? 2 : 4,
     canvasInterval: 2,
     nativeOverviewChunks: 0,
     canvasChunks: 0,
@@ -746,8 +748,7 @@ export async function exportWorld(
       overviewGc: overview
         ? {
             ...overviewGc,
-            meaning:
-              "When GC is available, at most 4 chunks between major collections for actual 1px software-overview cores; any Canvas fallback lowers the pending interval to 2 until collection. A major collection also follows each output band. Collection counts include only GC calls actually made.",
+            meaning: `When GC is available, at most ${overviewGc.nativeOverviewInterval} chunks between major collections for actual 1px native-overview cores, according to whether direct terrain is enabled; any Canvas fallback limits the pending interval to ${overviewGc.canvasInterval} until collection. A major collection also follows each output band. Collection counts include only GC calls actually made.`,
           }
         : null,
       nativeFinalizationSeconds: +nativeFinalizationSeconds.toFixed(3),

@@ -61,6 +61,7 @@ jobs:
             test/direct-terrain-engine.test.mjs \
             test/direct-slope-overview-frame.test.mjs \
             test/direct-overview-reduction.test.mjs \
+            test/overview-export.test.mjs \
             test/encode-overview.test.mjs
       - name: Measure existing native PR on the same runner
         run: |
