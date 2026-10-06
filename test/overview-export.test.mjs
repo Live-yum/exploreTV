@@ -738,7 +738,7 @@ test("blank overview cores skip native readback at every supported scale", async
 });
 
 test(
-  "overview major GC tightens direct terrain only and yields after collection",
+  "overview major GC follows actual native or Canvas chunks and yields after collection",
   { skip: !nativeBlitterStatus.available && nativeBlitterStatus.reason },
   async (t) => {
     const fixture = setup(t, {
@@ -746,16 +746,7 @@ test(
       height: 4,
       cell: () => ({ type: 1 }),
     });
-    // Force native compositing instead of the opaque-mean shortcut so the
-    // recording case exercises actual instruction batches as well as GC.
-    writeTexture(fixture.assetDir, "Tiles_1.png", 288, 270, (x, y) => [
-      x % 128,
-      y % 128,
-      (x + y) % 128,
-      128,
-    ]);
     const previousGc = Object.getOwnPropertyDescriptor(globalThis, "gc"),
-      previousDirectDisable = process.env.EXPLORETV_DISABLE_DIRECT_TERRAIN,
       calls = [],
       events = [];
     let pendingFinalizer = false;
@@ -781,40 +772,18 @@ test(
     t.after(() => {
       if (previousGc) Object.defineProperty(globalThis, "gc", previousGc);
       else delete globalThis.gc;
-      if (previousDirectDisable === undefined)
-        delete process.env.EXPLORETV_DISABLE_DIRECT_TERRAIN;
-      else process.env.EXPLORETV_DISABLE_DIRECT_TERRAIN = previousDirectDisable;
     });
-    for (const [scale, inputEncoding, mode] of [
-      [1, "tconvert-game-raw", "direct"],
-      [1, "tconvert-game-raw", "disabled"],
-      [1, "tconvert-game-raw", "recording"],
-      [2, "tconvert-game-raw", "direct"],
-      [4, "tconvert-game-raw", "direct"],
-      [8, "tconvert-game-raw", "direct"],
-      [1, "standard-straight", "direct"],
+    for (const [scale, inputEncoding] of [
+      [1, "tconvert-game-raw"],
+      [2, "tconvert-game-raw"],
+      [4, "tconvert-game-raw"],
+      [8, "tconvert-game-raw"],
+      [1, "standard-straight"],
     ]) {
       calls.length = events.length = 0;
-      process.env.EXPLORETV_DISABLE_DIRECT_TERRAIN =
-        mode === "disabled" ? "1" : "0";
-      const recorded = { chunks: 0, batches: 0, completed: 0 },
-        commandRecorder =
-          mode === "recording"
-            ? {
-                beginChunk() {
-                  recorded.chunks++;
-                },
-                recordBatch() {
-                  recorded.batches++;
-                },
-                endChunk() {
-                  recorded.completed++;
-                },
-              }
-            : null;
       const config = overviewConfig(
         fixture,
-        `gc-${scale}-${inputEncoding}-${mode}.png`,
+        `gc-${scale}-${inputEncoding}.png`,
         [
           "--pixels-per-tile",
           String(scale),
@@ -826,59 +795,40 @@ test(
           "2",
         ],
       );
-      const report = await exportOverview(config, { commandRecorder }),
+      const report = await exportOverview(config),
         native = scale === 1 && inputEncoding === "tconvert-game-raw",
-        direct = native && mode === "direct",
-        majorInterval = native && !direct ? 4 : 2,
-        perBand =
-          majorInterval === 4
-            ? [
-                "minor",
-                "minor",
-                "minor",
-                "major",
-                "minor",
-                "minor",
-                "minor",
-                "major",
-                "minor",
-              ]
-            : [
-                "minor",
-                "major",
-                "minor",
-                "major",
-                "minor",
-                "major",
-                "minor",
-                "major",
-                "minor",
-              ],
+        perBand = native
+          ? [
+              "minor",
+              "minor",
+              "minor",
+              "major",
+              "minor",
+              "minor",
+              "minor",
+              "major",
+              "minor",
+            ]
+          : [
+              "minor",
+              "major",
+              "minor",
+              "major",
+              "minor",
+              "major",
+              "minor",
+              "major",
+              "minor",
+            ],
         chunkCalls = calls.filter((type) => type !== "band-or-setup");
       assert.deepEqual(chunkCalls, [...perBand, ...perBand]);
       assert.equal(report.chunks, 18);
-      assert.equal(report.majorGcInterval, majorInterval);
-      assert.equal(report.overviewGc.nativeOverviewInterval, direct ? 2 : 4);
+      assert.equal(report.majorGcInterval, native ? 4 : 2);
       assert.equal(report.overviewGc.nativeOverviewChunks, native ? 18 : 0);
       assert.equal(report.overviewGc.canvasChunks, native ? 0 : 18);
-      assert.equal(
-        report.overviewGc.chunkMajorCollections,
-        majorInterval === 4 ? 4 : 8,
-      );
-      assert.equal(
-        report.overviewGc.chunkMinorCollections,
-        majorInterval === 4 ? 14 : 10,
-      );
+      assert.equal(report.overviewGc.chunkMajorCollections, native ? 4 : 8);
+      assert.equal(report.overviewGc.chunkMinorCollections, native ? 14 : 10);
       assert.equal(report.overviewGc.bandMajorCollections, 2);
-      assert.equal(!!report.directTerrainOverview, direct);
-      if (commandRecorder) {
-        assert.equal(recorded.chunks, 18);
-        assert.equal(recorded.completed, 18);
-        assert.ok(
-          recorded.batches > 0,
-          "native instruction recording was used",
-        );
-      }
       // Native availability alone used to select the larger interval for 2/4/8.
       if (inputEncoding === "tconvert-game-raw")
         assert.equal(report.nativeOverview.available, true);

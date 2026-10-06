@@ -34,11 +34,13 @@ MALLOC_ARENA_MAX=2 MALLOC_MMAP_THRESHOLD_=131072 npm run export:overview -- fixt
 
 大世界默认输出完整范围的 **8400×2400 PNG（每 Tile 1 px）**；项目示例的既有精确输出约 **17 MB**，其他世界以实际压缩结果为准。`prepare:overview` 只提前编译与世界无关的原生合成及缩小模块，不读取世界或纹理；世界加载、索引、完整瀑布登记、PNG 解码、冷缓存建立、合成与最终 PNG 写入仍计入整图耗时。
 
-当前采用单渲染进程、**128×48 Tile** 分块、每 **32 行**一个稀疏 RLE 检查点；npm 命令将 V8 old-space 限为 **48 MiB**。已验收阶段 `f7ac441` 将 direct 帧、活动引用与扩展 key 限为 **4 MiB**，仅在 direct 启用时将 generic 帧缓存及活动引用限为 **2 MiB**；两条路径的详细像素借用同一个 **6 MiB** 缓冲，只在首次需要时分配一次。成功的 generic 输出在下一次 draw 前仍可读取；失败时立即归还本次 view 的借用。世界准备录制与 direct 关闭的路径保持原 **8 MiB** generic 限额。局部预算不等于整个进程 RSS。1 px/Tile 使用精确整数像素合成，并对复杂几何保留 Canvas 路径；2/4/8 px/Tile 保留原有完整合成后面积缩小的画质路径。模块加载会核对源码及二进制 SHA-256，缺失、过期或不兼容时自动退回 Canvas／JavaScript。全景保持现有 **fullbright 静态纹理渲染**范围，实时光照、动态实体和运行时效果仍受限制；适合全世界概览与结构检查。
+当前采用单渲染进程、**128×48 Tile** 分块、每 **32 行**一个稀疏 RLE 检查点；npm 命令将 V8 old-space 限为 **48 MiB**。最终采用 `f7ac441` 对应的运行实现：direct 帧、活动引用与扩展 key 限为 **4 MiB**，仅在 direct 启用时将 generic 帧缓存及活动引用限为 **2 MiB**；两条路径的详细像素借用同一个 **6 MiB** 缓冲，只在首次需要时分配一次，主动 GC 默认每 **4** 个块执行。成功的 generic 输出在下一次 draw 前仍可读取；失败时立即归还本次 view 的借用。世界准备录制与 direct 关闭的路径保持原 **8 MiB** generic 限额。局部预算不等于整个进程 RSS。1 px/Tile 使用精确整数像素合成，并对复杂几何保留 Canvas 路径；2/4/8 px/Tile 保留原有完整合成后面积缩小的画质路径。模块加载会核对源码及二进制 SHA-256，缺失、过期或不兼容时自动退回 Canvas／JavaScript。全景保持现有 **fullbright 静态纹理渲染**范围，实时光照、动态实体和运行时效果仍受限制；适合全世界概览与结构检查。
 
 **前一轮 [PR #2](https://github.com/Live-yum/exploreTV/pull/2) 的已有远端结果**为 **125.064 秒 / 291.48 MB 保守总峰值**，同机原版为 **240.309 秒 / 297.81 MB**，耗时下降 **47.96%**。这些原生合成、raw 帧与低内存收益归于该 PR；见[远端同机对照](https://github.com/Live-yum/exploreTV/actions/runs/37408281055)和[固定证据](docs/benchmarks/overview-native-20261006-final.json)。历史远端 **257.554 秒 / 302.17 MB** 则来自 [run 37395562331](https://github.com/Live-yum/exploreTV/actions/runs/37395562331)。
 
-**[草稿 PR #3](https://github.com/Live-yum/exploreTV/pull/3) 最新已完整验收阶段 [`f7ac441`](https://github.com/Live-yum/exploreTV/commit/f7ac4416a9cb2229d84421d07d8d1f542e9074f5) 的远端首次渲染为 105.770 秒 / 304.56 MB 保守总峰值**。同机已有原生基线为 **126.963 秒 / 294.90 MB**，耗时减少 **16.69%**、保守峰值增加 **9.66 MB**。**该阶段仍未达到首次世界 60 秒和远端 300 MB 两个优先目标，内存超出约 4.56 MB。** 完整结果见[远端同机运行](https://github.com/Live-yum/exploreTV/actions/runs/37422281613)；下一候选仅收紧 direct 非录制路径的 GC 间隔，其完整性能尚待验收。
+**[草稿 PR #3](https://github.com/Live-yum/exploreTV/pull/3) 最终采用配置的被测运行源码 [`f7ac441`](https://github.com/Live-yum/exploreTV/commit/f7ac4416a9cb2229d84421d07d8d1f542e9074f5)，远端首次渲染为 105.770 秒 / 304.56 MB 保守总峰值**。同机已有原生基线为 **126.963 秒 / 294.90 MB**，耗时减少 **16.69%**、保守峰值增加 **9.66 MB**。**首次世界仍未达到 60 秒和远端 300 MB 两个优先目标，内存超出约 4.56 MB。** 完整结果见[远端同机运行](https://github.com/Live-yum/exploreTV/actions/runs/37422281613)和[远端证据 JSON](docs/benchmarks/overview-60s-remote-20261006.json)。最终提交中的 GC 恢复与文档整理不改变这份实现的 52 项运行源码哈希。
+
+每 2 个块主动 GC 的 [`29e4ebd` 实验](https://github.com/Live-yum/exploreTV/actions/runs/37424019948)已被拒绝：远端 **137.763 秒 / 300.67 MB**，比该次同机原生基线 **128.084 秒**慢 **7.56%**，仍未低于 300 MB。最终恢复每 4 个块的配置；该实验的准备/回放结果、包和 CI 只在[详细文档](docs/overview-60s.md)中单列，不与最终配置混用。
 
 同一 `f7ac441` 阶段的本地首次渲染为 **83.116 秒 / 259.35 MB**，本机原生基线 **97.588 秒 / 251.95 MB**，快 **14.83%**、峰值增加 **7.41 MB**。相较此前 `e2ca3ae` 的本地 **81.100 秒 / 273.22 MB**，多用 **2.016 秒**，峰值减少 **13.87 MB**。全部 20,160,000 个像素、13 个独立窗口、52 份源码身份、384 张纹理和逻辑计数通过核验；共享详细缓冲只分配一次，容量 6,291,456 B，两条路径的 private 详细缓冲均为零。见[本地证据](docs/benchmarks/overview-60s-local-20261006.json)和[详细说明](docs/overview-60s.md)。本地峰值不能代替远端结果，不跨环境计算加速比。
 
@@ -52,9 +54,9 @@ MALLOC_ARENA_MAX=2 MALLOC_MMAP_THRESHOLD_=131072 npm run export:overview -- fixt
 
 该次有效缓存三文件合计 **61,292,640 B，约 61.29 MB**，其中包含命令和 **5,590,895 个已经求得的输出残余单元**。回放复用这些结果，并没有把所有格从头重新光栅化；**14.763 秒也不包含前面的 140.580 秒世界准备成本**。准备后再额外回放一次，两个生成进程共 **155.343 秒**。如果只是反复获取不变图片，直接保存并复用生成的 PNG/WebP 即可。
 
-各阶段均通过全像素及 13 个窗口核验。低于 60 秒的是固定世界、固定范围的缓存回放，首次准备成本仍须单列。此前 `e2ca3ae` 的本地及远端三阶段记录保留在[详细文档](docs/overview-60s.md)，不与 `f7ac441` 合并计算。
+各阶段均通过全像素及 13 个窗口核验。**提前准备完成后，前台回放达到 60 秒和 300 MB 目标**；其前提是固定世界、固定范围，首次准备成本仍须单列。此前 `e2ca3ae` 的本地及远端三阶段记录保留在[详细文档](docs/overview-60s.md)，不与 `f7ac441` 合并计算。
 
-该阶段已提供[证据与图像 artifact](https://github.com/Live-yum/exploreTV/actions/runs/37422281613/artifacts/11393049138)（21,191,152 B）和[可回放包 artifact](https://github.com/Live-yum/exploreTV/actions/runs/37422281613/artifacts/11393393625)（61,294,821 B）。后者包含 `manifest.json`、`frames.bin`、`commands.bin` 与 `preparation.json`，保留 **7 天**；无需附带 `preview.png` 即可回放，但仍须提供与包绑定的相同世界、纹理和 `f7ac441` 渲染源码。后续源码需要重新准备自己的包。
+最终采用配置已有[证据与图像 artifact](https://github.com/Live-yum/exploreTV/actions/runs/37422281613/artifacts/11393049138)（21,191,152 B）和[可回放包 artifact](https://github.com/Live-yum/exploreTV/actions/runs/37422281613/artifacts/11393393625)（61,294,821 B）。后者包含 `manifest.json`、`frames.bin`、`commands.bin` 与 `preparation.json`，保留 **7 天**；无需附带 `preview.png` 即可回放，但仍须提供与包绑定的相同世界、纹理和 `f7ac441` 对应的运行源码哈希。相关运行源码或输入改变后需要重新准备。
 
 ```sh
 # 可选：为固定世界准备命令包，同时生成 example-world-tape/preview.png
@@ -67,7 +69,7 @@ npm run encode:overview -- artifacts/world-overview.png artifacts/world-share.we
 
 默认分享图为 **4200×1200、quality 85 的有损 WebP**。本轮已有 PNG 的独立后处理实测为 **1,503,034 字节（约 1.50 MB）、1.523 秒、263.67 MB 保守峰值**；可[查看分享图示例](docs/benchmarks/large-world-share.webp)，保留约 17 MB 的原 PNG 作为静态像素参考。渲染与后处理顺序运行时耗时相加、峰值取较大者。世界命令包的失效规则、首次准备成本和分享图尺寸限制见[新文档](docs/overview-60s.md)。
 
-阶段 `f7ac441` 的[远端完整平台验证](https://github.com/Live-yum/exploreTV/actions/runs/37422281581)已通过：JavaScript **750 项中 747 通过、0 失败、3 项可选测试跳过**；Rust **4 项**、Playwright **22 项**（47.6 秒）及 WASM/H5/微信等检查通过。其本地及远端整图核验均通过。下一 GC 间隔候选尚待完整验收，不能沿用本阶段成绩。
+最终采用的 `f7ac441` 运行实现已通过[远端完整平台验证](https://github.com/Live-yum/exploreTV/actions/runs/37422281581)：JavaScript **750 项中 747 通过、0 失败、3 项可选测试跳过**；Rust **4 项**、Playwright **22 项**（47.6 秒）及 WASM/H5/微信等检查通过。本地及远端整图核验均通过。被拒绝 GC 实验的独立 CI 证据另列，测试通过不等于性能改进成立。
 
 原分辨率导出采用流式PNG，不创建整张巨型Canvas。超大PNG不保证普通浏览器可打开，兼容分块输出可按清单重建完整细节。命令选项与实际内存/文件限制以导出文档为准。普通缩小全景只作overview，不等同于原分辨率全图。
 
