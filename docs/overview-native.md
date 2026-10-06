@@ -18,7 +18,7 @@ MALLOC_ARENA_MAX=2 MALLOC_MMAP_THRESHOLD_=131072 npm run export:overview -- \
 
 原生构建脚本支持 Linux 与 macOS，需要可用的 C 编译器（默认 `cc`，可通过 `CC` 指定）。Node-API 头文件来自锁定的 `node-api-headers` 开发依赖。CI 使用 Node 22 / Linux；其他环境的性能需要单独实测。
 
-上述命令使用 Linux/glibc 的低内存启动配置 `MALLOC_ARENA_MAX=2`，减少多线程分配器保留的空闲内存；这个变量必须在 Node 启动前传入。它不限制渲染线程，也不是整个进程的内存上限。macOS、Windows 或其他分配器可以省略该变量，实际内存表现需要分别测量。如果 `GLIBC_TUNABLES` 中已配置 `glibc.malloc.arena_max`，该 tunable 优先于旧变量；请保持配置一致。依据：[GNU C Library 的内存分配 tunables](https://sourceware.org/glibc/manual/latest/html_node/Memory-Allocation-Tunables.html)。
+上述命令使用 Linux/glibc 的低内存启动配置：`MALLOC_ARENA_MAX=2` 限制 arena 请求上限，`MALLOC_MMAP_THRESHOLD_=131072` 固定大块分配的 mmap 阈值、关闭动态上调；两个变量均须在 Node 启动前传入。它们不限制渲染线程，也不是整个进程的内存上限。macOS、Windows 或其他分配器可以省略，实际内存表现需要分别测量。`GLIBC_TUNABLES` 中对应的 `glibc.malloc.arena_max`／`glibc.malloc.mmap_threshold` 优先于旧环境变量，请保持配置一致。依据：[GNU C Library 的内存分配 tunables](https://sourceware.org/glibc/manual/latest/html_node/Memory-Allocation-Tunables.html)。
 
 `run-overview-ci.mjs` 只给现有 exporter／C monitor 子进程设置默认 `MALLOC_ARENA_MAX=2` 与 `MALLOC_MMAP_THRESHOLD_=131072`，保留调用方显式指定的值；例如 `MALLOC_ARENA_MAX=0` 可请求 glibc 默认 arena 策略。它不新增 Node 进程，不修改监测脚本自身的分配器，也不修改固定基线的启动配置。报告同时记录 Node 启动参数、arena 与 mmap threshold 两种环境机制的请求值；没有把请求上限当成实际创建的 arena 数量。
 
@@ -155,6 +155,33 @@ node scripts/verify-overview.mjs \
 
 验收要求包括：整图所有 20,160,000 个像素与锁定的独立完整细节缩小基线一致、所有示例纹理与逻辑命令覆盖一致，以及染色／透明度／additive／翻转／裁剪／跨块几何的独立 RGBA 比较。参考图像来自既有静态渲染器，测试证明的是这一实现范围内的像素保持。
 
+## 最终远端验收
+
+性能源码提交为 `870c7e03db85e9051c4e315dd6e0c068a9eddde9`。在 [run 37408281055](https://github.com/Live-yum/exploreTV/actions/runs/37408281055) 的同一台 AMD EPYC 7763 runner（4 logical CPU、Node 22.23.3）上，固定原版和候选顺序运行：
+
+| 实现 | 完整冷进程耗时 | 保守总峰值 |
+| --- | --- | --- |
+| 原版 `7fa7da3` | 240.309 秒 | 297,807,872 B（297.81 MB） |
+| 最终默认 `870c7e0` | **125.064 秒** | **291,479,552 B（291.48 MB）** |
+
+耗时减少 **115.245 秒（47.96%，约 1.921 倍）**，保守总峰值减少 **6,328,320 B（2.12%）**。**300 MB 优先内存目标通过，60 秒优先时间目标未通过。** 同期同时采样总峰值为 276.57 MB，仍使用更保守的 291.48 MB 作结论。完整记录见[最终远端证据](benchmarks/overview-native-20261006-final.json)。
+
+最终 PNG 为 **8400×2400、16,984,422 字节**。其全部 20,160,000 个像素与原版一致，RGBA SHA-256 为 `7564e85d94724f452cd76c03409fea512fb57966fb933303a6db832d4b86013e`；13 个独立窗口逐字节一致，384 份纹理与逻辑命令计数一致，示例遗漏表全部为空。PNG 的 IDAT 分块边界可能不同，因此 PNG 文件哈希可以不同；整图解码像素与过滤后扫描线哈希保持一致。
+
+[最终源码的平台验证](https://github.com/Live-yum/exploreTV/actions/runs/37408281099)通过：JavaScript 678 项中 675 通过、0 失败、3 跳过（2 个可选私有世界、1 个未单独构建的可选 scalar addon）；Rust 4 项、WASM 重建一致性、H5／微信构建与主包检查、22 项浏览器用例和 1 项 worker 浏览器用例均通过。本地单独构建的 scalar 版本也已通过核验。
+
+相同最终源码的本地完整测量为 **102.445 秒／257.14 MB**，整图及 13 个窗口同样通过。硬件、Node 版本、分配器与文件缓存状态会影响测量；这组本地数字不与远端拼接计算加速比。
+
+### 剩余瓶颈与 60 秒目标
+
+本轮远端阶段计时中，场景规划约 **30.60 秒**、帧键处理约 **9.55 秒**、验证约 **9.34 秒**、帧准备约 **13.27 秒**。原生 C 合成约 **9.53 秒**，它包含在 draw 的 17.71 秒中；清屏约 1.13 秒也属于外层阶段，不能重复相加。单独继续优化像素内核无法覆盖距 60 秒的 65.064 秒缺口。
+
+下一步更有根据的架构方向是让普通 Tile／Wall 直接写入按整数 frame ID 索引的紧凑命令缓冲，减少 JS 对象、字符串键和重复遍历，再把普通规划及覆盖分析逐步移到原生端。复杂几何和特殊对象继续使用现有正确性参考，并严格保留顺序、owner、资源校验及跨块贡献。这些属于尚未实现／测速的后续方向，不能作为当前性能承诺。
+
+可预先构建经哈希绑定的资源帧包，或单独编译世界相关数据；但后者必须分别报告首次准备、准备后渲染以及无缓存总耗时。本次仅提前编译世界无关的 C 模块，所有世界和纹理相关工作仍在完整计时内。
+
+### 早期本地测量
+
 | 记录 | 整图耗时 | 保守总峰值 | 证据 |
 | --- | --- | --- | --- |
 | 历史远端基线 | 257.554 秒 | 302.17 MB | [GitHub Actions run 37395562331](https://github.com/Live-yum/exploreTV/actions/runs/37395562331) |
@@ -165,7 +192,7 @@ node scripts/verify-overview.mjs \
 
 64 MiB old-space 的完整对照是 86.959 秒／298.30 MB；只快约 1.7 秒却增加接近 12 MB 峰值，因此保留 48 MiB 默认配置。更早的源码状态曾测到 83.511 秒／283.78 MB；它早于当前块闭包释放及异常生命周期完善，不作为最终提交的性能数字。所有这几次整图都通过全像素哈希与 13 个细节窗口验证。
 
-本地最终完整测试为 676 项通过、2 项因可选私有世界未提供而跳过、0 失败；H5 和微信小程序构建通过。原生导出模块没有进入前端主包。远端 Rust/WASM、浏览器与同机性能结果以 PR 工作流为准。
+初版完整本地测试为 676 项通过、2 项因可选私有世界未提供而跳过、0 失败；H5 和微信小程序构建通过。原生导出模块没有进入前端主包。最终远端 Rust/WASM、浏览器及同机性能结果见上方。
 
 ## 画面保真范围
 
@@ -183,7 +210,6 @@ node scripts/verify-overview.mjs \
 
 本地完整修正测试为 **96.944 秒／269.26 MB**，比初版默认配置少约 17.05 MB、增加约 8.27 秒；整图像素与 13 个窗口仍全部一致。见[内存修正本地记录](benchmarks/overview-native-20261006-memory-local.json)。对应远端结果见下方，60 秒目标仍未达到。
 
-
 第二轮远端 [run 37407771112](https://github.com/Live-yum/exploreTV/actions/runs/37407771112) 使用 AMD EPYC 9V45 runner，原版 **129.263 秒／311.27 MB**，`5ee44c9` **61.507 秒／312.30 MB**。同机耗时下降 52.42%，但保守峰值仍比原版高 1.02 MB，300 MB 和 60 秒优先目标均未通过。同期采样总峰值为 293.86 MB，不能替代保守完整寿命口径。该轮 CPU 与首轮 Intel 不同，不能用 81.839／61.507 归因这次参数修改的加速。[第二轮远端记录](benchmarks/overview-native-20261006-remote-v2.json) 保留完整计时。
 
-当前默认核心进一步收紧至 **128×48 Tile**，将一份详细 RGBA 工作缓冲由 10 MiB 降为 6 MiB，同时缩小每块的规划对象和读回范围；保持输出 8400×2400、GC4、arena 2 与 mmap 128 KiB。此配置正在进行本地与远端完整像素／性能验收，尚未声称达到目标。
+当前默认核心进一步收紧至 **128×48 Tile**，将一份详细 RGBA 工作缓冲由 10 MiB 降为 6 MiB，同时缩小每块的规划对象和读回范围；保持输出 8400×2400、GC4、arena 2 与 mmap 128 KiB。此配置已通过上述最终本地与远端完整像素核验。远端结果为 125.064 秒／291.48 MB；内存目标通过，60 秒目标仍未达到。
