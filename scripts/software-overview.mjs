@@ -200,9 +200,17 @@ export function createSoftwareOverview({
   maxLiveFrameBytes = Math.max(maxFrameBytes, MAX_FRAME_PIXEL_BYTES),
   createCanvas = defaultCreateCanvas,
   onNativeBatch = null,
+  detailedRgbaArena = null,
 } = {}) {
   if (onNativeBatch !== null && typeof onNativeBatch !== "function")
     throw new TypeError("Invalid native overview recording callback");
+  if (
+    detailedRgbaArena !== null &&
+    (typeof detailedRgbaArena.acquire !== "function" ||
+      !Number.isSafeInteger(detailedRgbaArena.maxBytes) ||
+      detailedRgbaArena.maxBytes < 4)
+  )
+    throw new TypeError("Invalid shared overview RGBA arena");
   if (
     !Number.isSafeInteger(maxFrameBytes) ||
     maxFrameBytes < 1 ||
@@ -221,7 +229,8 @@ export function createSoftwareOverview({
   let nextIdentity = 1,
     backing = null,
     disposed = false;
-  let releaseCurrentView = NO_CURRENT_VIEW;
+  let releaseCurrentView = NO_CURRENT_VIEW,
+    currentPixelLease = null;
   const stats = {
     available: nativeBlitterStatus.available,
     backend: nativeBlitterStatus.available
@@ -252,10 +261,23 @@ export function createSoftwareOverview({
     evictions: 0,
     bufferBytes: 0,
     peakBufferBytes: 0,
+    sharedBufferBytes: 0,
+    peakSharedBufferBytes: 0,
     nativeCommands: 0,
     canvasCommands: 0,
     unsafeCells: 0,
     totalCells: 0,
+  };
+  // Keep only the arena-created lease after finish(), never a callback created
+  // inside begin(): such a callback could retain a completed plan and its maps.
+  const releasePixelLease = (lease = currentPixelLease) => {
+    if (lease === null) return;
+    lease.release();
+    if (currentPixelLease === lease) currentPixelLease = null;
+  };
+  const releasePixels = () => {
+    releaseCurrentView();
+    releasePixelLease();
   };
   const identity = (object) => {
     if (!object) return 0;
@@ -405,9 +427,12 @@ export function createSoftwareOverview({
   };
   return {
     stats,
+    // Invalidates the previous output, just as the next begin()/dispose() does.
+    // The engine calls this before the next direct stage borrows the arena.
+    releasePixels,
     begin(plan, core, region, assets, keyCache) {
       if (disposed) throw new Error("Software overview is disposed");
-      releaseCurrentView();
+      releasePixels();
       if (!nativeBlitterStatus.available) return null;
       const partition = partitionSoftwareOverview(plan, core, region);
       stats.unsafeCells += partition.unsafeCells;
@@ -416,14 +441,33 @@ export function createSoftwareOverview({
       const width = core.width * 16,
         height = core.height * 16;
       const bytes = width * height * 4;
-      if (!backing || backing.length < bytes)
-        backing = Buffer.allocUnsafe(bytes);
-      stats.bufferBytes = backing.length;
-      stats.peakBufferBytes = Math.max(stats.peakBufferBytes, backing.length);
-      const pixels = backing.subarray(0, bytes);
-      const clearStarted = performance.now();
-      clearOpaque(pixels);
-      stats.clearMilliseconds += performance.now() - clearStarted;
+      let pixelLease = null,
+        pixels;
+      if (detailedRgbaArena) {
+        if (bytes > detailedRgbaArena.maxBytes) return null;
+        pixelLease = detailedRgbaArena.acquire(bytes);
+        currentPixelLease = pixelLease;
+        pixels = pixelLease.pixels;
+        stats.sharedBufferBytes = detailedRgbaArena.maxBytes;
+        stats.peakSharedBufferBytes = Math.max(
+          stats.peakSharedBufferBytes,
+          stats.sharedBufferBytes,
+        );
+      } else {
+        if (!backing || backing.length < bytes)
+          backing = Buffer.allocUnsafe(bytes);
+        stats.bufferBytes = backing.length;
+        stats.peakBufferBytes = Math.max(stats.peakBufferBytes, backing.length);
+        pixels = backing.subarray(0, bytes);
+      }
+      try {
+        const clearStarted = performance.now();
+        clearOpaque(pixels);
+        stats.clearMilliseconds += performance.now() - clearStarted;
+      } catch (error) {
+        releasePixelLease(pixelLease);
+        throw error;
+      }
       const namespaces = new Map(),
         local = new Map(),
         borrowed = new Set(),
@@ -499,6 +543,13 @@ export function createSoftwareOverview({
         nativeCommands: 0,
         // Drawing is over, but pixels/unsafe remain readable for reduction.
         finish,
+        // An enclosing engine can abort after begin(), outside this view's own
+        // preparation/draw catches. Return only this output's lease, so an old
+        // failing engine invocation cannot invalidate a reentrant newer view.
+        releasePixels() {
+          finish();
+          releasePixelLease(pixelLease);
+        },
         preparationCommands(commands) {
           assertOpen();
           releaseBorrowed();
@@ -563,6 +614,7 @@ export function createSoftwareOverview({
             return prepared;
           } catch (error) {
             finish();
+            releasePixelLease(pixelLease);
             throw error;
           }
         },
@@ -702,7 +754,10 @@ export function createSoftwareOverview({
           } finally {
             clearStaged();
             releaseBorrowed();
-            if (!completed) finish();
+            if (!completed) {
+              finish();
+              releasePixelLease(pixelLease);
+            }
           }
         },
       };
@@ -710,12 +765,13 @@ export function createSoftwareOverview({
     },
     dispose() {
       disposed = true;
-      releaseCurrentView();
+      releasePixels();
       for (const [key, entry] of entries) retire(key, entry);
       backing = null;
       stats.frameBytes = 0;
       stats.frameEntries = 0;
       stats.bufferBytes = 0;
+      stats.sharedBufferBytes = 0;
     },
   };
 }

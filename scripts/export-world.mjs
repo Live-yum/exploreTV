@@ -271,6 +271,7 @@ export async function exportWorld(
     "scripts/prepared-world-tape.mjs",
     "scripts/direct-terrain-overview.mjs",
     "scripts/direct-slope-overview-frame.mjs",
+    "scripts/overview-rgba-arena.mjs",
     "scripts/downsample-rgba.mjs",
     "scripts/reduce-overview-canvas.mjs",
     "scripts/overview-fast-path.mjs",
@@ -811,6 +812,9 @@ export async function exportWorld(
         : null,
       frameKeyInterner: { ...stats.frameKeyInterner },
       nativeOverview: stats.nativeOverview ? { ...stats.nativeOverview } : null,
+      sharedDetailedRgba: stats.sharedDetailedRgba
+        ? { ...stats.sharedDetailedRgba }
+        : null,
       directTerrainOverview: stats.directTerrainOverviewStats
         ? structuredClone(stats.directTerrainOverviewStats)
         : null,

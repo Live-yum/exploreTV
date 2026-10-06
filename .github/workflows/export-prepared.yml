@@ -55,6 +55,8 @@ jobs:
             test/renderer-output-bounds.test.mjs \
             test/renderer-planner-hot-path.test.mjs \
             test/overview-early-halo-cull.test.mjs \
+            test/overview-rgba-arena.test.mjs \
+            test/world-render-engine-shared-arena.test.mjs \
             test/direct-terrain-overview.test.mjs \
             test/direct-terrain-engine.test.mjs \
             test/direct-slope-overview-frame.test.mjs \
@@ -168,5 +170,18 @@ jobs:
             artifacts/prepared/prepared-world/preview.png.fidelity.json
             artifacts/sharing/*.json
             artifacts/sharing/world-4200.webp
+          compression-level: 0
+          retention-days: 7
+      - name: Publish the verified reusable world instruction pack
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: prepared-world-tape-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            artifacts/prepared/prepared-world/manifest.json
+            artifacts/prepared/prepared-world/frames.bin
+            artifacts/prepared/prepared-world/commands.bin
+            artifacts/prepared/prepared-world/preparation.json
+          if-no-files-found: error
           compression-level: 0
           retention-days: 7

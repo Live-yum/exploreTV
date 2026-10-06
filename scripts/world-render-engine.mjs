@@ -1,6 +1,7 @@
 import { createRawTextureCache } from "./raw-texture-cache.mjs";
 import { createSoftwareOverview } from "./software-overview.mjs";
 import { createDirectTerrainOverview } from "./direct-terrain-overview.mjs";
+import { createOverviewRgbaArena } from "./overview-rgba-arena.mjs";
 import { createSceneFrameInterner } from "./scene-frame-interner.mjs";
 import { createNodePngRgbaDecoder } from "./png-rgba-node.mjs";
 import { createCompactStaticWaterfallRegistry } from "./compact-waterfall-registry.mjs";
@@ -295,14 +296,23 @@ export function createWorldRenderer({
     : null;
   const frameInterner = createSceneFrameInterner();
   const lazyRaw = lowMemory && inputEncoding === "tconvert-game-raw";
+  const useDirectTerrain =
+    lazyRaw && nativeOverview && directTerrainOverview && !onNativeBatch;
+  const detailedRgbaArena = useDirectTerrain
+    ? createOverviewRgbaArena({ maxBytes: 6 * 1024 * 1024 })
+    : null;
   const softwareRenderer =
     lazyRaw && nativeOverview
-      ? createSoftwareOverview({ onNativeBatch })
+      ? createSoftwareOverview({
+          onNativeBatch,
+          ...(useDirectTerrain
+            ? { maxFrameBytes: 2 * 1024 * 1024, detailedRgbaArena }
+            : {}),
+        })
       : null;
-  const directTerrainRenderer =
-    lazyRaw && nativeOverview && directTerrainOverview && !onNativeBatch
-      ? createDirectTerrainOverview()
-      : null;
+  const directTerrainRenderer = useDirectTerrain
+    ? createDirectTerrainOverview({ detailedRgbaArena })
+    : null;
   const pngDecoder = lowMemory && !lazyRaw ? createNodePngRgbaDecoder() : null;
   const stats = {
     pngDecodeCache: pngDecoder?.stats ?? null,
@@ -311,6 +321,7 @@ export function createWorldRenderer({
     frameKeyInterner: frameInterner.stats,
     nativeOverview: softwareRenderer?.stats ?? null,
     directTerrainOverviewStats: directTerrainRenderer?.stats ?? null,
+    sharedDetailedRgba: detailedRgbaArena?.stats ?? null,
     skippedFramePreparationCommands: 0,
     stageMilliseconds: {
       plan: 0,
@@ -520,6 +531,9 @@ export function createWorldRenderer({
       throw new RangeError(
         "Core surface must be a positive integer rectangle contained by the scene",
       );
+    // A returned native view remains readable through export reduction. Only
+    // the next draw invalidates it and permits direct to reuse the same arena.
+    if (directTerrainRenderer) softwareRenderer.releasePixels();
     const left = (core.x - region.rect.x) * 16,
       top = (core.y - region.rect.y) * 16,
       right = left + core.width * 16,
@@ -902,6 +916,11 @@ export function createWorldRenderer({
         readbackX: useCoreSurface ? 0 : left,
         readbackY: useCoreSurface ? 0 : top,
       };
+    } catch (error) {
+      // No caller can consume an output from a failed draw. Release only this
+      // view's pixels; a reentrant replacement may already own the arena.
+      softwareOverview?.releasePixels();
+      throw error;
     } finally {
       softwareOverview?.finish();
       if (contextSaved) ctx.restore();
@@ -922,6 +941,7 @@ export function createWorldRenderer({
       frameInterner.dispose();
       softwareRenderer?.dispose();
       directTerrainRenderer?.dispose();
+      detailedRgbaArena?.dispose();
       pngDecoder?.clear();
       rawTextures?.dispose();
       assetCache.clear();

@@ -161,6 +161,7 @@ export function createDirectTerrainOverview({
   maxFrames = 8192,
   maxDetailedBytes = 6 * 1024 * 1024,
   inputEncoding = "tconvert-game-raw",
+  detailedRgbaArena = null,
 } = {}) {
   if (
     !Number.isSafeInteger(maxFrameBytes) ||
@@ -179,6 +180,13 @@ export function createDirectTerrainOverview({
     inputEncoding !== "standard-straight"
   )
     throw new Error("Unknown asset channel encoding");
+  if (
+    detailedRgbaArena !== null &&
+    (typeof detailedRgbaArena.acquire !== "function" ||
+      !Number.isSafeInteger(detailedRgbaArena.maxBytes) ||
+      detailedRgbaArena.maxBytes < 4)
+  )
+    throw new TypeError("Invalid shared overview RGBA arena");
 
   const entries = new Map();
   let identities = new WeakMap(),
@@ -242,6 +250,8 @@ export function createDirectTerrainOverview({
     fallbackRenders: 0,
     bufferBytes: 0,
     peakBufferBytes: 0,
+    sharedBufferBytes: 0,
+    peakSharedBufferBytes: 0,
     phaseMilliseconds: {
       scanAndBatch: 0,
       scan: 0,
@@ -301,7 +311,9 @@ export function createDirectTerrainOverview({
         core.y + core.height > rect.y + rect.height ||
         plan.width !== rect.width * 16 ||
         plan.height !== rect.height * 16 ||
-        core.width * core.height * 1024 > maxDetailedBytes
+        core.width * core.height * 1024 > maxDetailedBytes ||
+        (detailedRgbaArena !== null &&
+          core.width * core.height * 1024 > detailedRgbaArena.maxBytes)
       )
         return null;
       const width = core.width,
@@ -349,6 +361,7 @@ export function createDirectTerrainOverview({
         used = 0,
         batchCommands = 0,
         detailed = null,
+        detailedLease = null,
         scanFinished = false,
         batchStarted = null;
       const scanStarted = performance.now();
@@ -829,14 +842,24 @@ export function createDirectTerrainOverview({
             return null;
           }
           if (!detailed) {
-            if (!backing || backing.length < byteLength)
-              backing = Buffer.allocUnsafe(byteLength);
-            detailed = backing.subarray(0, byteLength);
-            stats.bufferBytes = backing.length;
-            stats.peakBufferBytes = Math.max(
-              stats.peakBufferBytes,
-              backing.length,
-            );
+            if (detailedRgbaArena) {
+              detailedLease = detailedRgbaArena.acquire(byteLength);
+              detailed = detailedLease.pixels;
+              stats.sharedBufferBytes = detailedRgbaArena.maxBytes;
+              stats.peakSharedBufferBytes = Math.max(
+                stats.peakSharedBufferBytes,
+                stats.sharedBufferBytes,
+              );
+            } else {
+              if (!backing || backing.length < byteLength)
+                backing = Buffer.allocUnsafe(byteLength);
+              detailed = backing.subarray(0, byteLength);
+              stats.bufferBytes = backing.length;
+              stats.peakBufferBytes = Math.max(
+                stats.peakBufferBytes,
+                backing.length,
+              );
+            }
             const started = performance.now();
             clearOpaque(detailed);
             stats.phaseMilliseconds.clear += performance.now() - started;
@@ -913,6 +936,7 @@ export function createDirectTerrainOverview({
           stats.phaseMilliseconds.scanAndBatch += milliseconds;
         }
         clearBatch();
+        detailedLease?.release();
         rendering = false;
       }
     },
@@ -926,6 +950,7 @@ export function createDirectTerrainOverview({
       identities = new WeakMap();
       backing = descriptors = null;
       stats.bufferBytes = stats.activeFrameBytes = 0;
+      stats.sharedBufferBytes = 0;
     },
   };
 }
